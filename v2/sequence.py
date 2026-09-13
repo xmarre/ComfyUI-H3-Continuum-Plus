@@ -415,10 +415,21 @@ def _physical_reuse_prefix(
     """Second-phase sequential reuse predicate for Session and Run Storage.
 
     The static candidate list has already passed storage/session integrity checks.
-    Candidate physical transport recomputes each expected physical invocation from
-    only the already accepted prefix. The first mismatch terminates reuse.
+    Entries carrying physical metadata are authenticated against the currently
+    selected compiler even when the current execution is the legacy control. This
+    prevents a prior physical-Timeline candidate from silently contaminating a
+    later legacy comparison. Metadata-free legacy entries retain their historical
+    reuse behavior while the physical compiler is disabled. The first physical
+    mismatch terminates reuse.
     """
-    if not physical_prompt_compiler_enabled() or not preserved:
+    if not preserved:
+        return preserved,[]
+    candidate_enabled=physical_prompt_compiler_enabled()
+    has_physical_metadata=any(
+        isinstance((entry.get("plan") or {}).get("physical_prompt"),dict)
+        for entry in preserved
+    )
+    if not candidate_enabled and not has_physical_metadata:
         return preserved,[]
     notes=[]; accepted=[]; retained=0; previous_state=None
     target_duration_frames=int(round(int(chunks)*float(chunk_seconds)*FPS))
@@ -430,6 +441,19 @@ def _physical_reuse_prefix(
             if len(preserved)<int(chunks):
                 notes.append(f"physical reuse stopped before chunk {pair_start+1}: terminal physical pair is incomplete")
                 break
+            pair=preserved[pair_start:chunks]
+            if len(pair)!=2 or not terminal_entries_match_contract(pair,chunk_seconds=chunk_seconds):
+                notes.append(f"physical reuse stopped before chunk {pair_start+1}: terminal pair contract differs")
+                break
+            pair_has_physical=any(
+                isinstance((entry.get("plan") or {}).get("physical_prompt"),dict)
+                for entry in pair
+            )
+            if not candidate_enabled and not pair_has_physical:
+                accepted.extend(pair)
+                retained+=sum(int(entry["plan"]["net_frames"]) for entry in pair)
+                index+=2
+                continue
             initial_pair=previous_state is None
             contract=_terminal_pair_contract(initial_pair=initial_pair,chunk_seconds=chunk_seconds)
             descriptor=_terminal_descriptor(
@@ -440,10 +464,6 @@ def _physical_reuse_prefix(
                 target_duration_frames=target_duration_frames,
             )
             _,expected=compile_active_metadata(prompt_plan=prompt_plan,descriptor=descriptor,legacy_text=str(terminal_prompt or ""))
-            pair=preserved[pair_start:chunks]
-            if len(pair)!=2 or not terminal_entries_match_contract(pair,chunk_seconds=chunk_seconds):
-                notes.append(f"physical reuse stopped before chunk {pair_start+1}: terminal pair contract differs")
-                break
             if not all(physical_metadata_matches((entry.get("plan") or {}).get("physical_prompt"),expected) for entry in pair):
                 notes.append(f"physical reuse stopped before chunk {pair_start+1}: terminal physical conditioning identity differs")
                 break
@@ -452,6 +472,16 @@ def _physical_reuse_prefix(
             index+=2
             continue
         entry=preserved[index]
+        stored=(entry.get("plan") or {}).get("physical_prompt")
+        if stored is None and not candidate_enabled:
+            # Legacy Session-1 / Storage-2 data already passed the historical
+            # static reuse checks. Preserve that behavior exactly; only entries
+            # that claim a physical identity require cross-mode authentication.
+            accepted.append(entry)
+            retained+=int(entry["plan"]["net_frames"])
+            previous_state=entry_to_state(entry)
+            index+=1
+            continue
         geometry=resolve_normal_geometry(
             previous_state=previous_state,sequence_index=index,chunks=chunks,chunk_seconds=chunk_seconds,
             retained_frames=retained,width=width,height=height,continuity=continuity,
@@ -468,13 +498,12 @@ def _physical_reuse_prefix(
             reference_video_source=reference_video_source,timeline_video_source=timeline_video_source,
         )
         compiled,expected=compile_active_metadata(prompt_plan=prompt_plan,descriptor=descriptor,legacy_text=prompts[index])
-        stored=(entry.get("plan") or {}).get("physical_prompt")
         geometry_matches=(
             int(entry["plan"].get("total_frames",-1))==geometry.total_frames
             and int(entry["plan"].get("trim_frames",-1))==geometry.context_frames
         )
         matches=geometry_matches and physical_metadata_matches(stored,expected)
-        if not matches and stored is None and geometry_matches:
+        if candidate_enabled and not matches and stored is None and geometry_matches:
             matches=legacy_entry_can_reuse(entry=entry,descriptor=descriptor,compiled=compiled,source_kind=source_kind)
             if matches:
                 notes.append(f"chunk {index+1}: accepted conservative schema-1 initial legacy conditioning adapter")
@@ -606,7 +635,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         terminal_prompt=terminal_prompt,terminal_prompt_policy=terminal_prompt_policy,
     )
     reuse_notes.extend(physical_reuse_notes)
-    if storage_controller is not None and physical_candidate:
+    if storage_controller is not None:
         storage_controller.reused_count=len(preserved)
     reuse_notes.insert(0,f"Continuation method: {continuation_method}."+(f" Native mask contract v{NATIVE_MASK_CONTRACT_VERSION}." if continuation_method==CONTINUATION_NATIVE_MASKED else ""))
     reuse_notes.insert(0,"Physical prompt transport: "+("candidate physical compiler enabled." if physical_candidate else "legacy nominal control enabled."))
