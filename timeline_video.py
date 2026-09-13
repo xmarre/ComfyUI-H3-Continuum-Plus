@@ -485,7 +485,12 @@ def _active_trim_window(video: Any) -> tuple[Fraction, Fraction] | None:
         duration_value = _fraction_from_public_number(duration)
     except (TypeError, ValueError, ZeroDivisionError):
         return None
-    if start_value < 0 or duration_value <= 0:
+    if start_value < 0 or duration_value < 0:
+        return None
+    # Core uses duration == 0 for "until end". Preserve a non-zero active
+    # start in that case because it still determines the absolute CFR phase.
+    # The default untrimmed (0, 0) window carries no additional provenance.
+    if start_value == 0 and duration_value == 0:
         return None
     return start_value, duration_value
 
