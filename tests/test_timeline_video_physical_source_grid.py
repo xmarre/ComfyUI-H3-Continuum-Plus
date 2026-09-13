@@ -69,6 +69,11 @@ class _CoreLikeVideo:
         return _Trimmed(frames, self.frame_rate)
 
 
+class _CoreDefaultTrimVideo(_CoreLikeVideo):
+    def get_active_trim_window(self):
+        return 0.0, 0.0
+
+
 class _VAE:
     def __init__(self):
         self.calls = []
@@ -170,13 +175,21 @@ def test_core_frame_rate_aligns_physical_trim_to_source_grid(monkeypatch):
     assert len(selection["resolved_selection_sha256"]) == 64
 
 
-def test_active_trim_provenance_changes_only_physical_selection_identity():
+def test_active_trim_provenance_changes_source_and_physical_selection_identity():
     first = _source(_CoreLikeVideo(active_start=0.0))
     second = _source(_CoreLikeVideo(active_start=2.0))
 
-    # Legacy source identity intentionally remains based on the same source bytes
-    # and nominal chunk contract. Physical selection adds the active trim.
-    assert first.combined_hash == second.combined_hash
+    # Same backing bytes are not sufficient for reuse when the upstream Core
+    # VIDEO presents a different active trim. Freeze that trim into both the
+    # source/run identity and the later physical selection identity.
+    assert first.source_sha256 == second.source_sha256
+    assert first.source_active_trim == ("0", "10")
+    assert second.source_active_trim == ("2", "10")
+    assert first.contract["source_active_trim"] == ["0", "10"]
+    assert second.contract["source_active_trim"] == ["2", "10"]
+    assert first.combined_hash != second.combined_hash
+    assert first.chunk_contracts[0]["slice_sha256"] != second.chunk_contracts[0]["slice_sha256"]
+
     first_contract = timeline_video_physical_selection_contract(
         first, global_start_frame=98, total_frames=143
     )
@@ -185,7 +198,20 @@ def test_active_trim_provenance_changes_only_physical_selection_identity():
     )
     assert first_contract["source_active_trim"] == ["0", "10"]
     assert second_contract["source_active_trim"] == ["2", "10"]
+    assert first_contract["source_combined_hash"] == first.combined_hash
+    assert second_contract["source_combined_hash"] == second.combined_hash
     assert first_contract["selection_sha256"] != second_contract["selection_sha256"]
+
+
+def test_default_core_open_trim_does_not_add_source_identity_salt():
+    source = _source(_CoreDefaultTrimVideo())
+
+    assert source.source_active_trim is None
+    assert "source_active_trim" not in source.contract
+    physical = timeline_video_physical_selection_contract(
+        source, global_start_frame=98, total_frames=143
+    )
+    assert physical["source_active_trim"] is None
 
 
 def test_physical_descriptor_persists_trailing_clamp_diagnostic(monkeypatch):
