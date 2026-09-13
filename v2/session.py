@@ -22,6 +22,7 @@ from ..temporal import (
     video_latent_t,
 )
 from ..version import PACKAGE_VERSION, SESSION_SCHEMA_VERSION, STATE_SCHEMA_VERSION
+from .physical_prompts import PhysicalPromptError, validate_physical_metadata
 from .sampling import latent_from_cpu, latent_to_cpu
 
 
@@ -109,6 +110,12 @@ def validate_chunk_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if not bool(torch.isfinite(audio.float()).all().item()):
         raise SessionValidationError("session audio contains NaN or Inf")
     plan = validate_plan(entry.get("plan"))
+    physical = plan.get("physical_prompt")
+    if physical is not None:
+        try:
+            validate_physical_metadata(physical)
+        except PhysicalPromptError as exc:
+            raise SessionValidationError(f"session chunk physical prompt metadata is invalid: {exc}") from exc
     actual_frames = pixel_frames_for_latent_t(int(video.shape[2]))
     if actual_frames != int(plan["total_frames"]):
         raise SessionValidationError("session chunk video length does not match its plan")
@@ -137,11 +144,16 @@ def make_session(
 ) -> dict[str, Any]:
     session_id = uuid.uuid4().hex
     normalized: list[dict[str, Any]] = []
+    require_physical = isinstance((settings or {}).get("physical_prompt_contract"), dict)
     for index, entry in enumerate(chunks, start=1):
         item = dict(entry)
         item["plan"] = copy.deepcopy(entry["plan"])
         item["sequence_index"] = index
         validate_chunk_entry(item)
+        if require_physical and not isinstance(item["plan"].get("physical_prompt"), dict):
+            raise SessionValidationError(
+                f"session schema {SESSION_SCHEMA_VERSION} physical prompt contract is missing from chunk {index}"
+            )
         normalized.append(item)
     return {
         "magic": SESSION_MAGIC,
@@ -164,10 +176,11 @@ def make_session(
 def validate_session(session: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(session, dict) or session.get("magic") != SESSION_MAGIC:
         raise SessionValidationError("invalid H3 Continuum session")
-    if int(session.get("schema_version", -1)) != SESSION_SCHEMA_VERSION:
+    schema = int(session.get("schema_version", -1))
+    if schema not in (1, SESSION_SCHEMA_VERSION):
         raise SessionValidationError(
             f"unsupported session schema {session.get('schema_version')}; "
-            f"expected {SESSION_SCHEMA_VERSION}"
+            f"expected 1 or {SESSION_SCHEMA_VERSION}"
         )
     if int(session.get("width", 0)) <= 0 or int(session.get("height", 0)) <= 0:
         raise SessionValidationError("session dimensions are invalid")
@@ -176,9 +189,15 @@ def validate_session(session: dict[str, Any]) -> dict[str, Any]:
     chunks = session.get("chunks")
     if not isinstance(chunks, list) or not chunks:
         raise SessionValidationError("session contains no chunks")
+    settings = session.get("settings") or {}
+    require_physical = schema >= 2 and isinstance(settings.get("physical_prompt_contract"), dict)
     previous_clip_index = None
     for index, entry in enumerate(chunks, start=1):
         validate_chunk_entry(entry)
+        if require_physical and not isinstance((entry.get("plan") or {}).get("physical_prompt"), dict):
+            raise SessionValidationError(
+                f"session schema {schema} physical prompt contract is missing from chunk {index}"
+            )
         if int(entry.get("sequence_index", index)) != index:
             raise SessionValidationError("session chunk sequence indices are not contiguous")
         clip_index = int(entry["plan"]["clip_index"])
