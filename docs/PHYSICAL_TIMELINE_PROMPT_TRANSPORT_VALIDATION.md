@@ -109,11 +109,21 @@ For the exact saved input, capture before sampling:
 
 A Timeline prompt may change physical text while keeping the compatibility `entry.prompt` and 64-character `prompt_hash` unchanged. Those logical fields must not be used as proof that physical conditioning is equivalent.
 
+### Physical Timeline Video source-selection boundary
+
+The separately gated physical Timeline Video adapter derives its source window from the same physical descriptor used by sampling. For the audited public Core VIDEO implementation it uses the public average source frame rate together with the active trim start to preserve the CFR source-grid phase. A non-default active trim is frozen into the Timeline Video source/run identity; Core's default open `(0, 0)` trim adds no extra identity salt.
+
+Descriptor construction prepares the exact resized CPU RGB presentation and fingerprints it before conditioning. A source-scoped one-entry prepared-window cache lets the subsequent VAE/Qwen encoding consume that authenticated presentation without decoding the same physical window a second time. The encoded assets must match both the stored selection contract and processed-RGB SHA-256 before conditioning proceeds.
+
+This does not prove exact variable-frame-rate temporal fidelity. The audited public Core component surface exposes an average frame rate but not individual source-frame PTS through the returned image components. Processed-presentation hashing prevents unsafe reuse if the decoded presentation changes; it does not turn average-rate selection into exact VFR timing. Treat VFR temporal fidelity as part of the separate decoded-media validation gate.
+
 ## Matched CUDA comparison
 
 Use the same prompt, all references, seed, resolution, chunk plan, sampler/sigmas, Native Masked continuation, VDN, Sol-H3, Spectrum, DiffAid and Untwist stack for both paths.
 
 If the first physical invocation has byte-identical compiled text and the same presentation identity, its exact compatible prefix may be reused to isolate continuation behavior. If the first invocation changes, run both complete sequences from the beginning.
+
+A legacy Fixed/List initial prefix that passes the conservative equivalence predicate may be reused without pretending that missing old compiler metadata is current metadata. Session schema 2 records that exceptional metadata-free first chunk as pending legacy-adapter revalidation; every later candidate reuse must prove equivalence again from current geometry, emitted bytes and presentation identity. Legacy continuation entries without sufficient provenance are not promoted by that adapter.
 
 For each run record:
 
