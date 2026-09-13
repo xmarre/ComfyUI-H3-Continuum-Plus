@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from ..state import validate_plan
+from .audio_phase import annotate_audio_phase_origins
 
 ASSEMBLY_PLAN_MAGIC = "H3_CONTINUUM_ASSEMBLY_PLAN"
 ASSEMBLY_PLAN_SCHEMA_VERSION = 1
@@ -203,6 +204,19 @@ def _recombine_terminal_tensor(
     return output.contiguous()
 
 
+def _with_audio_phase_origins(
+    plan: dict[str, Any],
+    *,
+    entries: list[dict[str, Any]],
+    group_key: str,
+) -> dict[str, Any]:
+    result = dict(plan)
+    groups = list(result[group_key])
+    result[group_key] = annotate_audio_phase_origins(entries, groups)
+    validate_assembly_plan(result)
+    return result
+
+
 def prepare_physical_decode_entries(
     entries,
     *,
@@ -219,6 +233,11 @@ def prepare_physical_decode_entries(
         preserve_final_frame=bool(preserve_final_frame),
     )
     if not terminal_merged:
+        plan = _with_audio_phase_origins(
+            plan,
+            entries=logical_entries,
+            group_key="chunks",
+        )
         return logical_entries, plan
     if len(logical_entries) < 2:
         raise ValueError("terminal physical decode requires two logical entries")
@@ -289,6 +308,7 @@ def prepare_physical_decode_entries(
         }
     )
     decode_groups.append(terminal_group)
+    decode_groups = annotate_audio_phase_origins(decode_entries, decode_groups)
 
     plan = dict(plan)
     plan["decode_group_version"] = 1
