@@ -234,7 +234,10 @@ def phase_align_decoded_audio(
     """Apply a proven physical-origin correction to one decoded audio group.
 
     Legacy plans without phase metadata and groups whose latent carry could not be
-    proven remain byte-for-byte on the native assembly path.
+    proven remain byte-for-byte on the native assembly path. A mathematically
+    valid phase shift is also withheld if the shifted decode would no longer cover
+    the complete retained interval; the existing native trim/pad behavior is then
+    preserved instead of silently worsening the tail.
     """
 
     waveform, sample_rate = validate_audio(audio)
@@ -250,7 +253,9 @@ def phase_align_decoded_audio(
         ),
         "native_trim_samples": _frame_sample(int(group.get("trim_frames", 0)), rate),
         "phase_trim_samples": None,
+        "requested_phase_delta_samples": 0,
         "phase_delta_samples": 0,
+        "candidate_shortfall_samples": 0,
         "applied": False,
     }
 
@@ -272,23 +277,40 @@ def phase_align_decoded_audio(
         )
 
     samples_per_latent = rate // AUDIO_LATENT_FPS
-    desired_global_start = _frame_sample(int(frame_cursor), rate)
+    cursor = int(frame_cursor)
+    desired_global_start = _frame_sample(cursor, rate)
     phase_trim = desired_global_start - origin * samples_per_latent
     if phase_trim < 0 or phase_trim > int(waveform.shape[-1]):
         raise ValueError(
             "proven audio phase origin maps outside the decoded waveform: "
-            f"origin={origin}, frame_cursor={int(frame_cursor)}, "
+            f"origin={origin}, frame_cursor={cursor}, "
             f"phase_trim={phase_trim}, waveform={int(waveform.shape[-1])}"
         )
 
     native_trim = int(report["native_trim_samples"])
     delta = native_trim - phase_trim
+    report["phase_trim_samples"] = int(phase_trim)
+    report["requested_phase_delta_samples"] = int(delta)
+    if delta == 0:
+        return {"waveform": waveform, "sample_rate": rate}, report
+
+    net_frames = int(group.get("net_frames", 0))
+    if net_frames <= 0:
+        raise ValueError("verified audio phase metadata requires positive net_frames")
+    wanted = _frame_sample(cursor + net_frames, rate) - _frame_sample(cursor, rate)
+    candidate_length = int(waveform.shape[-1]) + int(delta)
+    required_stop = native_trim + wanted
+    shortfall = max(0, required_stop - candidate_length)
+    report["candidate_shortfall_samples"] = int(shortfall)
+    if shortfall:
+        report["reason"] = "insufficient_decoded_tail_for_phase_alignment"
+        return {"waveform": waveform, "sample_rate": rate}, report
+
     shifted = _shift_for_native_trim(waveform, delta)
     report.update(
         {
-            "phase_trim_samples": int(phase_trim),
             "phase_delta_samples": int(delta),
-            "applied": bool(delta),
+            "applied": True,
         }
     )
     return {"waveform": shifted, "sample_rate": rate}, report
