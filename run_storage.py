@@ -23,7 +23,8 @@ from .constants import CONTINUUM_ACTUAL_PREFIX_STEPS
 from .v2.session import make_session, validate_chunk_entry
 
 
-RUN_STORAGE_SCHEMA_VERSION = 2
+RUN_STORAGE_SCHEMA_VERSION = 3
+RUN_STORAGE_LEGACY_SCHEMA_VERSION = 2
 from .conditioning import (
     CONDITIONING_MODES,
     conditioning_mode_from_presence,
@@ -180,8 +181,6 @@ def _output_root() -> Path:
 
 
 def _fsync_file(path: Path) -> None:
-    # Windows requires a writable descriptor for fsync(). The file contents
-    # are already complete at this point; opening r+b does not modify them.
     with path.open("r+b") as handle:
         os.fsync(handle.fileno())
 
@@ -508,6 +507,14 @@ def _audio_vae_signature(audio_vae: Any) -> tuple[dict[str, Any], bool]:
     return observed, module_safe
 
 
+def _physical_identity_fields(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "prompt_source_digest": str(result.get("prompt_source_digest", "")),
+        "physical_prompt_policy": str(result.get("physical_prompt_policy", "legacy_nominal_v1")),
+        "timeline_video_adapter": str(result.get("timeline_video_adapter", "legacy_nominal_chunk_v1")),
+    }
+
+
 def _apply_nonce_contract(
     contract: dict[str, Any], *, requested_nonce: int, effective_nonce: int,
 ) -> dict[str, Any]:
@@ -520,6 +527,7 @@ def _apply_nonce_contract(
     else:
         mode = "explicit" if int(requested_nonce) >= 1 else "auto"
     global_hash = _hash(result["global"])
+    physical_fields = _physical_identity_fields(result)
     chunk_contracts = []
     chunk_hashes = []
     for position, prompt_hash in enumerate(result["prompt_hashes"]):
@@ -532,6 +540,7 @@ def _apply_nonce_contract(
             "reroll_boundary": boundary if affected else 0,
             "effective_reroll_nonce": int(effective_nonce) if affected else 0,
             "last_frame_hash": str(result["last_frame_hash"]) if number == int(result["chunk_count"]) else "",
+            **physical_fields,
         }
         timeline_chunks = result.get("timeline_video_chunk_contracts") or []
         if position < len(timeline_chunks):
@@ -551,6 +560,30 @@ def _apply_nonce_contract(
         },
     )
     return result
+
+
+def _legacy_v2_chunk_hashes(contract: dict[str, Any]) -> list[str]:
+    """Recompute schema-2 chunk identities without new physical fields."""
+    global_hash = _hash(contract["global"])
+    boundary = int(contract["reroll_from_chunk"])
+    effective_nonce = int(contract.get("effective_reroll_nonce", 0))
+    hashes = []
+    for position, prompt_hash in enumerate(contract["prompt_hashes"]):
+        number = position + 1
+        affected = boundary > 0 and number >= boundary
+        item = {
+            "global_hash": global_hash,
+            "chunk_number": number,
+            "prompt_hash": str(prompt_hash),
+            "reroll_boundary": boundary if affected else 0,
+            "effective_reroll_nonce": effective_nonce if affected else 0,
+            "last_frame_hash": str(contract["last_frame_hash"]) if number == int(contract["chunk_count"]) else "",
+        }
+        timeline_chunks = contract.get("timeline_video_chunk_contracts") or []
+        if position < len(timeline_chunks):
+            item["timeline_video"] = dict(timeline_chunks[position])
+        hashes.append(_hash(item))
+    return hashes
 
 
 def build_sampling_contract(
@@ -681,6 +714,16 @@ def build_sampling_contract(
                 "Timeline Video contract does not match the configured chunk count"
             )
         global_contract["timeline_video"] = timeline_value
+    prompt_source_digest = str(
+        prompt_plan.get("prompt_source_digest")
+        or (prompt_plan.get("source") or {}).get("source_digest", "")
+    )
+    physical_prompt_policy = str(
+        prompt_plan.get("physical_prompt_policy", "legacy_nominal_v1")
+    )
+    timeline_video_adapter = str(
+        prompt_plan.get("timeline_video_adapter", "legacy_nominal_chunk_v1")
+    )
     lineage_sha256 = _hash({
         "global_hash": _hash(global_contract),
         "chunk_count": chunks,
@@ -688,12 +731,19 @@ def build_sampling_contract(
         "prompt_hashes": prompt_hashes,
         "last_frame_hash": str(last_frame_hash),
         "timeline_video_chunk_contracts": timeline_chunk_contracts,
+        "prompt_source_digest": prompt_source_digest,
+        "physical_prompt_policy": physical_prompt_policy,
+        "timeline_video_adapter": timeline_video_adapter,
     })
     contract = {
         "global": global_contract,
         "chunk_count": chunks,
         "prompt_mode": str(prompt_plan["mode"]),
         "prompt_hashes": prompt_hashes,
+        "prompt_source_digest": prompt_source_digest,
+        "physical_prompt_policy": physical_prompt_policy,
+        "timeline_video_adapter": timeline_video_adapter,
+        "timeline_video_chunk_contracts": timeline_chunk_contracts,
         "reroll_from_chunk": boundary,
         "last_frame_hash": str(last_frame_hash),
         "nonce_lineage_sha256": lineage_sha256,
@@ -827,6 +877,7 @@ def _entry_metadata(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "sequence_index": int(entry["sequence_index"]),
         "clip_index": int(entry["clip_index"]),
+        "prompt": str(entry.get("prompt", "")),
         "prompt_hash": str(entry["prompt_hash"]),
         "seed": int(entry["seed"]),
         "context_frames": int(entry["context_frames"]),
@@ -896,6 +947,7 @@ class RunStorageController:
                     lifecycle = value.get("nonce_lifecycle") or {}
                     revision = {key: value.get(key) for key in ("revision_id", "contract_sha256", "status", "updated_utc", "resume_safe")}
                     revision.update(
+                        schema_version=value.get("run_storage_schema_version"),
                         nonce_mode=lifecycle.get("mode"),
                         effective_reroll_nonce=lifecycle.get("effective_nonce"),
                         reroll_from_chunk=(value.get("contract") or {}).get("reroll_from_chunk"),
@@ -926,7 +978,8 @@ class RunStorageController:
                 raise RunStorageError(f"stored chunk tensors are invalid: {filename}")
             video, audio = handle.get_tensor("video"), handle.get_tensor("audio")
         entry = dict(record["entry"])
-        entry.update(prompt=str(prompt), video=video, audio=audio, reused=False)
+        stored_prompt = entry.get("prompt")
+        entry.update(prompt=str(prompt if stored_prompt is None else stored_prompt), video=video, audio=audio, reused=False)
         return validate_chunk_entry(entry)
 
     def _valid_prefix(self, manifest: dict[str, Any], hashes: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1068,6 +1121,7 @@ class RunStorageController:
                 raise RunStorageError(f"short revision id collision: {self.revision_id}")
 
         hashes = list(contract["chunk_contract_hashes"])
+        legacy_hashes = _legacy_v2_chunk_hashes(contract)
         best_entries: list[dict[str, Any]] = []
         best_records: list[dict[str, Any]] = []
         candidates = [exact] if exact is not None and safe else []
@@ -1078,9 +1132,14 @@ class RunStorageController:
                 except Exception:
                     continue
         for candidate in candidates:
-            if int(candidate.get("run_storage_schema_version", -1)) != RUN_STORAGE_SCHEMA_VERSION:
+            schema = int(candidate.get("run_storage_schema_version", -1))
+            if schema == RUN_STORAGE_SCHEMA_VERSION:
+                candidate_hashes = hashes
+            elif schema == RUN_STORAGE_LEGACY_SCHEMA_VERSION:
+                candidate_hashes = legacy_hashes
+            else:
                 continue
-            entries, records = self._valid_prefix(candidate, hashes)
+            entries, records = self._valid_prefix(candidate, candidate_hashes)
             if len(entries) > len(best_entries):
                 best_entries, best_records = entries, records
 
@@ -1106,17 +1165,29 @@ class RunStorageController:
         self._write_project()
         if not best_entries:
             return None
+        physical_entries = all(
+            isinstance((entry.get("plan") or {}).get("physical_prompt"), dict)
+            for entry in best_entries
+        )
+        settings = {
+            "run_storage_validated_prefix": True,
+            "revision_id": self.revision_id,
+            "first_frame_hash": str(first_frame_hash),
+            "last_frame_hash": str(last_frame_hash),
+        }
+        if physical_entries:
+            settings["physical_prompt_contract"] = {
+                "run_storage_schema_version": RUN_STORAGE_SCHEMA_VERSION,
+                "prompt_source_digest": str(contract.get("prompt_source_digest", "")),
+                "compiler_version": str(contract.get("physical_prompt_policy", "")),
+                "timeline_video_adapter": str(contract.get("timeline_video_adapter", "")),
+            }
         return make_session(
             chunks=best_entries, width=int(width), height=int(height),
             chunk_seconds=float(chunk_seconds), identity_hash=str(identity_hash),
             model_fingerprint_value=str(model_fingerprint_value),
             parent_session_id=None, reroll_from_chunk=0,
-            settings={
-                "run_storage_validated_prefix": True,
-                "revision_id": self.revision_id,
-                "first_frame_hash": str(first_frame_hash),
-                "last_frame_hash": str(last_frame_hash),
-            },
+            settings=settings,
         )
 
     def commit_chunk(self, entry: dict[str, Any], *, position: int) -> None:
