@@ -123,16 +123,18 @@ def _preserved_prefix(*,session,prompt_hashes,chunks,reroll_from_chunk,width,hei
     elif reroll_from_chunk>0: notes.append(f"preserved chunks 1-{len(preserved)}; regenerated from chunk {reroll_from_chunk}")
     return preserved,notes
 
-def _conditioning_cache(*,clip,prompts,assets,final_has_last_frame,reference_assets=None,reference_audio_assets=None,timeline_video_assets=None):
-    cache={}; final_index=len(prompts)-1
+def _conditioning_cache(*,clip,prompts,assets,final_has_last_frame,reference_assets=None,reference_audio_assets=None,timeline_video_assets=None,include_first_frame=True,cache=None):
+    cache={} if cache is None else cache; final_index=len(prompts)-1
     for index,prompt in enumerate(prompts):
-        include_last=bool(final_has_last_frame and index==final_index); key=(prompt,include_last)
+        include_first=bool(include_first_frame and assets.first_image is not None); include_last=bool(final_has_last_frame and index==final_index); key=(prompt,include_first,include_last)
         if key in cache: continue
+        first_image=assets.first_image if include_first else None
+        last_image=assets.last_image if include_last else None
         if reference_assets is not None:
             from ..reference import encode_reference_prompt
-            cache[key]=encode_reference_prompt(clip,prompt,reference_assets,first_image=assets.first_image,last_image=assets.last_image if include_last else None,reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets)
+            cache[key]=encode_reference_prompt(clip,prompt,reference_assets,first_image=first_image,last_image=last_image,reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets)
         else:
-            cache[key]=encode_prompt_conditioning(clip,prompt,first_image=assets.first_image,last_image=assets.last_image if include_last else None,reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets)
+            cache[key]=encode_prompt_conditioning(clip,prompt,first_image=first_image,last_image=last_image,reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets)
     return cache
 
 
@@ -426,12 +428,6 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         if reference_video_source is not None:
             from ..reference_video import encode_reference_video
             reference_video_assets=encode_reference_video(video_vae,reference_video_source)
-        if timeline_video_source is None:
-            cache=_conditioning_cache(clip=clip,prompts=prompts,assets=assets,final_has_last_frame=last_frame is not None,reference_assets=reference_assets,reference_audio_assets=reference_audio_assets,timeline_video_assets=reference_video_assets)
-            if terminal_merge_enabled and terminal_prompt is not None:
-                terminal_key=(terminal_prompt,True)
-                if terminal_key not in cache:
-                    cache.update(_conditioning_cache(clip=clip,prompts=[terminal_prompt],assets=assets,final_has_last_frame=True,reference_assets=reference_assets,reference_audio_assets=reference_audio_assets,timeline_video_assets=reference_video_assets))
     entries=preserved[:]; previous_state=None
     if entries:
         try: previous_state=entry_to_state(entries[-1])
@@ -462,16 +458,20 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         if timeline_video_source is not None:
             from ..timeline_video import encode_timeline_video_chunk
             timeline_video_assets=encode_timeline_video_chunk(video_vae,timeline_video_source,sequence_index)
-            chunk_cache=_conditioning_cache(clip=clip,prompts=[prompt],assets=assets,final_has_last_frame=bool(last_frame is not None and is_final),reference_assets=reference_assets,reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets)
+            chunk_cache={}
+        include_first=previous_state is None
+        include_last=bool(last_frame is not None and is_final)
+        _conditioning_cache(clip=clip,prompts=[prompt],assets=assets,final_has_last_frame=include_last,reference_assets=reference_assets,reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets,include_first_frame=include_first,cache=chunk_cache)
+        conditioning_key=(prompt,bool(include_first and assets.first_image is not None),bool(include_last))
         if previous_state is None:
-            total_frames=initial_frame_count; latent=empty_h3_latent(width,height,total_frames); conditioning=attach_keyframes(chunk_cache[(prompt,bool(last_frame is not None and is_final))],frame_count=total_frames,first_latent=assets.first_latent,last_latent=assets.last_latent if is_final else None); clip_index=1; context_frames=0
+            total_frames=initial_frame_count; latent=empty_h3_latent(width,height,total_frames); conditioning=attach_keyframes(chunk_cache[conditioning_key],frame_count=total_frames,first_latent=assets.first_latent,last_latent=assets.last_latent if is_final else None); clip_index=1; context_frames=0
             chunk_plan=make_plan(continuation=False,clip_index=clip_index,total_frames=total_frames,trim_frames=0,width=width,height=height,context_frames=5,state_capacity_frames=largest_context_capacity(total_frames),requested_extend_seconds=chunk_seconds,debug=debug); reason="initial clip"
         else:
             context_frames,motion_score,reason=choose_continuation_context_frames(method=continuation_method,continuity=continuity,state=previous_state,audio_continuity=bool(audio_continuity),driving_audio_active=driving_audio_source is not None); desired_cumulative=int(round((sequence_index+1)*chunk_seconds*FPS)); requested_new_frames=max(1,desired_cumulative-retained_frames)
             if is_final: shape=make_extension_shape_at_least(context_frames,requested_new_frames)
             else: shape=make_extension_shape(context_frames,requested_new_frames/FPS)
             latent=empty_h3_latent(width,height,shape.total_frames)
-            base_conditioning=attach_keyframes(chunk_cache[(prompt,bool(last_frame is not None and is_final))],frame_count=shape.total_frames,first_latent=assets.first_latent,last_latent=assets.last_latent if is_final else None)
+            base_conditioning=attach_keyframes(chunk_cache[conditioning_key],frame_count=shape.total_frames,first_latent=None,last_latent=assets.last_latent if is_final else None)
             # Driving Audio owns the audio timeline in both continuation modes.
             # Do not feed the previous generated audio back as a second source.
             carry_generated_audio=bool(audio_continuity) and driving_audio_source is None
@@ -507,7 +507,9 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         contract=_terminal_pair_contract(initial_pair=initial_pair,chunk_seconds=chunk_seconds)
         physical_frames=int(contract["physical_frames"]); physical_context_frames=int(contract["physical_context_frames"])
         latent=empty_h3_latent(width,height,physical_frames)
-        base_conditioning=attach_keyframes(cache[(terminal_prompt,True)],frame_count=physical_frames,first_latent=assets.first_latent,last_latent=assets.last_latent)
+        _conditioning_cache(clip=clip,prompts=[terminal_prompt],assets=assets,final_has_last_frame=True,reference_assets=reference_assets,reference_audio_assets=reference_audio_assets,timeline_video_assets=reference_video_assets,include_first_frame=initial_pair,cache=cache)
+        terminal_key=(terminal_prompt,bool(initial_pair and assets.first_image is not None),True)
+        base_conditioning=attach_keyframes(cache[terminal_key],frame_count=physical_frames,first_latent=assets.first_latent if initial_pair else None,last_latent=assets.last_latent)
         video_context=None; audio_context=None; context_before=None; motion_score=0.0
         if initial_pair:
             conditioning=base_conditioning; physical_clip_index=1

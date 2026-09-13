@@ -5,7 +5,7 @@ V3.4 treats Reference Images and temporal keyframes as orthogonal MiniMax H3 con
 ## Contract
 
 - `Reference Image 1..8` build persistent `minimax_refs` blocks and the Qwen reference presentation (`<Picture N>`).
-- `First Frame` is a frame-0 keyframe guide.
+- `First Frame` is a frame-0 keyframe guide and is presented to Qwen only for the initial physical sample.
 - `Last Frame` is a keyframe guide at the final frame of the generated target.
 - Connecting one or more Reference Images does **not** disable or discard First Frame or Last Frame.
 
@@ -30,11 +30,11 @@ The temporal mode is used for keyframe and persistence semantics. Reference asse
 
 ### Native Masked
 
-For chunk 2 and later, the protected continuation prefix is copied into the new target latent and masked against denoising. A First Frame keyframe at frame 0 is removed from continuation-chunk conditioning because it would compete with that protected prefix. Persistent Reference blocks remain. A Last Frame keyframe remains on the final target because it is outside the protected prefix.
+For chunk 2 and later, the protected continuation prefix is copied into the new target latent and masked against denoising. The original First Frame is removed from both the temporal keyframe payload and the Qwen visual presentation because either channel can compete with the protected prefix or pull a later chunk back toward the opening composition. Persistent Reference blocks remain. A Last Frame keyframe remains on the final target because it is outside the protected prefix.
 
 ### Guide / Motion Context
 
-For chunk 2 and later, Continuum context replaces the old frame-0 keyframe according to the normal recommended continuation policy. Persistent Reference blocks remain, the continuation context reference is appended, and a final Last Frame keyframe is moved to the final frame of the expanded continuation target.
+For chunk 2 and later, Continuum context replaces the old frame-0 keyframe according to the normal recommended continuation policy. The original First Frame is also omitted from the Qwen visual presentation. Persistent Reference blocks remain, the continuation context reference is appended, and a final Last Frame keyframe is moved to the final frame of the expanded continuation target.
 
 ## Run Storage
 

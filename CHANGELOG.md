@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Scope First Frame Qwen visual presentation to the initial physical sample. Continuation chunks now rely on carried/generated context plus persistent Reference Images, preventing the opening composition from being reintroduced later while preserving initial I2VA/FL2VA semantics.
+- Keep continuation conditioning caches distinct from initial-sample conditioning so identical prompt text cannot accidentally reuse a First-Frame-bearing Qwen embedding after the sequence start.
+
 ## 3.4.2
 
 - Adapted upstream's V3.4 FL2VA terminal merge as an explicit physical-decode-group contract: 2×5-second FL2VA uses one Core-equivalent initial sample, while 3+ chunk merging is limited to Guide / Motion Context with the validated Balanced 22-frame prefix.
