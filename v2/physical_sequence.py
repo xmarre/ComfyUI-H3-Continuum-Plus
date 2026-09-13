@@ -22,14 +22,12 @@ from ..temporal import (
     make_extension_shape_at_least,
 )
 from .physical_prompts import (
-    compile_legacy_nominal,
-    compile_physical_prompt,
     make_physical_sample_descriptor,
     physical_metadata,
     physical_prompt_compiler_enabled,
     physical_timeline_video_enabled,
 )
-from .physical_runtime import build_presentation_contract
+from .physical_runtime import build_presentation_contract, compile_invocation_prompt
 
 
 @dataclass(frozen=True)
@@ -224,10 +222,13 @@ def compile_active_metadata(
     descriptor: Any,
     legacy_text: str,
 ) -> tuple[Any, dict[str, Any]]:
-    if physical_prompt_compiler_enabled():
-        compiled = compile_physical_prompt(prompt_plan, descriptor)
-    else:
-        compiled = compile_legacy_nominal(prompt_plan, descriptor, text=legacy_text)
+    candidate = physical_prompt_compiler_enabled()
+    compiled = compile_invocation_prompt(
+        prompt_plan,
+        descriptor,
+        legacy_text=legacy_text,
+        candidate=candidate,
+    )
     return compiled, physical_metadata(
         descriptor,
         compiled,
