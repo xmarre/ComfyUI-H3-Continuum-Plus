@@ -70,9 +70,60 @@ def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
+def _source_semantics(source: dict[str, Any]) -> dict[str, Any]:
+    """Project stored source provenance onto runtime-affecting prompt semantics.
+
+    Schema 2 deliberately preserves exact authored text and raw headers for
+    provenance/rebuilds. Those byte-level spellings are not themselves compiler
+    semantics once parsing has produced the normalized AST. Keep them out of the
+    source digest so harmless header/list formatting cannot invalidate a reuse
+    lineage while body, interval, override and mode changes still do.
+    """
+
+    kind = str(source.get("kind", ""))
+    result: dict[str, Any] = {
+        "kind": kind,
+        "resolved_mode": str(source.get("resolved_mode", "")),
+        "chunk_seconds": _fraction_string(source.get("chunk_seconds", 0)),
+        "overrides": {
+            str(key): str(value)
+            for key, value in sorted(
+                (source.get("overrides") or {}).items(), key=lambda item: str(item[0])
+            )
+        },
+    }
+    if kind == "timeline":
+        result["preamble"] = str(source.get("preamble", ""))
+        sections = []
+        for raw in source.get("sections") or []:
+            section = {
+                "ordinal": int(raw.get("ordinal", len(sections))),
+                "kind": str(raw.get("kind", "")),
+                "body": str(raw.get("body", "")),
+            }
+            if section["kind"] == "time":
+                section["start"] = _fraction_string(raw.get("start", 0))
+                section["end"] = _fraction_string(raw.get("end", 0))
+            elif section["kind"] == "chunk":
+                section["chunk_index"] = int(raw.get("chunk_index", 0))
+            sections.append(section)
+        result["sections"] = sections
+    elif kind == "list":
+        result["entries"] = [str(value) for value in source.get("entries") or []]
+    elif kind == "legacy_logical":
+        result["logical_hashes"] = [
+            str(value) for value in source.get("logical_hashes") or []
+        ]
+    else:
+        # Fixed/fallback semantics are the normalized opaque source text. Keep
+        # exact original_text in the stored source too, but hash only its value
+        # as the actual fixed instruction rather than unrelated provenance keys.
+        result["text"] = str(source.get("original_text", ""))
+    return result
+
+
 def _source_digest(source: dict[str, Any]) -> str:
-    semantic = {key: copy.deepcopy(value) for key, value in source.items() if key != "source_digest"}
-    return hashlib.sha256(_canonical(semantic).encode("utf-8")).hexdigest()
+    return hashlib.sha256(_canonical(_source_semantics(source)).encode("utf-8")).hexdigest()
 
 
 def _finalize_source(source: dict[str, Any]) -> dict[str, Any]:
