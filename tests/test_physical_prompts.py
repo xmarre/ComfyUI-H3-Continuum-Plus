@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 
+import pytest
+
 from ComfyUI_H3_Continuum_Join.constants import (
     PROMPT_MODE_FIXED,
     PROMPT_MODE_TIMELINE,
@@ -10,11 +12,13 @@ from ComfyUI_H3_Continuum_Join.constants import (
 from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
     LEGACY_COMPILER_VERSION,
     PHYSICAL_COMPILER_VERSION,
+    PhysicalPromptError,
     compile_physical_prompt,
     make_physical_sample_descriptor,
     physical_metadata,
     physical_metadata_matches,
     physical_prompt_compiler_enabled,
+    validate_physical_metadata,
 )
 from ComfyUI_H3_Continuum_Join.v2.prompts import (
     apply_prompt_overrides,
@@ -182,10 +186,42 @@ def test_physical_identity_validates_descriptor_and_compiled_conditioning_togeth
     )
     descriptor = _descriptor()
     metadata = physical_metadata(descriptor, compile_physical_prompt(plan, descriptor))
+    assert validate_physical_metadata(metadata) is metadata
     assert physical_metadata_matches(metadata, copy.deepcopy(metadata))
     changed = copy.deepcopy(metadata)
     changed["physical_conditioning_hash"] = "0" * 64
     assert not physical_metadata_matches(metadata, changed)
+
+
+def test_physical_metadata_rejects_stale_descriptor_digest_after_corruption():
+    plan = make_prompt_plan(
+        mode=PROMPT_MODE_TIMELINE,
+        script="[0-7s]\none\n[7-14s]\ntwo",
+        chunks=2,
+        chunk_seconds=7,
+    )
+    metadata = physical_metadata(_descriptor(), compile_physical_prompt(plan, _descriptor()))
+    corrupted = copy.deepcopy(metadata)
+    corrupted["descriptor"]["retained_before"] += 1
+    with pytest.raises(PhysicalPromptError, match="window is inconsistent|descriptor digest mismatch"):
+        validate_physical_metadata(corrupted)
+    assert not physical_metadata_matches(corrupted, metadata)
+
+
+def test_physical_metadata_rejects_stale_compiled_text_digest_after_corruption():
+    plan = make_prompt_plan(
+        mode=PROMPT_MODE_TIMELINE,
+        script="[0-7s]\none\n[7-14s]\ntwo",
+        chunks=2,
+        chunk_seconds=7,
+    )
+    descriptor = _descriptor()
+    metadata = physical_metadata(descriptor, compile_physical_prompt(plan, descriptor))
+    corrupted = copy.deepcopy(metadata)
+    corrupted["compiled"]["text"] += " changed"
+    with pytest.raises(PhysicalPromptError, match="text digest mismatch"):
+        validate_physical_metadata(corrupted)
+    assert not physical_metadata_matches(corrupted, metadata)
 
 
 def test_experimental_activation_is_explicit_and_reversible(monkeypatch):
