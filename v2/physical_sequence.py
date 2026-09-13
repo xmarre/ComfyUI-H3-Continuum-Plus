@@ -187,7 +187,34 @@ def _physical_timeline_video_presentation(
         fps_numerator=int(FPS),
         fps_denominator=1,
     )
-    return timeline_video_physical_presentation(timeline_video_source, prepared)
+    presentation = timeline_video_physical_presentation(
+        timeline_video_source, prepared
+    )
+    selection = presentation.get("selection_contract") or {}
+    diagnostics = []
+    leading = int(selection.get("leading_clamped_frames", 0) or 0)
+    trailing = int(selection.get("trailing_clamped_frames", 0) or 0)
+    if leading:
+        diagnostics.append(
+            {
+                "level": "warning",
+                "code": "H3C-TV201",
+                "message": "physical Timeline Video window begins before the available source; leading samples hold the first source frame",
+                "frames": leading,
+            }
+        )
+    if trailing:
+        diagnostics.append(
+            {
+                "level": "warning",
+                "code": "H3C-TV202",
+                "message": "physical Timeline Video window extends past the available source; trailing samples hold the last source frame",
+                "frames": trailing,
+            }
+        )
+    if diagnostics:
+        presentation["diagnostics"] = diagnostics
+    return presentation
 
 
 def make_normal_descriptor(
