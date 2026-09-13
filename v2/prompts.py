@@ -580,12 +580,18 @@ def apply_prompt_overrides(plan, overrides):
     source["overrides"] = source_overrides
     source = _finalize_source(source)
     result = copy.deepcopy(plan)
-    # Preserve Timeline provenance in schema 2. Opaque plans retain their own
-    # source kind; the compatibility logical prompts simply reflect overrides.
     result["prompts"] = prompts
     result["hashes"] = [prompt_hash(p) for p in prompts]
     result["source"] = source
     result["notes"] = list(plan.get("notes") or []) + ["external Clip Prompt input(s): " + ", ".join(map(str, replaced))]
+    # Preserve the historical logical override view for opaque plans: adding a
+    # per-clip override turns their compatibility mode into List and drops any
+    # parser preflight diagnostics. Timeline is the deliberate schema-2
+    # exception: it keeps Timeline mode/source AST so the physical compiler can
+    # apply the override at highest priority without discarding authored ranges.
+    if source.get("kind") != "timeline":
+        result["mode"] = PROMPT_MODE_LIST
+        result.pop("diagnostics", None)
     return validate_prompt_plan(result)
 
 
