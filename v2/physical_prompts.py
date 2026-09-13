@@ -1,0 +1,611 @@
+"""Physical-timeline prompt transport for MiniMax H3 Continuum.
+
+This module is deliberately pure: it resolves authored prompt source against one
+already-resolved physical H3 invocation. It does not encode CLIP/Qwen, allocate
+latents, mutate sampler state, or own continuation geometry.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from fractions import Fraction
+import hashlib
+import json
+import os
+from typing import Any, Iterable
+
+PHYSICAL_DESCRIPTOR_VERSION = 1
+COMPILED_PHYSICAL_PROMPT_VERSION = 1
+PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v1"
+LEGACY_COMPILER_VERSION = "legacy_nominal_v1"
+PHYSICAL_PROMPT_ENV = "H3_CONTINUUM_PHYSICAL_PROMPTS"
+PHYSICAL_TIMELINE_VIDEO_ENV = "H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO"
+
+
+class PhysicalPromptError(ValueError):
+    pass
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+
+
+def text_sha256(value: str) -> str:
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+
+
+def _enabled(name: str) -> bool:
+    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def physical_prompt_compiler_enabled() -> bool:
+    """Experimental activation gate; legacy nominal execution remains default."""
+
+    return _enabled(PHYSICAL_PROMPT_ENV)
+
+
+def physical_timeline_video_enabled() -> bool:
+    """Separate matched gate for descriptor-aware Timeline Video extraction."""
+
+    return physical_prompt_compiler_enabled() and _enabled(PHYSICAL_TIMELINE_VIDEO_ENV)
+
+
+def fraction_string(value: Fraction | int | str | float) -> str:
+    item = value if isinstance(value, Fraction) else Fraction(str(value))
+    return str(item.numerator) if item.denominator == 1 else f"{item.numerator}/{item.denominator}"
+
+
+def parse_fraction(value: Any) -> Fraction:
+    if isinstance(value, Fraction):
+        return value
+    if isinstance(value, int):
+        return Fraction(value, 1)
+    text = str(value).strip()
+    if not text:
+        raise PhysicalPromptError("empty rational value")
+    if "/" in text:
+        numerator, denominator = text.split("/", 1)
+        return Fraction(int(numerator), int(denominator))
+    return Fraction(text)
+
+
+def _format_seconds(value: Fraction) -> str:
+    # Rendering is deterministic at six decimals, while exact fractions remain
+    # in metadata. Python's fixed formatting gives the required half-even rule.
+    rendered = f"{float(value):.6f}".rstrip("0").rstrip(".")
+    return rendered or "0"
+
+
+@dataclass(frozen=True)
+class PhysicalSampleDescriptor:
+    group_id: str
+    logical_indices: tuple[int, ...]
+    fps_numerator: int
+    fps_denominator: int
+    retained_before: int
+    context_frames: int
+    total_frames: int
+    global_start_frame: int
+    global_end_frame: int
+    target_duration_frames: int
+    continuation_method: str
+    initial_state_origin: str
+    exact_protected_interval: tuple[int, int] | None
+    guided_overlap_interval: tuple[int, int] | None
+    retained_suffix_interval: tuple[int, int]
+    include_first: bool
+    include_last: bool
+    last_keyframe_index: int | None
+    terminal_contract: dict[str, Any] | None
+    presentation_contract: dict[str, Any]
+
+    @property
+    def fps(self) -> Fraction:
+        return Fraction(self.fps_numerator, self.fps_denominator)
+
+    @property
+    def global_start_seconds(self) -> Fraction:
+        return Fraction(self.global_start_frame, 1) / self.fps
+
+    @property
+    def global_end_seconds(self) -> Fraction:
+        return Fraction(self.global_end_frame, 1) / self.fps
+
+    def semantic_dict(self) -> dict[str, Any]:
+        return {
+            "version": PHYSICAL_DESCRIPTOR_VERSION,
+            "group_id": self.group_id,
+            "logical_indices": list(self.logical_indices),
+            "fps": [self.fps_numerator, self.fps_denominator],
+            "retained_before": self.retained_before,
+            "context_frames": self.context_frames,
+            "total_frames": self.total_frames,
+            "global_start_frame": self.global_start_frame,
+            "global_end_frame": self.global_end_frame,
+            "target_duration_frames": self.target_duration_frames,
+            "continuation_method": self.continuation_method,
+            "initial_state_origin": self.initial_state_origin,
+            "exact_protected_interval": list(self.exact_protected_interval) if self.exact_protected_interval else None,
+            "guided_overlap_interval": list(self.guided_overlap_interval) if self.guided_overlap_interval else None,
+            "retained_suffix_interval": list(self.retained_suffix_interval),
+            "include_first": self.include_first,
+            "include_last": self.include_last,
+            "last_keyframe_index": self.last_keyframe_index,
+            "terminal_contract": self.terminal_contract,
+            "presentation_contract": self.presentation_contract,
+        }
+
+    @property
+    def digest(self) -> str:
+        return canonical_sha256(self.semantic_dict())
+
+
+def make_physical_sample_descriptor(
+    *,
+    group_id: str,
+    logical_indices: Iterable[int],
+    retained_before: int,
+    context_frames: int,
+    total_frames: int,
+    target_duration_frames: int,
+    continuation_method: str,
+    initial_state_origin: str,
+    include_first: bool,
+    include_last: bool,
+    presentation_contract: dict[str, Any],
+    fps_numerator: int = 24,
+    fps_denominator: int = 1,
+    exact_protected: bool = False,
+    guided_overlap: bool = False,
+    terminal_contract: dict[str, Any] | None = None,
+) -> PhysicalSampleDescriptor:
+    retained_before = int(retained_before)
+    context_frames = int(context_frames)
+    total_frames = int(total_frames)
+    if retained_before < 0 or context_frames < 0 or total_frames <= context_frames:
+        raise PhysicalPromptError("invalid physical sample geometry")
+    start = retained_before - context_frames
+    end = start + total_frames
+    overlap = (start, retained_before) if context_frames else None
+    retained_end = retained_before + total_frames - context_frames
+    return PhysicalSampleDescriptor(
+        group_id=str(group_id),
+        logical_indices=tuple(int(value) for value in logical_indices),
+        fps_numerator=int(fps_numerator),
+        fps_denominator=int(fps_denominator),
+        retained_before=retained_before,
+        context_frames=context_frames,
+        total_frames=total_frames,
+        global_start_frame=start,
+        global_end_frame=end,
+        target_duration_frames=int(target_duration_frames),
+        continuation_method=str(continuation_method),
+        initial_state_origin=str(initial_state_origin),
+        exact_protected_interval=overlap if exact_protected else None,
+        guided_overlap_interval=overlap if guided_overlap else None,
+        retained_suffix_interval=(retained_before, retained_end),
+        include_first=bool(include_first),
+        include_last=bool(include_last),
+        last_keyframe_index=total_frames - 1 if include_last else None,
+        terminal_contract=dict(terminal_contract) if terminal_contract is not None else None,
+        presentation_contract=dict(presentation_contract),
+    )
+
+
+@dataclass(frozen=True)
+class CompiledPhysicalPrompt:
+    compiler_version: str
+    text: str
+    text_sha256: str
+    contributing_intervals: tuple[dict[str, Any], ...]
+    diagnostics: tuple[dict[str, Any], ...]
+    fallback_status: str
+    overrun: bool
+    descriptor_digest: str
+    presentation_digest: str
+    physical_conditioning_hash: str
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "version": COMPILED_PHYSICAL_PROMPT_VERSION,
+            "compiler_version": self.compiler_version,
+            "text": self.text,
+            "text_sha256": self.text_sha256,
+            "contributing_intervals": [dict(item) for item in self.contributing_intervals],
+            "diagnostics": [dict(item) for item in self.diagnostics],
+            "fallback_status": self.fallback_status,
+            "overrun": self.overrun,
+            "descriptor_digest": self.descriptor_digest,
+            "presentation_digest": self.presentation_digest,
+            "physical_conditioning_hash": self.physical_conditioning_hash,
+        }
+
+
+def presentation_digest(contract: dict[str, Any]) -> str:
+    return canonical_sha256(contract)
+
+
+def _compile_result(
+    *,
+    compiler_version: str,
+    text: str,
+    intervals: list[dict[str, Any]],
+    diagnostics: list[dict[str, Any]],
+    fallback_status: str,
+    overrun: bool,
+    descriptor: PhysicalSampleDescriptor,
+) -> CompiledPhysicalPrompt:
+    descriptor_digest = descriptor.digest
+    presentation_sha = presentation_digest(descriptor.presentation_contract)
+    text_digest = text_sha256(text)
+    physical_hash = canonical_sha256(
+        {
+            "compiler_version": compiler_version,
+            "descriptor": descriptor.semantic_dict(),
+            "text": text,
+            "presentation_contract": descriptor.presentation_contract,
+            "terminal_contract": descriptor.terminal_contract,
+        }
+    )
+    return CompiledPhysicalPrompt(
+        compiler_version=compiler_version,
+        text=str(text),
+        text_sha256=text_digest,
+        contributing_intervals=tuple(intervals),
+        diagnostics=tuple(diagnostics),
+        fallback_status=str(fallback_status),
+        overrun=bool(overrun),
+        descriptor_digest=descriptor_digest,
+        presentation_digest=presentation_sha,
+        physical_conditioning_hash=physical_hash,
+    )
+
+
+def _logical_prompt(plan: dict[str, Any], logical_index: int) -> str:
+    prompts = list(plan.get("prompts") or [])
+    if not prompts:
+        return ""
+    index = max(0, min(int(logical_index), len(prompts) - 1))
+    return str(prompts[index])
+
+
+def compile_legacy_nominal(
+    plan: dict[str, Any],
+    descriptor: PhysicalSampleDescriptor,
+    *,
+    text: str | None = None,
+) -> CompiledPhysicalPrompt:
+    logical = descriptor.logical_indices[0] if descriptor.logical_indices else 0
+    emitted = _logical_prompt(plan, logical) if text is None else str(text)
+    interval = {
+        "kind": "legacy_logical",
+        "logical_index": int(logical),
+        "global_start_frame": descriptor.global_start_frame,
+        "global_end_frame": descriptor.global_end_frame,
+        "local_start": "0",
+        "local_end": fraction_string(Fraction(descriptor.total_frames, 1) / descriptor.fps),
+    }
+    return _compile_result(
+        compiler_version=LEGACY_COMPILER_VERSION,
+        text=emitted,
+        intervals=[interval],
+        diagnostics=[],
+        fallback_status="legacy_nominal",
+        overrun=False,
+        descriptor=descriptor,
+    )
+
+
+def _timeline_source(plan: dict[str, Any]) -> dict[str, Any] | None:
+    source = plan.get("source")
+    if not isinstance(source, dict) or source.get("kind") != "timeline":
+        return None
+    if not isinstance(source.get("sections"), list):
+        return None
+    return source
+
+
+def _section_interval(section: dict[str, Any], chunk_seconds: Fraction) -> tuple[Fraction, Fraction]:
+    if section.get("kind") == "chunk":
+        index = int(section["chunk_index"])
+        return (Fraction(index - 1, 1) * chunk_seconds, Fraction(index, 1) * chunk_seconds)
+    return parse_fraction(section["start"]), parse_fraction(section["end"])
+
+
+def _resolved_candidates(source: dict[str, Any], chunk_seconds: Fraction) -> list[dict[str, Any]]:
+    result = []
+    for raw in source.get("sections") or []:
+        section = dict(raw)
+        start, end = _section_interval(section, chunk_seconds)
+        if end <= start:
+            continue
+        section["_start"] = start
+        section["_end"] = end
+        section["ordinal"] = int(section.get("ordinal", len(result)))
+        result.append(section)
+    overrides = source.get("overrides") or {}
+    if isinstance(overrides, dict):
+        for key, body in overrides.items():
+            index = int(key)
+            result.append(
+                {
+                    "kind": "override",
+                    "chunk_index": index,
+                    "body": str(body),
+                    "ordinal": -1,
+                    "_start": Fraction(index - 1, 1) * chunk_seconds,
+                    "_end": Fraction(index, 1) * chunk_seconds,
+                }
+            )
+    return result
+
+
+def _priority(section: dict[str, Any]) -> tuple[int, int]:
+    kind = section.get("kind")
+    if kind == "override":
+        return (3, -int(section.get("ordinal", 0)))
+    if kind == "chunk":
+        return (2, -int(section.get("ordinal", 0)))
+    return (1, -int(section.get("ordinal", 0)))
+
+
+def _earliest_body(candidates: list[dict[str, Any]]) -> str:
+    usable = sorted(
+        candidates,
+        key=lambda item: (item["_start"], -_priority(item)[0], int(item.get("ordinal", 0))),
+    )
+    return str(usable[0].get("body", "")) if usable else ""
+
+
+def _body_for_atomic_interval(
+    candidates: list[dict[str, Any]],
+    start: Fraction,
+    end: Fraction,
+) -> tuple[str | None, list[dict[str, Any]], list[dict[str, Any]]]:
+    active = [item for item in candidates if item["_start"] < end and item["_end"] > start]
+    if not active:
+        return None, [], []
+    chosen = max(active, key=_priority)
+    diagnostics: list[dict[str, Any]] = []
+    timed = [item for item in active if item.get("kind") == "time"]
+    if len(timed) > 1 and chosen.get("kind") == "time":
+        diagnostics.append(
+            {
+                "level": "warning",
+                "code": "H3C-PT201",
+                "message": "overlapping timed sections resolved by earliest source ordinal",
+                "ordinals": sorted(int(item.get("ordinal", 0)) for item in timed),
+            }
+        )
+    return str(chosen.get("body", "")), [chosen], diagnostics
+
+
+def _join_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    joined: list[dict[str, Any]] = []
+    for segment in segments:
+        if joined and joined[-1]["body"] == segment["body"] and joined[-1]["end"] == segment["start"]:
+            joined[-1]["end"] = segment["end"]
+            joined[-1]["sources"].extend(segment["sources"])
+            joined[-1]["sources"] = sorted(set(joined[-1]["sources"]))
+            joined[-1]["fallback"] = bool(joined[-1]["fallback"] or segment["fallback"])
+            continue
+        joined.append(dict(segment))
+    return joined
+
+
+def compile_physical_prompt(
+    plan: dict[str, Any],
+    descriptor: PhysicalSampleDescriptor,
+) -> CompiledPhysicalPrompt:
+    """Compile one physical-local Qwen text sequence from schema-2 source.
+
+    Fixed/List/legacy plans intentionally preserve nominal per-invocation text.
+    Only schema-2 Timeline source receives physical interval compilation.
+    """
+
+    source = _timeline_source(plan)
+    if source is None:
+        return compile_legacy_nominal(plan, descriptor)
+
+    chunk_seconds = parse_fraction(source.get("chunk_seconds", plan.get("chunk_seconds", 0)))
+    chunks = int(plan.get("chunks", 0))
+    domain_end = Fraction(chunks, 1) * chunk_seconds
+    start = descriptor.global_start_seconds
+    end = descriptor.global_end_seconds
+    candidates = _resolved_candidates(source, chunk_seconds)
+    if not candidates:
+        return compile_legacy_nominal(plan, descriptor)
+
+    boundaries = {start, end, Fraction(0, 1), domain_end}
+    for item in candidates:
+        boundaries.add(item["_start"])
+        boundaries.add(item["_end"])
+    ordered = sorted(value for value in boundaries if start <= value <= end)
+    if not ordered or ordered[0] != start:
+        ordered.insert(0, start)
+    if ordered[-1] != end:
+        ordered.append(end)
+
+    first_body = _earliest_body(candidates)
+    previous_body: str | None = None
+    # Find the authored body immediately before the requested domain end for
+    # physical native-grid overrun. Do not pull future authored sections in.
+    before_end = [item for item in candidates if item["_start"] < domain_end]
+    before_end.sort(key=lambda item: (min(item["_end"], domain_end), _priority(item)), reverse=True)
+    overrun_body = str(before_end[0].get("body", first_body)) if before_end else first_body
+    diagnostics: list[dict[str, Any]] = []
+    segments: list[dict[str, Any]] = []
+    fallback_status = "none"
+    for left, right in zip(ordered, ordered[1:]):
+        if right <= left:
+            continue
+        fallback = False
+        sources: list[int] = []
+        if right <= 0:
+            body = first_body
+            fallback = True
+            fallback_status = "unknown_prior_state"
+            diagnostics.append(
+                {
+                    "level": "warning",
+                    "code": "H3C-PT202",
+                    "message": "physical window precedes the new sequence origin; extended the earliest resolved body as textual lead-in",
+                }
+            )
+        elif left >= domain_end:
+            body = overrun_body
+            fallback = True
+            if fallback_status == "none":
+                fallback_status = "physical_overrun_hold"
+        else:
+            body, active, local_diagnostics = _body_for_atomic_interval(candidates, left, right)
+            diagnostics.extend(local_diagnostics)
+            sources = sorted({int(item.get("ordinal", -1)) for item in active if int(item.get("ordinal", -1)) >= 0})
+            if body is None:
+                fallback = True
+                if previous_body is not None:
+                    body = previous_body
+                    if fallback_status == "none":
+                        fallback_status = "gap_hold_previous"
+                else:
+                    body = first_body
+                    if fallback_status == "none":
+                        fallback_status = "leading_gap_earliest"
+                diagnostics.append(
+                    {
+                        "level": "warning",
+                        "code": "H3C-PT203",
+                        "message": "uncovered physical interval resolved by deterministic timeline fallback",
+                        "global_start": fraction_string(left),
+                        "global_end": fraction_string(right),
+                    }
+                )
+        previous_body = str(body)
+        segments.append(
+            {
+                "start": left,
+                "end": right,
+                "body": str(body),
+                "sources": sources,
+                "fallback": fallback,
+            }
+        )
+
+    segments = _join_segments(segments)
+    preamble = str(source.get("preamble", "")).strip()
+    duration = end - start
+    if len(segments) == 1 and segments[0]["start"] == start and segments[0]["end"] == end:
+        body = segments[0]["body"].strip()
+        emitted = f"{preamble}\n\n{body}" if preamble and body else (preamble or body)
+    else:
+        blocks = []
+        for segment in segments:
+            local_start = segment["start"] - start
+            local_end = segment["end"] - start
+            if local_end <= local_start:
+                continue
+            label = f"[{_format_seconds(local_start)}-{_format_seconds(local_end)}s]"
+            blocks.append(f"{label}\n{segment['body'].strip()}")
+        body = "\n\n".join(blocks)
+        emitted = f"{preamble}\n\n{body}" if preamble and body else (preamble or body)
+
+    interval_metadata = []
+    for segment in segments:
+        local_start = segment["start"] - start
+        local_end = segment["end"] - start
+        interval_metadata.append(
+            {
+                "global_start": fraction_string(segment["start"]),
+                "global_end": fraction_string(segment["end"]),
+                "local_start": fraction_string(local_start),
+                "local_end": fraction_string(local_end),
+                "source_ordinals": list(segment["sources"]),
+                "fallback": bool(segment["fallback"]),
+                "body_sha256": text_sha256(segment["body"]),
+            }
+        )
+    if duration <= 0:
+        raise PhysicalPromptError("physical prompt window is empty")
+    return _compile_result(
+        compiler_version=PHYSICAL_COMPILER_VERSION,
+        text=emitted,
+        intervals=interval_metadata,
+        diagnostics=diagnostics,
+        fallback_status=fallback_status,
+        overrun=end > domain_end,
+        descriptor=descriptor,
+    )
+
+
+def physical_metadata(
+    descriptor: PhysicalSampleDescriptor,
+    compiled: CompiledPhysicalPrompt,
+    *,
+    timeline_video: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = {
+        "descriptor": descriptor.semantic_dict(),
+        "descriptor_digest": descriptor.digest,
+        "compiled": compiled.metadata(),
+        "physical_conditioning_hash": compiled.physical_conditioning_hash,
+    }
+    if timeline_video is not None:
+        result["timeline_video"] = dict(timeline_video)
+    return result
+
+
+def validate_physical_metadata(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise PhysicalPromptError("physical prompt metadata is missing")
+    descriptor = value.get("descriptor")
+    compiled = value.get("compiled")
+    if not isinstance(descriptor, dict) or int(descriptor.get("version", -1)) != PHYSICAL_DESCRIPTOR_VERSION:
+        raise PhysicalPromptError("physical prompt descriptor is invalid")
+    if not isinstance(compiled, dict) or int(compiled.get("version", -1)) != COMPILED_PHYSICAL_PROMPT_VERSION:
+        raise PhysicalPromptError("compiled physical prompt metadata is invalid")
+    condition_hash = str(value.get("physical_conditioning_hash", ""))
+    if len(condition_hash) != 64 or condition_hash != str(compiled.get("physical_conditioning_hash", "")):
+        raise PhysicalPromptError("physical conditioning hash is invalid")
+    return value
+
+
+def physical_metadata_matches(stored: Any, expected: dict[str, Any]) -> bool:
+    try:
+        stored_value = validate_physical_metadata(stored)
+        expected_value = validate_physical_metadata(expected)
+    except PhysicalPromptError:
+        return False
+    return (
+        stored_value["physical_conditioning_hash"] == expected_value["physical_conditioning_hash"]
+        and stored_value["descriptor_digest"] == expected_value["descriptor_digest"]
+        and stored_value.get("timeline_video") == expected_value.get("timeline_video")
+    )
+
+
+def legacy_entry_can_reuse(
+    *,
+    entry: dict[str, Any],
+    descriptor: PhysicalSampleDescriptor,
+    compiled: CompiledPhysicalPrompt,
+    source_kind: str,
+) -> bool:
+    """Conservative adapter for Session-1 / Storage-2 entries.
+
+    Continuation entries without physical metadata are never promoted to current
+    reuse semantics. An initial opaque Fixed/List sample may be reused only when
+    emitted bytes and presentation roles are demonstrably unchanged.
+    """
+
+    if descriptor.context_frames != 0 or descriptor.retained_before != 0:
+        return False
+    if source_kind not in {"fixed", "list", "legacy_logical"}:
+        return False
+    if compiled.compiler_version != LEGACY_COMPILER_VERSION:
+        return False
+    if str(entry.get("prompt", "")) != compiled.text:
+        return False
+    plan = entry.get("plan") or {}
+    return not isinstance(plan.get("physical_prompt"), dict)
