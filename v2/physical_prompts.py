@@ -12,15 +12,26 @@ from fractions import Fraction
 import hashlib
 import json
 import os
+import re
 from typing import Any, Iterable
 
 PHYSICAL_DESCRIPTOR_VERSION = 1
 COMPILED_PHYSICAL_PROMPT_VERSION = 1
-PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v1"
+PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v2"
 LEGACY_COMPILER_VERSION = "legacy_nominal_v1"
 PHYSICAL_PROMPT_ENV = "H3_CONTINUUM_PHYSICAL_PROMPTS"
 PHYSICAL_TIMELINE_VIDEO_ENV = "H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO"
 _RENDER_QUANTUM = Decimal("0.000001")
+# Recovered 00418 production prompts use an outer bracket Timeline section with
+# strict bare range lines (for example ``7-8s:``) inside its body. V1 treated
+# those lines as opaque prose. V2 recognizes only this deliberately narrow,
+# whole-line form, and only when the ranges form an exact contiguous partition
+# of the enclosing timed section. Anything ambiguous stays opaque.
+_INNER_RANGE_HEADER = re.compile(
+    r"^\s*(?P<start>\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?\s*[-–—]\s*"
+    r"(?P<end>\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?\s*:\s*$",
+    re.IGNORECASE,
+)
 
 
 class PhysicalPromptError(ValueError):
@@ -324,6 +335,79 @@ def _section_interval(section: dict[str, Any], chunk_seconds: Fraction) -> tuple
     return parse_fraction(section["start"]), parse_fraction(section["end"])
 
 
+def _strict_inner_ranges(
+    section: dict[str, Any],
+    *,
+    outer_start: Fraction,
+    outer_end: Fraction,
+) -> list[dict[str, Any]] | None:
+    """Return an exact inner partition or ``None`` when the body is ambiguous.
+
+    This deliberately recognizes only the production form recovered from 00418:
+    whole-line ``start-end[s]:`` headers inside one already-valid timed section.
+    To avoid turning ordinary prose timestamps into routing semantics, refinement
+    is accepted only when the first nonblank body line is a header, every header
+    has a non-empty body, ranges are increasing/non-overlapping, and the ranges
+    exactly and contiguously cover the enclosing section.
+    """
+
+    if section.get("kind") != "time":
+        return None
+    lines = str(section.get("body", "")).splitlines()
+    if not lines:
+        return None
+    first_nonblank = next((index for index, line in enumerate(lines) if line.strip()), None)
+    if first_nonblank is None or _INNER_RANGE_HEADER.match(lines[first_nonblank]) is None:
+        return None
+
+    ranges: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    body: list[str] = []
+
+    def finish() -> bool:
+        nonlocal current, body
+        if current is None:
+            return True
+        raw_body = "\n".join(body).strip()
+        if not raw_body:
+            return False
+        current["body"] = raw_body
+        ranges.append(current)
+        current = None
+        body = []
+        return True
+
+    for line in lines[first_nonblank:]:
+        match = _INNER_RANGE_HEADER.match(line)
+        if match is None:
+            body.append(line)
+            continue
+        if not finish():
+            return None
+        start = parse_fraction(match.group("start"))
+        end = parse_fraction(match.group("end"))
+        if end <= start:
+            return None
+        current = {
+            "kind": "time",
+            "_start": start,
+            "_end": end,
+            "_inner_range": True,
+            "inner_header": line.strip(),
+        }
+    if not finish() or not ranges:
+        return None
+
+    cursor = outer_start
+    for item in ranges:
+        if item["_start"] != cursor or item["_end"] > outer_end:
+            return None
+        cursor = item["_end"]
+    if cursor != outer_end:
+        return None
+    return ranges
+
+
 def _resolved_candidates(source: dict[str, Any], chunk_seconds: Fraction) -> list[dict[str, Any]]:
     result = []
     for raw in source.get("sections") or []:
@@ -331,9 +415,18 @@ def _resolved_candidates(source: dict[str, Any], chunk_seconds: Fraction) -> lis
         start, end = _section_interval(section, chunk_seconds)
         if end <= start:
             continue
+        ordinal = int(section.get("ordinal", len(result)))
+        inner = _strict_inner_ranges(section, outer_start=start, outer_end=end)
+        if inner is not None:
+            for inner_ordinal, item in enumerate(inner):
+                item["ordinal"] = ordinal
+                item["inner_ordinal"] = inner_ordinal
+                item["outer_header"] = section.get("header")
+                result.append(item)
+            continue
         section["_start"] = start
         section["_end"] = end
-        section["ordinal"] = int(section.get("ordinal", len(result)))
+        section["ordinal"] = ordinal
         result.append(section)
     overrides = source.get("overrides") or {}
     if isinstance(overrides, dict):
@@ -486,7 +579,10 @@ def compile_physical_prompt(
     """Compile one physical-local Qwen text sequence from schema-2 source.
 
     Fixed/List/legacy plans intentionally preserve nominal per-invocation text.
-    Only schema-2 Timeline source receives physical interval compilation.
+    Only schema-2 Timeline source receives physical interval compilation. V2
+    additionally expands a strict, fully partitioning inner ``start-end[s]:``
+    schedule when present inside an enclosing timed section; ambiguous prose is
+    intentionally left opaque.
     """
 
     source = _timeline_source(plan)
@@ -525,6 +621,22 @@ def compile_physical_prompt(
     overrun_body = str(overrun_item.get("body", first_body)) if overrun_item is not None else first_body
     overrun_sources = _source_ordinals([overrun_item]) if overrun_item is not None else first_sources
     diagnostics: list[dict[str, Any]] = []
+    refined_outer = sorted(
+        {
+            str(item.get("outer_header"))
+            for item in candidates
+            if item.get("_inner_range") and item.get("outer_header")
+        }
+    )
+    if refined_outer:
+        diagnostics.append(
+            {
+                "level": "info",
+                "code": "H3C-PT205",
+                "message": "expanded strict inner timeline ranges recovered from an enclosing timed section",
+                "outer_headers": refined_outer,
+            }
+        )
     segments: list[dict[str, Any]] = []
     fallback_status = "none"
     for left, right in zip(ordered, ordered[1:]):
