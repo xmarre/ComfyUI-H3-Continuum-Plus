@@ -439,17 +439,15 @@ def timeline_video_physical_selection_contract(
     requested = [Fraction(start_frame + index, 1) / fps for index in range(frame_count)]
     duration = Fraction(str(source.duration))
     upper = max(Fraction(0, 1), duration - Fraction(1, 1_000_000_000))
-    active_trim = None
-    trim_getter = getattr(source.video, "get_active_trim_window", None)
-    if callable(trim_getter):
-        try:
-            trim_start, trim_duration = trim_getter()
-            active_trim = [
-                _fraction_string(Fraction(str(float(trim_start)))),
-                _fraction_string(Fraction(str(float(trim_duration)))),
-            ]
-        except (TypeError, ValueError, ZeroDivisionError):
-            active_trim = None
+    active_trim_window = _active_trim_window(source.video)
+    active_trim = (
+        [
+            _fraction_string(active_trim_window[0]),
+            _fraction_string(active_trim_window[1]),
+        ]
+        if active_trim_window is not None
+        else None
+    )
     contract = {
         "selection_version": TIMELINE_VIDEO_PHYSICAL_SELECTION_VERSION,
         "source_sha256": source.source_sha256,
@@ -471,12 +469,33 @@ def timeline_video_physical_selection_contract(
     return contract
 
 
+def _fraction_from_public_number(value: Any) -> Fraction:
+    if isinstance(value, Fraction):
+        return value
+    return Fraction(str(value))
+
+
+def _active_trim_window(video: Any) -> tuple[Fraction, Fraction] | None:
+    getter = getattr(video, "get_active_trim_window", None)
+    if not callable(getter):
+        return None
+    try:
+        start, duration = getter()
+        start_value = _fraction_from_public_number(start)
+        duration_value = _fraction_from_public_number(duration)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if start_value < 0 or duration_value <= 0:
+        return None
+    return start_value, duration_value
+
+
 def _source_frame_rate(video: Any) -> Fraction | None:
     getter = getattr(video, "get_frame_rate", None)
     if not callable(getter):
         return None
     try:
-        rate = Fraction(getter())
+        rate = _fraction_from_public_number(getter())
     except (TypeError, ValueError, ZeroDivisionError):
         return None
     return rate if rate > 0 else None
@@ -486,17 +505,20 @@ def _nearest_source_indices(
     values: list[Fraction],
     *,
     source_rate: Fraction,
+    source_start: Fraction,
     source_duration: Fraction,
 ) -> list[int]:
     # Core's public VIDEO API exposes average frame rate, not individual frame PTS.
-    # Align the trim to that source grid so the first decoded frame has a stable
-    # index origin. This removes the offset ambiguity caused by trimming directly
-    # at an arbitrary target-frame timestamp.
-    maximum = max(0, math.ceil(float(source_duration * source_rate)) - 1)
+    # Align to that absolute source grid, including an upstream active trim offset.
+    # This makes a trimmed VIDEO and its original file preserve the same CFR phase.
+    lower = max(0, math.ceil(float(source_start * source_rate)))
+    source_end = source_start + source_duration
+    upper = max(lower, math.ceil(float(source_end * source_rate)) - 1)
     result = []
     for value in values:
-        index = int(round(float(value * source_rate)))
-        result.append(max(0, min(index, maximum)))
+        absolute = source_start + value
+        index = int(round(float(absolute * source_rate)))
+        result.append(max(lower, min(index, upper)))
     return result
 
 
@@ -539,16 +561,20 @@ def prepare_timeline_video_physical_frames(
         raise TimelineVideoError("physical Timeline Video selection is empty")
 
     source_rate = _source_frame_rate(source.video)
+    active_trim_window = _active_trim_window(source.video)
+    source_start = active_trim_window[0] if active_trim_window is not None else Fraction(0, 1)
     source_indices: list[int] | None = None
     if source_rate is not None:
         source_indices = _nearest_source_indices(
             clipped,
             source_rate=source_rate,
+            source_start=source_start,
             source_duration=duration,
         )
         decode_start_index = min(source_indices)
         decode_end_index = max(source_indices)
-        decode_start = Fraction(decode_start_index, 1) / source_rate
+        decode_start_absolute = Fraction(decode_start_index, 1) / source_rate
+        decode_start = max(Fraction(0, 1), decode_start_absolute - source_start)
         decode_duration = Fraction(decode_end_index - decode_start_index + 1, 1) / source_rate
     else:
         decode_start = min(clipped)
@@ -574,7 +600,7 @@ def prepare_timeline_video_physical_frames(
 
     raw_rate = getattr(components, "frame_rate", None)
     try:
-        decoded_rate = Fraction(raw_rate)
+        decoded_rate = _fraction_from_public_number(raw_rate)
         if decoded_rate <= 0:
             raise ValueError
     except (TypeError, ValueError, ZeroDivisionError):
@@ -613,6 +639,7 @@ def prepare_timeline_video_physical_frames(
             if source_rate is not None
             else None
         ),
+        source_grid_start=_fraction_string(source_start),
         decoded_frame_rate=[decoded_rate.numerator, decoded_rate.denominator],
         sampled_source_indices_sha256=_canonical_hash(source_indices),
         sampled_indices_sha256=_canonical_hash(index_values),
