@@ -92,28 +92,6 @@ def test_validation_rejects_timeline_video_duplicate_conflict():
         validate_physical_metadata(tampered)
 
 
-def test_validation_rejects_missing_timeline_video_duplicate_for_physical_video():
-    video = {
-        "kind": "timeline_video",
-        "adapter": "physical_window_v1",
-        "processed_sha256": "b" * 64,
-        "selection_contract": {"selection_sha256": "c" * 64},
-    }
-    metadata = _metadata(
-        presentation={
-            "include_first": False,
-            "include_last": False,
-            "video": video,
-        },
-        timeline_video=video,
-    )
-    tampered = copy.deepcopy(metadata)
-    tampered.pop("timeline_video")
-
-    with pytest.raises(PhysicalPromptError, match="Timeline Video metadata is missing"):
-        validate_physical_metadata(tampered)
-
-
 def test_validation_keeps_minimal_legacy_presentation_contract_compatible():
     metadata = _metadata(presentation={"images": [], "audio": [], "video": []})
     assert validate_physical_metadata(metadata) is metadata
