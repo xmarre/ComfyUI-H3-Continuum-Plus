@@ -12,6 +12,7 @@ import torch
 
 from .h3_builder import encode_prompt_conditioning
 from .physical_prompts import (
+    PhysicalPromptError,
     compile_legacy_nominal,
     compile_physical_prompt,
     physical_metadata,
@@ -81,6 +82,45 @@ def compile_invocation_prompt(
     return compile_legacy_nominal(plan, descriptor, text=legacy_text)
 
 
+def _validate_physical_timeline_video_assets(
+    descriptor: Any,
+    timeline_video_assets: Any,
+) -> None:
+    """Bind the encoded Timeline Video payload to the descriptor-authenticated RGB.
+
+    ``make_normal_descriptor`` hashes the resized CPU RGB presentation before
+    Qwen/reference encoding. The legacy sequence call surface still performs the
+    VAE encode afterwards; this check prevents a second decode from silently
+    presenting different media than the descriptor/storage identity records.
+    """
+
+    video = descriptor.presentation_contract.get("video")
+    if not isinstance(video, dict):
+        return
+    if video.get("kind") != "timeline_video" or video.get("adapter") != "physical_window_v1":
+        return
+    expected_hash = str(video.get("processed_sha256", ""))
+    expected_selection = video.get("selection_contract")
+    if len(expected_hash) != 64 or not isinstance(expected_selection, dict):
+        raise PhysicalPromptError(
+            "physical Timeline Video presentation identity is incomplete"
+        )
+    if timeline_video_assets is None:
+        raise PhysicalPromptError(
+            "physical Timeline Video descriptor has no encoded presentation"
+        )
+    actual_hash = str(getattr(timeline_video_assets, "processed_sha256", ""))
+    actual_selection = getattr(timeline_video_assets, "selection_contract", None)
+    if actual_hash != expected_hash:
+        raise PhysicalPromptError(
+            "physical Timeline Video processed presentation changed between descriptor and encode"
+        )
+    if actual_selection != expected_selection:
+        raise PhysicalPromptError(
+            "physical Timeline Video selection contract changed between descriptor and encode"
+        )
+
+
 def encode_physical_prompt_conditioning(
     *,
     clip: Any,
@@ -102,6 +142,7 @@ def encode_physical_prompt_conditioning(
     compiled = compile_invocation_prompt(
         plan, descriptor, legacy_text=legacy_text, candidate=candidate
     )
+    _validate_physical_timeline_video_assets(descriptor, timeline_video_assets)
     include_first_actual = bool(include_first and assets.first_image is not None)
     include_last_actual = bool(include_last and assets.last_image is not None)
     if not candidate:
@@ -139,13 +180,17 @@ def encode_physical_prompt_conditioning(
                 reference_audio_assets=reference_audio_assets,
                 timeline_video_assets=timeline_video_assets,
             )
-    # Reuse identity must be derivable without decoding Timeline Video. The
-    # presentation contract therefore carries the deterministic source/adapter
-    # selection identity; processed media hashes are diagnostic-only telemetry.
+    video_presentation = descriptor.presentation_contract.get("video")
+    timeline_video = (
+        video_presentation
+        if isinstance(video_presentation, dict)
+        and video_presentation.get("kind") == "timeline_video"
+        else None
+    )
     metadata = physical_metadata(
         descriptor,
         compiled,
-        timeline_video=descriptor.presentation_contract.get("video"),
+        timeline_video=timeline_video,
     )
     return cache[key], compiled, metadata, key
 
