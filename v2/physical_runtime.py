@@ -82,13 +82,14 @@ def encode_physical_prompt_conditioning(
     """Compile and encode exactly once for one resolved physical invocation."""
 
     cache = {} if cache is None else cache
-    if physical_prompt_compiler_enabled():
+    candidate = physical_prompt_compiler_enabled()
+    if candidate:
         compiled = compile_physical_prompt(plan, descriptor)
     else:
         compiled = compile_legacy_nominal(plan, descriptor, text=legacy_text)
     include_first_actual = bool(include_first and assets.first_image is not None)
     include_last_actual = bool(include_last and assets.last_image is not None)
-    if compiled.compiler_version == LEGACY_COMPILER_VERSION and not physical_prompt_compiler_enabled():
+    if compiled.compiler_version == LEGACY_COMPILER_VERSION and not candidate:
         # Preserve PR #20's legacy conditioning-cache identity exactly.
         key: Any = (legacy_text, include_first_actual, include_last_actual)
     else:
@@ -123,18 +124,13 @@ def encode_physical_prompt_conditioning(
                 reference_audio_assets=reference_audio_assets,
                 timeline_video_assets=timeline_video_assets,
             )
-    timeline_identity = None
-    if timeline_video_assets is not None:
-        selection = getattr(timeline_video_assets, "selection_contract", None)
-        timeline_identity = {
-            "processed_sha256": str(getattr(timeline_video_assets, "processed_sha256", "")),
-            "frame_count": int(getattr(timeline_video_assets, "frame_count", 0)),
-            "selection_contract": dict(selection) if isinstance(selection, dict) else None,
-        }
+    # Reuse identity must be derivable without decoding Timeline Video. The
+    # presentation contract therefore carries the deterministic source/adapter
+    # selection identity; processed media hashes are diagnostic-only telemetry.
     metadata = physical_metadata(
         descriptor,
         compiled,
-        timeline_video=timeline_identity,
+        timeline_video=descriptor.presentation_contract.get("video"),
     )
     return cache[key], compiled, metadata, key
 
