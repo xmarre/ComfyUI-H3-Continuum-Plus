@@ -799,14 +799,21 @@ def _validate_descriptor_semantics(descriptor: dict[str, Any]) -> None:
     expected_suffix = [retained, retained + total - context]
     if descriptor.get("retained_suffix_interval") != expected_suffix:
         raise PhysicalPromptError("physical prompt retained suffix interval is inconsistent")
+    include_first = descriptor.get("include_first")
     include_last = descriptor.get("include_last")
-    if not isinstance(descriptor.get("include_first"), bool) or not isinstance(include_last, bool):
+    if not isinstance(include_first, bool) or not isinstance(include_last, bool):
         raise PhysicalPromptError("physical prompt presentation flags are invalid")
     expected_last_index = total - 1 if include_last else None
     if descriptor.get("last_keyframe_index") != expected_last_index:
         raise PhysicalPromptError("physical prompt last keyframe index is inconsistent")
-    if not isinstance(descriptor.get("presentation_contract"), dict):
+    presentation = descriptor.get("presentation_contract")
+    if not isinstance(presentation, dict):
         raise PhysicalPromptError("physical prompt presentation contract is invalid")
+    for field, expected in (("include_first", include_first), ("include_last", include_last)):
+        if field in presentation and (
+            not isinstance(presentation[field], bool) or presentation[field] != expected
+        ):
+            raise PhysicalPromptError("physical prompt descriptor/presentation flags are inconsistent")
     terminal = descriptor.get("terminal_contract")
     if terminal is not None and not isinstance(terminal, dict):
         raise PhysicalPromptError("physical prompt terminal contract is invalid")
@@ -842,6 +849,9 @@ def validate_physical_metadata(value: Any) -> dict[str, Any]:
     timeline_video = value.get("timeline_video")
     if timeline_video is not None and not isinstance(timeline_video, dict):
         raise PhysicalPromptError("physical prompt Timeline Video metadata is invalid")
+    presentation_video = descriptor["presentation_contract"].get("video")
+    if timeline_video is not None and timeline_video != presentation_video:
+        raise PhysicalPromptError("physical prompt Timeline Video metadata is inconsistent")
 
     descriptor_hash = canonical_sha256(descriptor)
     if str(value.get("descriptor_digest", "")) != descriptor_hash:
