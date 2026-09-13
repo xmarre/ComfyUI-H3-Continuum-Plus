@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import io
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from ComfyUI_H3_Continuum_Join.timeline_video import (
     TIMELINE_VIDEO_SIZE_BALANCED,
     TIMELINE_VIDEO_SIZE_EFFICIENT,
     TIMELINE_VIDEO_SIZE_MATCH_OUTPUT,
+    TimelineVideoAssets,
     combine_timeline_video_identity,
     encode_timeline_video_chunk,
+    encode_timeline_video_prepared,
+    prepare_timeline_video_physical_frames,
     prepare_timeline_video_source,
     validate_timeline_video_prompts,
+)
+from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
+    PhysicalPromptError,
+    compile_legacy_nominal,
+    physical_metadata,
+    physical_metadata_matches,
+)
+from ComfyUI_H3_Continuum_Join.v2.physical_runtime import (
+    _validate_physical_timeline_video_assets,
+)
+from ComfyUI_H3_Continuum_Join.v2.physical_sequence import (
+    ResolvedInvocationGeometry,
+    make_normal_descriptor,
 )
 from ComfyUI_H3_Continuum_Join.v3.nodes import (
     H3ContinuumSamplerProduction,
@@ -71,6 +89,30 @@ def _source(size_mode=TIMELINE_VIDEO_SIZE_MATCH_OUTPUT):
         size_mode=size_mode,
     )
     return video, source
+
+
+def _continuation_geometry(*, total_frames=143, context_frames=22):
+    return ResolvedInvocationGeometry(
+        sequence_index=1,
+        is_final=True,
+        continuation=True,
+        clip_index=2,
+        context_frames=context_frames,
+        total_frames=total_frames,
+        net_frames=total_frames - context_frames,
+        motion_score=0.0,
+        reason="test",
+        plan={},
+    )
+
+
+def _descriptor_assets():
+    return SimpleNamespace(
+        first_image=None,
+        last_image=None,
+        first_frame_hash="none",
+        last_frame_hash="none",
+    )
 
 
 def test_v33_unifies_optional_timeline_video_and_keeps_v324_schema():
@@ -205,6 +247,143 @@ def test_encode_processes_only_requested_chunk_and_builds_core_payload():
     assert assets.item["type"] == "video"
     assert assets.block["kind"] == "video"
     assert assets.block["ref_audio_t"] == 0
+
+
+def test_physical_descriptor_authenticates_resolved_window_before_conditioning(monkeypatch):
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_PROMPTS", "1")
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO", "1")
+    video, source = _source()
+    geometry = _continuation_geometry(total_frames=143, context_frames=22)
+
+    descriptor = make_normal_descriptor(
+        geometry=geometry,
+        retained_before=120,
+        target_duration_frames=240,
+        continuation_method="Guide",
+        initial_state_external=False,
+        assets=_descriptor_assets(),
+        include_first=False,
+        include_last=False,
+        timeline_video_source=source,
+    )
+
+    presentation = descriptor.presentation_contract["video"]
+    selection = presentation["selection_contract"]
+    assert descriptor.global_start_frame == 98
+    assert selection["global_start_frame"] == 98
+    assert selection["global_end_frame"] == 241
+    assert selection["frame_count"] == 143
+    assert selection["trailing_clamped_frames"] == 1
+    assert len(presentation["processed_sha256"]) == 64
+    assert presentation["processed_sha256"] == selection["processed_sha256"]
+    assert video.calls[0][0] == pytest.approx(98 / 24)
+
+
+def test_physical_timeline_video_gate_is_separate_and_legacy_descriptor_does_not_decode(monkeypatch):
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_PROMPTS", "1")
+    monkeypatch.delenv("H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO", raising=False)
+    video, source = _source()
+    descriptor = make_normal_descriptor(
+        geometry=_continuation_geometry(),
+        retained_before=120,
+        target_duration_frames=240,
+        continuation_method="Guide",
+        initial_state_external=False,
+        assets=_descriptor_assets(),
+        include_first=False,
+        include_last=False,
+        timeline_video_source=source,
+    )
+
+    presentation = descriptor.presentation_contract["video"]
+    assert presentation["adapter"] == "legacy_nominal_chunk_v1"
+    assert "processed_sha256" not in presentation
+    assert video.calls == []
+
+
+def test_prepared_physical_frames_are_exact_payload_given_to_vae():
+    _, source = _source()
+    prepared = prepare_timeline_video_physical_frames(
+        source,
+        global_start_frame=98,
+        total_frames=143,
+    )
+    vae = _VAE()
+    assets = encode_timeline_video_prepared(vae, source, prepared)
+
+    assert len(vae.calls) == 1
+    assert torch.equal(vae.calls[0], prepared.frames)
+    assert assets.processed_sha256 == prepared.processed_sha256
+    assert assets.selection_contract == prepared.selection_contract
+
+
+def test_runtime_rejects_second_decode_that_differs_from_authenticated_presentation(monkeypatch):
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_PROMPTS", "1")
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO", "1")
+    _, source = _source()
+    descriptor = make_normal_descriptor(
+        geometry=_continuation_geometry(),
+        retained_before=120,
+        target_duration_frames=240,
+        continuation_method="Guide",
+        initial_state_external=False,
+        assets=_descriptor_assets(),
+        include_first=False,
+        include_last=False,
+        timeline_video_source=source,
+    )
+    presentation = descriptor.presentation_contract["video"]
+    bad = TimelineVideoAssets(
+        item={},
+        block={},
+        processed_sha256="0" * 64,
+        frame_count=presentation["frame_count"],
+        selection_contract=dict(presentation["selection_contract"]),
+    )
+
+    with pytest.raises(PhysicalPromptError, match="processed presentation changed"):
+        _validate_physical_timeline_video_assets(descriptor, bad)
+
+
+def test_physical_reuse_identity_rejects_processed_timeline_video_change(monkeypatch):
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_PROMPTS", "1")
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO", "1")
+    _, source = _source()
+    descriptor = make_normal_descriptor(
+        geometry=_continuation_geometry(),
+        retained_before=120,
+        target_duration_frames=240,
+        continuation_method="Guide",
+        initial_state_external=False,
+        assets=_descriptor_assets(),
+        include_first=False,
+        include_last=False,
+        timeline_video_source=source,
+    )
+    plan = {"prompts": ["first", "second"]}
+    compiled = compile_legacy_nominal(plan, descriptor, text="second")
+    stored = physical_metadata(
+        descriptor,
+        compiled,
+        timeline_video=descriptor.presentation_contract["video"],
+    )
+
+    changed_presentation = dict(descriptor.presentation_contract)
+    changed_video = dict(changed_presentation["video"])
+    changed_video["processed_sha256"] = "f" * 64
+    changed_selection = dict(changed_video["selection_contract"])
+    changed_selection["processed_sha256"] = "f" * 64
+    changed_video["selection_contract"] = changed_selection
+    changed_presentation["video"] = changed_video
+    changed_descriptor = replace(descriptor, presentation_contract=changed_presentation)
+    changed_compiled = compile_legacy_nominal(plan, changed_descriptor, text="second")
+    expected = physical_metadata(
+        changed_descriptor,
+        changed_compiled,
+        timeline_video=changed_video,
+    )
+
+    assert not physical_metadata_matches(stored, expected)
 
 
 def test_timeline_identity_is_noop_when_absent_and_changes_when_present():

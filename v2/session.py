@@ -22,6 +22,7 @@ from ..temporal import (
     video_latent_t,
 )
 from ..version import PACKAGE_VERSION, SESSION_SCHEMA_VERSION, STATE_SCHEMA_VERSION
+from .physical_prompts import PhysicalPromptError, validate_physical_metadata
 from .sampling import latent_from_cpu, latent_to_cpu
 
 
@@ -109,6 +110,12 @@ def validate_chunk_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if not bool(torch.isfinite(audio.float()).all().item()):
         raise SessionValidationError("session audio contains NaN or Inf")
     plan = validate_plan(entry.get("plan"))
+    physical = plan.get("physical_prompt")
+    if physical is not None:
+        try:
+            validate_physical_metadata(physical)
+        except PhysicalPromptError as exc:
+            raise SessionValidationError(f"session chunk physical prompt metadata is invalid: {exc}") from exc
     actual_frames = pixel_frames_for_latent_t(int(video.shape[2]))
     if actual_frames != int(plan["total_frames"]):
         raise SessionValidationError("session chunk video length does not match its plan")
@@ -121,6 +128,22 @@ def validate_chunk_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if int(entry.get("context_frames", 0)) not in (0, 5, 22, 39):
         raise SessionValidationError("session chunk context_frames is invalid")
     return entry
+
+
+def _legacy_initial_adapter_allowed(
+    entry: dict[str, Any], physical_contract: dict[str, Any]
+) -> bool:
+    """Allow only the initial reused legacy entry that still requires revalidation."""
+
+    plan = entry.get("plan") or {}
+    return (
+        bool(entry.get("reused"))
+        and int(entry.get("context_frames", -1)) == 0
+        and int(plan.get("trim_frames", -1)) == 0
+        and bool(physical_contract.get("candidate_enabled"))
+        and str(physical_contract.get("compiler_version", "")) == "legacy_nominal_v1"
+        and not bool(physical_contract.get("timeline_video_physical_enabled"))
+    )
 
 
 def make_session(
@@ -137,12 +160,34 @@ def make_session(
 ) -> dict[str, Any]:
     session_id = uuid.uuid4().hex
     normalized: list[dict[str, Any]] = []
+    settings_copy = copy.deepcopy(settings or {})
+    physical_contract = settings_copy.get("physical_prompt_contract")
+    require_physical = isinstance(physical_contract, dict)
+    legacy_initial_missing = False
     for index, entry in enumerate(chunks, start=1):
         item = dict(entry)
         item["plan"] = copy.deepcopy(entry["plan"])
         item["sequence_index"] = index
         validate_chunk_entry(item)
+        if require_physical and not isinstance(item["plan"].get("physical_prompt"), dict):
+            if (
+                index == 1
+                and not legacy_initial_missing
+                and _legacy_initial_adapter_allowed(item, physical_contract)
+            ):
+                legacy_initial_missing = True
+            else:
+                raise SessionValidationError(
+                    f"session schema {SESSION_SCHEMA_VERSION} physical prompt contract is missing from chunk {index}"
+                )
         normalized.append(item)
+    if require_physical:
+        physical_contract = dict(physical_contract)
+        if legacy_initial_missing:
+            physical_contract["legacy_initial_adapter_pending_revalidation"] = True
+        else:
+            physical_contract.pop("legacy_initial_adapter_pending_revalidation", None)
+        settings_copy["physical_prompt_contract"] = physical_contract
     return {
         "magic": SESSION_MAGIC,
         "schema_version": SESSION_SCHEMA_VERSION,
@@ -156,7 +201,7 @@ def make_session(
         "chunk_seconds": float(chunk_seconds),
         "identity_hash": str(identity_hash),
         "model_fingerprint": str(model_fingerprint_value),
-        "settings": copy.deepcopy(settings),
+        "settings": settings_copy,
         "chunks": normalized,
     }
 
@@ -164,10 +209,11 @@ def make_session(
 def validate_session(session: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(session, dict) or session.get("magic") != SESSION_MAGIC:
         raise SessionValidationError("invalid H3 Continuum session")
-    if int(session.get("schema_version", -1)) != SESSION_SCHEMA_VERSION:
+    schema = int(session.get("schema_version", -1))
+    if schema not in (1, SESSION_SCHEMA_VERSION):
         raise SessionValidationError(
             f"unsupported session schema {session.get('schema_version')}; "
-            f"expected {SESSION_SCHEMA_VERSION}"
+            f"expected 1 or {SESSION_SCHEMA_VERSION}"
         )
     if int(session.get("width", 0)) <= 0 or int(session.get("height", 0)) <= 0:
         raise SessionValidationError("session dimensions are invalid")
@@ -176,9 +222,29 @@ def validate_session(session: dict[str, Any]) -> dict[str, Any]:
     chunks = session.get("chunks")
     if not isinstance(chunks, list) or not chunks:
         raise SessionValidationError("session contains no chunks")
+    settings = session.get("settings") or {}
+    physical_contract = settings.get("physical_prompt_contract")
+    require_physical = schema >= 2 and isinstance(physical_contract, dict)
+    allow_legacy_initial = bool(
+        require_physical
+        and physical_contract.get("legacy_initial_adapter_pending_revalidation")
+    )
+    legacy_initial_seen = False
     previous_clip_index = None
     for index, entry in enumerate(chunks, start=1):
         validate_chunk_entry(entry)
+        if require_physical and not isinstance((entry.get("plan") or {}).get("physical_prompt"), dict):
+            if (
+                allow_legacy_initial
+                and index == 1
+                and not legacy_initial_seen
+                and _legacy_initial_adapter_allowed(entry, physical_contract)
+            ):
+                legacy_initial_seen = True
+            else:
+                raise SessionValidationError(
+                    f"session schema {schema} physical prompt contract is missing from chunk {index}"
+                )
         if int(entry.get("sequence_index", index)) != index:
             raise SessionValidationError("session chunk sequence indices are not contiguous")
         clip_index = int(entry["plan"]["clip_index"])
@@ -190,6 +256,10 @@ def validate_session(session: dict[str, Any]) -> dict[str, Any]:
             raise SessionValidationError("session width does not match chunk latent")
         if int(video.shape[-2]) * 16 != int(session["height"]):
             raise SessionValidationError("session height does not match chunk latent")
+    if allow_legacy_initial and not legacy_initial_seen:
+        raise SessionValidationError(
+            "session legacy initial adapter marker is stale or inconsistent"
+        )
     return session
 
 
