@@ -793,6 +793,13 @@ def legacy_entry_can_reuse(
     emitted bytes and presentation roles are demonstrably unchanged.
     """
 
+    video = descriptor.presentation_contract.get("video")
+    if (
+        isinstance(video, dict)
+        and video.get("kind") == "timeline_video"
+        and video.get("adapter") == "physical_window_v1"
+    ):
+        return False
     if descriptor.context_frames != 0 or descriptor.retained_before != 0:
         return False
     if source_kind not in {"fixed", "list", "legacy_logical"}:
