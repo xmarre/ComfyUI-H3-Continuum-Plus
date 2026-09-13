@@ -7,7 +7,7 @@ reference-video content requires its own matched decoded-media validation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 import hashlib
 import io
@@ -141,6 +141,9 @@ class TimelineVideoSource:
     chunk_seconds: float
     chunk_contracts: tuple[dict[str, Any], ...]
     combined_hash: str
+    _physical_prepared_cache: dict[str, "TimelineVideoPreparedFrames"] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
     @property
     def contract(self) -> dict[str, Any]:
@@ -436,10 +439,22 @@ def timeline_video_physical_selection_contract(
     requested = [Fraction(start_frame + index, 1) / fps for index in range(frame_count)]
     duration = Fraction(str(source.duration))
     upper = max(Fraction(0, 1), duration - Fraction(1, 1_000_000_000))
+    active_trim = None
+    trim_getter = getattr(source.video, "get_active_trim_window", None)
+    if callable(trim_getter):
+        try:
+            trim_start, trim_duration = trim_getter()
+            active_trim = [
+                _fraction_string(Fraction(str(float(trim_start)))),
+                _fraction_string(Fraction(str(float(trim_duration)))),
+            ]
+        except (TypeError, ValueError, ZeroDivisionError):
+            active_trim = None
     contract = {
         "selection_version": TIMELINE_VIDEO_PHYSICAL_SELECTION_VERSION,
         "source_sha256": source.source_sha256,
         "source_combined_hash": source.combined_hash,
+        "source_active_trim": active_trim,
         "global_start_frame": start_frame,
         "global_end_frame": start_frame + frame_count,
         "frame_count": frame_count,
@@ -454,6 +469,35 @@ def timeline_video_physical_selection_contract(
     }
     contract["selection_sha256"] = _canonical_hash(contract)
     return contract
+
+
+def _source_frame_rate(video: Any) -> Fraction | None:
+    getter = getattr(video, "get_frame_rate", None)
+    if not callable(getter):
+        return None
+    try:
+        rate = Fraction(getter())
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return rate if rate > 0 else None
+
+
+def _nearest_source_indices(
+    values: list[Fraction],
+    *,
+    source_rate: Fraction,
+    source_duration: Fraction,
+) -> list[int]:
+    # Core's public VIDEO API exposes average frame rate, not individual frame PTS.
+    # Align the trim to that source grid so the first decoded frame has a stable
+    # index origin. This removes the offset ambiguity caused by trimming directly
+    # at an arbitrary target-frame timestamp.
+    maximum = max(0, math.ceil(float(source_duration * source_rate)) - 1)
+    result = []
+    for value in values:
+        index = int(round(float(value * source_rate)))
+        result.append(max(0, min(index, maximum)))
+    return result
 
 
 def prepare_timeline_video_physical_frames(
@@ -478,6 +522,12 @@ def prepare_timeline_video_physical_frames(
         fps_numerator=int(fps_numerator),
         fps_denominator=int(fps_denominator),
     )
+    selection_sha = str(contract["selection_sha256"])
+    cached = source._physical_prepared_cache.get(selection_sha)
+    if cached is not None:
+        return cached
+    source._physical_prepared_cache.clear()
+
     fps = Fraction(int(fps_numerator), int(fps_denominator))
     start_frame = int(global_start_frame)
     frame_count = int(total_frames)
@@ -487,10 +537,26 @@ def prepare_timeline_video_physical_frames(
     clipped = [min(max(value, Fraction(0, 1)), upper) for value in requested]
     if not clipped:
         raise TimelineVideoError("physical Timeline Video selection is empty")
-    decode_start = min(clipped)
-    decode_end = max(clipped)
-    minimum_step = Fraction(int(fps_denominator), int(fps_numerator))
-    decode_duration = max(minimum_step, decode_end - decode_start + minimum_step)
+
+    source_rate = _source_frame_rate(source.video)
+    source_indices: list[int] | None = None
+    if source_rate is not None:
+        source_indices = _nearest_source_indices(
+            clipped,
+            source_rate=source_rate,
+            source_duration=duration,
+        )
+        decode_start_index = min(source_indices)
+        decode_end_index = max(source_indices)
+        decode_start = Fraction(decode_start_index, 1) / source_rate
+        decode_duration = Fraction(decode_end_index - decode_start_index + 1, 1) / source_rate
+    else:
+        decode_start = min(clipped)
+        decode_end = max(clipped)
+        minimum_step = Fraction(int(fps_denominator), int(fps_numerator))
+        decode_duration = max(minimum_step, decode_end - decode_start + minimum_step)
+        decode_start_index = 0
+
     trimmed = source.video.as_trimmed(
         start_time=float(decode_start),
         duration=float(decode_duration),
@@ -508,23 +574,31 @@ def prepare_timeline_video_physical_frames(
 
     raw_rate = getattr(components, "frame_rate", None)
     try:
-        source_rate = Fraction(raw_rate)
-        if source_rate <= 0:
+        decoded_rate = Fraction(raw_rate)
+        if decoded_rate <= 0:
             raise ValueError
     except (TypeError, ValueError, ZeroDivisionError):
-        if int(decoded.shape[0]) > 1 and decode_end > decode_start:
-            source_rate = Fraction(int(decoded.shape[0]) - 1, 1) / (decode_end - decode_start)
-        else:
-            source_rate = fps
+        decoded_rate = source_rate or fps
 
     if int(decoded.shape[0]) == 1:
         index_values = [0] * frame_count
+    elif source_indices is not None and decoded_rate == source_rate:
+        index_values = [
+            max(0, min(index - decode_start_index, int(decoded.shape[0]) - 1))
+            for index in source_indices
+        ]
     else:
+        # Generic VIDEO implementations may not expose get_frame_rate(). In that
+        # case retain the Core-compatible average-rate fallback, now fingerprinted
+        # explicitly so reuse cannot mistake a changed decode for the old one.
         index_values = []
         for value in clipped:
-            position = (value - decode_start) * source_rate
+            position = (value - decode_start) * decoded_rate
             index = int(round(float(position)))
             index_values.append(max(0, min(index, int(decoded.shape[0]) - 1)))
+        if source_indices is None:
+            source_indices = list(index_values)
+
     indices = torch.tensor(index_values, dtype=torch.long)
     selected = decoded.index_select(0, indices).contiguous()
     selected = _resize_frames(selected, source)
@@ -534,17 +608,26 @@ def prepare_timeline_video_physical_frames(
     )
     contract = dict(contract)
     contract.update(
-        decoded_frame_rate=[source_rate.numerator, source_rate.denominator],
+        source_frame_rate=(
+            [source_rate.numerator, source_rate.denominator]
+            if source_rate is not None
+            else None
+        ),
+        decoded_frame_rate=[decoded_rate.numerator, decoded_rate.denominator],
+        sampled_source_indices_sha256=_canonical_hash(source_indices),
         sampled_indices_sha256=_canonical_hash(index_values),
-        processed_sha256=processed_sha256,
     )
-    return TimelineVideoPreparedFrames(
+    contract["resolved_selection_sha256"] = _canonical_hash(contract)
+    contract["processed_sha256"] = processed_sha256
+    prepared = TimelineVideoPreparedFrames(
         frames=selected,
         timestamps=local_timestamps,
         processed_sha256=processed_sha256,
         frame_count=frame_count,
         selection_contract=contract,
     )
+    source._physical_prepared_cache[selection_sha] = prepared
+    return prepared
 
 
 def timeline_video_physical_presentation(
@@ -590,15 +673,38 @@ def encode_timeline_video_physical(
 ) -> TimelineVideoAssets:
     """Experimental descriptor-aware Timeline Video extraction.
 
-    This compatibility wrapper keeps the old call surface while delegating to
-    the prepare/encode split used by the geometry-first runtime.
+    Reuse the source-owned one-entry prepared window created while constructing
+    the descriptor. The cache is scoped to this ``TimelineVideoSource`` instance,
+    excluded from every persisted contract, and cleared on consumption.
     """
 
-    prepared = prepare_timeline_video_physical_frames(
-        source,
-        global_start_frame=int(descriptor.global_start_frame),
-        total_frames=int(descriptor.total_frames),
-        fps_numerator=int(descriptor.fps_numerator),
-        fps_denominator=int(descriptor.fps_denominator),
+    presentation = getattr(descriptor, "presentation_contract", {}).get("video")
+    expected_selection = (
+        presentation.get("selection_contract")
+        if isinstance(presentation, dict)
+        else None
     )
+    expected_selection_sha = (
+        str(expected_selection.get("selection_sha256", ""))
+        if isinstance(expected_selection, dict)
+        else ""
+    )
+    expected_processed_sha = (
+        str(presentation.get("processed_sha256", ""))
+        if isinstance(presentation, dict)
+        else ""
+    )
+    prepared = source._physical_prepared_cache.pop(expected_selection_sha, None)
+    source._physical_prepared_cache.clear()
+    if prepared is not None and prepared.processed_sha256 != expected_processed_sha:
+        prepared = None
+    if prepared is None:
+        prepared = prepare_timeline_video_physical_frames(
+            source,
+            global_start_frame=int(descriptor.global_start_frame),
+            total_frames=int(descriptor.total_frames),
+            fps_numerator=int(descriptor.fps_numerator),
+            fps_denominator=int(descriptor.fps_denominator),
+        )
+        source._physical_prepared_cache.clear()
     return encode_timeline_video_prepared(video_vae, source, prepared)
