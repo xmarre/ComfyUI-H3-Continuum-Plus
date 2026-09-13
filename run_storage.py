@@ -181,6 +181,8 @@ def _output_root() -> Path:
 
 
 def _fsync_file(path: Path) -> None:
+    # Windows requires a writable descriptor for fsync(). The file contents
+    # are already complete at this point; opening r+b does not modify them.
     with path.open("r+b") as handle:
         os.fsync(handle.fileno())
 
@@ -507,14 +509,6 @@ def _audio_vae_signature(audio_vae: Any) -> tuple[dict[str, Any], bool]:
     return observed, module_safe
 
 
-def _physical_identity_fields(result: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "prompt_source_digest": str(result.get("prompt_source_digest", "")),
-        "physical_prompt_policy": str(result.get("physical_prompt_policy", "legacy_nominal_v1")),
-        "timeline_video_adapter": str(result.get("timeline_video_adapter", "legacy_nominal_chunk_v1")),
-    }
-
-
 def _apply_nonce_contract(
     contract: dict[str, Any], *, requested_nonce: int, effective_nonce: int,
 ) -> dict[str, Any]:
@@ -527,7 +521,6 @@ def _apply_nonce_contract(
     else:
         mode = "explicit" if int(requested_nonce) >= 1 else "auto"
     global_hash = _hash(result["global"])
-    physical_fields = _physical_identity_fields(result)
     chunk_contracts = []
     chunk_hashes = []
     for position, prompt_hash in enumerate(result["prompt_hashes"]):
@@ -540,7 +533,6 @@ def _apply_nonce_contract(
             "reroll_boundary": boundary if affected else 0,
             "effective_reroll_nonce": int(effective_nonce) if affected else 0,
             "last_frame_hash": str(result["last_frame_hash"]) if number == int(result["chunk_count"]) else "",
-            **physical_fields,
         }
         timeline_chunks = result.get("timeline_video_chunk_contracts") or []
         if position < len(timeline_chunks):
@@ -563,7 +555,7 @@ def _apply_nonce_contract(
 
 
 def _legacy_v2_chunk_hashes(contract: dict[str, Any]) -> list[str]:
-    """Recompute schema-2 chunk identities without new physical fields."""
+    """Recompute schema-2 chunk identities without physical transport revision fields."""
     global_hash = _hash(contract["global"])
     boundary = int(contract["reroll_from_chunk"])
     effective_nonce = int(contract.get("effective_reroll_nonce", 0))
