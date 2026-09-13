@@ -1,8 +1,14 @@
-"""Chunk-local MiniMax H3 timeline-video reference conditioning."""
+"""MiniMax H3 timeline-video reference conditioning.
+
+Legacy nominal-chunk extraction remains the production default. The physical
+window adapter is a separately gated experimental path because changing sampled
+reference-video content requires its own matched decoded-media validation.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 import hashlib
 import io
 import json
@@ -18,6 +24,7 @@ from .temporal import align_frame_count_up
 
 TIMELINE_VIDEO_CONTRACT_VERSION = 1
 TIMELINE_VIDEO_PREPROCESS_VERSION = 1
+TIMELINE_VIDEO_PHYSICAL_SELECTION_VERSION = 1
 TIMELINE_VIDEO_SIZE_EFFICIENT = "Efficient - 0.4 MP"
 TIMELINE_VIDEO_SIZE_BALANCED = "Balanced - 0.6 MP"
 TIMELINE_VIDEO_SIZE_MATCH_OUTPUT = "Match Output"
@@ -39,6 +46,10 @@ def _canonical_hash(value: Any) -> str:
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _fraction_string(value: Fraction) -> str:
+    return str(value.numerator) if value.denominator == 1 else f"{value.numerator}/{value.denominator}"
 
 
 def _tensor_hash(value: torch.Tensor) -> str:
@@ -156,6 +167,7 @@ class TimelineVideoAssets:
     block: dict[str, Any]
     processed_sha256: str
     frame_count: int
+    selection_contract: dict[str, Any] | None = None
 
 
 def prepare_timeline_video_source(
@@ -265,11 +277,75 @@ def validate_timeline_video_prompts(
     )
 
 
+def _resize_frames(frames: torch.Tensor, source: TimelineVideoSource) -> torch.Tensor:
+    if (
+        int(frames.shape[2]) == source.target_width
+        and int(frames.shape[1]) == source.target_height
+    ):
+        return frames.contiguous()
+    try:
+        import comfy.utils
+    except Exception as exc:
+        raise TimelineVideoError(
+            "ComfyUI Core image resize support is unavailable"
+        ) from exc
+    return comfy.utils.common_upscale(
+        frames.movedim(-1, 1),
+        source.target_width,
+        source.target_height,
+        "lanczos",
+        "disabled",
+    ).movedim(1, -1).contiguous()
+
+
+def _encode_assets(
+    video_vae: Any,
+    source: TimelineVideoSource,
+    frames: torch.Tensor,
+    *,
+    timestamps: list[float] | None = None,
+    selection_contract: dict[str, Any] | None = None,
+) -> TimelineVideoAssets:
+    frames = _resize_frames(frames, source)
+    processed_sha256 = _tensor_hash(frames)
+    latent = video_vae.encode(frames)
+    qwen_step = max(1, int(round(float(FPS) / 2.0)))
+    qwen_indices = list(range(0, int(frames.shape[0]), qwen_step))
+    qwen_frames = frames[qwen_indices].contiguous()
+    if timestamps is None:
+        qwen_timestamps = [index / float(FPS) for index in qwen_indices]
+    else:
+        qwen_timestamps = [float(timestamps[index]) for index in qwen_indices]
+    item = {
+        "type": "video",
+        "data": qwen_frames,
+        "timestamps": qwen_timestamps,
+    }
+    block = {
+        "kind": "video",
+        "latent_t": int(latent.shape[2]),
+        "latent_h": source.target_height // 16,
+        "latent_w": source.target_width // 16,
+        "ref_audio_t": 0,
+        "latent": latent,
+        "audio_latent": None,
+    }
+    return TimelineVideoAssets(
+        item=item,
+        block=block,
+        processed_sha256=processed_sha256,
+        frame_count=int(frames.shape[0]),
+        selection_contract=dict(selection_contract) if selection_contract is not None else None,
+    )
+
+
 def encode_timeline_video_chunk(
     video_vae: Any,
     source: TimelineVideoSource,
     chunk_index: int,
 ) -> TimelineVideoAssets:
+    """Legacy nominal extraction. Keep this path available unchanged in meaning."""
+
     chunk_index = int(chunk_index)
     if chunk_index < 0 or chunk_index >= source.chunks:
         raise TimelineVideoError("Timeline Video chunk index is out of range")
@@ -299,44 +375,95 @@ def encode_timeline_video_chunk(
         0, int(frames.shape[0]) - 1, target_frames, dtype=torch.float64
     ).round().to(dtype=torch.long)
     frames = frames.index_select(0, indices).contiguous()
-    if (
-        int(frames.shape[2]) != source.target_width
-        or int(frames.shape[1]) != source.target_height
-    ):
-        try:
-            import comfy.utils
-        except Exception as exc:
-            raise TimelineVideoError(
-                "ComfyUI Core image resize support is unavailable"
-            ) from exc
-        frames = comfy.utils.common_upscale(
-            frames.movedim(-1, 1),
-            source.target_width,
-            source.target_height,
-            "lanczos",
-            "disabled",
-        ).movedim(1, -1).contiguous()
-    processed_sha256 = _tensor_hash(frames)
-    latent = video_vae.encode(frames)
-    qwen_step = max(1, int(round(float(FPS) / 2.0)))
-    qwen_frames = frames[::qwen_step].contiguous()
-    item = {
-        "type": "video",
-        "data": qwen_frames,
-        "timestamps": [index / 2.0 for index in range(int(qwen_frames.shape[0]))],
+    return _encode_assets(video_vae, source, frames)
+
+
+def timeline_video_physical_selection_contract(
+    source: TimelineVideoSource,
+    descriptor: Any,
+) -> dict[str, Any]:
+    """Pure physical frame-edge selection identity; no media decode is performed."""
+
+    fps = Fraction(int(descriptor.fps_numerator), int(descriptor.fps_denominator))
+    start_frame = int(descriptor.global_start_frame)
+    frame_count = int(descriptor.total_frames)
+    requested = [Fraction(start_frame + index, 1) / fps for index in range(frame_count)]
+    # Core VIDEO exposes duration but not a stable source-frame timestamp index.
+    # The adapter therefore samples the requested 24-fps grid from a trimmed
+    # decoded window and clamps source times at its available endpoints.
+    upper = max(0.0, float(source.duration) - 1e-9)
+    clamped = [min(max(float(value), 0.0), upper) for value in requested]
+    contract = {
+        "selection_version": TIMELINE_VIDEO_PHYSICAL_SELECTION_VERSION,
+        "source_sha256": source.source_sha256,
+        "global_start_frame": start_frame,
+        "global_end_frame": start_frame + frame_count,
+        "frame_count": frame_count,
+        "fps": [int(descriptor.fps_numerator), int(descriptor.fps_denominator)],
+        "requested_first": _fraction_string(requested[0]) if requested else "0",
+        "requested_last": _fraction_string(requested[-1]) if requested else "0",
+        "leading_clamped_frames": sum(1 for value in requested if value < 0),
+        "trailing_clamped_frames": sum(1 for value in requested if float(value) > upper),
+        "target_width": source.target_width,
+        "target_height": source.target_height,
+        "preprocess_version": TIMELINE_VIDEO_PREPROCESS_VERSION,
     }
-    block = {
-        "kind": "video",
-        "latent_t": int(latent.shape[2]),
-        "latent_h": source.target_height // 16,
-        "latent_w": source.target_width // 16,
-        "ref_audio_t": 0,
-        "latent": latent,
-        "audio_latent": None,
-    }
-    return TimelineVideoAssets(
-        item=item,
-        block=block,
-        processed_sha256=processed_sha256,
-        frame_count=int(frames.shape[0]),
+    contract["selection_sha256"] = _canonical_hash(contract)
+    return contract
+
+
+def encode_timeline_video_physical(
+    video_vae: Any,
+    source: TimelineVideoSource,
+    descriptor: Any,
+) -> TimelineVideoAssets:
+    """Experimental descriptor-aware Timeline Video extraction.
+
+    This function is intentionally separate from ``encode_timeline_video_chunk``;
+    callers must explicitly select it after the Timeline Video matched gate.
+    """
+
+    contract = timeline_video_physical_selection_contract(source, descriptor)
+    fps = Fraction(int(descriptor.fps_numerator), int(descriptor.fps_denominator))
+    start_frame = int(descriptor.global_start_frame)
+    frame_count = int(descriptor.total_frames)
+    requested = [float(Fraction(start_frame + index, 1) / fps) for index in range(frame_count)]
+    upper = max(0.0, float(source.duration) - 1e-9)
+    clipped = [min(max(value, 0.0), upper) for value in requested]
+    if not clipped:
+        raise TimelineVideoError("physical Timeline Video selection is empty")
+    decode_start = min(clipped)
+    decode_end = max(clipped)
+    decode_duration = max(1.0 / float(FPS), decode_end - decode_start + 1.0 / float(FPS))
+    trimmed = source.video.as_trimmed(
+        start_time=decode_start,
+        duration=decode_duration,
+        strict_duration=False,
+    )
+    if trimmed is None:
+        raise TimelineVideoError("Timeline Video could not provide the physical source window")
+    components = trimmed.get_components()
+    decoded = getattr(components, "images", None)
+    if not torch.is_tensor(decoded) or decoded.ndim != 4 or int(decoded.shape[0]) < 1 or int(decoded.shape[-1]) < 3:
+        raise TimelineVideoError("Timeline Video produced invalid IMAGE frames for the physical source window")
+    decoded = decoded[:, :, :, :3].detach().to(device="cpu", dtype=torch.float32)
+    if not bool(torch.isfinite(decoded).all()):
+        raise TimelineVideoError("Timeline Video contains NaN or Inf pixels")
+    if int(decoded.shape[0]) == 1 or decode_end <= decode_start:
+        indices = torch.zeros(frame_count, dtype=torch.long)
+    else:
+        positions = [
+            (value - decode_start) / (decode_end - decode_start) * (int(decoded.shape[0]) - 1)
+            for value in clipped
+        ]
+        indices = torch.tensor(positions, dtype=torch.float64).round().to(dtype=torch.long)
+        indices.clamp_(0, int(decoded.shape[0]) - 1)
+    frames = decoded.index_select(0, indices).contiguous()
+    local_timestamps = [index / float(FPS) for index in range(frame_count)]
+    return _encode_assets(
+        video_vae,
+        source,
+        frames,
+        timestamps=local_timestamps,
+        selection_contract=contract,
     )
