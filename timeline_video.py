@@ -141,13 +141,14 @@ class TimelineVideoSource:
     chunk_seconds: float
     chunk_contracts: tuple[dict[str, Any], ...]
     combined_hash: str
+    source_active_trim: tuple[str, str] | None = None
     _physical_prepared_cache: dict[str, "TimelineVideoPreparedFrames"] = field(
         default_factory=dict, compare=False, repr=False
     )
 
     @property
     def contract(self) -> dict[str, Any]:
-        return {
+        result = {
             "timeline_video_contract_version": TIMELINE_VIDEO_CONTRACT_VERSION,
             "source_sha256": self.source_sha256,
             "source_bytes": self.source_bytes,
@@ -162,6 +163,9 @@ class TimelineVideoSource:
             "combined_hash": self.combined_hash,
             "chunk_slices": [dict(item) for item in self.chunk_contracts],
         }
+        if self.source_active_trim is not None:
+            result["source_active_trim"] = list(self.source_active_trim)
+        return result
 
 
 @dataclass(frozen=True)
@@ -220,6 +224,15 @@ def prepare_timeline_video_source(
         output_height=int(output_height),
         size_mode=str(size_mode),
     )
+    active_trim_window = _active_trim_window(video)
+    source_active_trim = (
+        (
+            _fraction_string(active_trim_window[0]),
+            _fraction_string(active_trim_window[1]),
+        )
+        if active_trim_window is not None
+        else None
+    )
     chunk_contracts = []
     for index in range(chunks):
         item = {
@@ -231,20 +244,22 @@ def prepare_timeline_video_source(
             "target_fps": FPS,
             "preprocess_version": TIMELINE_VIDEO_PREPROCESS_VERSION,
         }
-        item["slice_sha256"] = _canonical_hash(
-            {"source_sha256": source_sha256, **item}
-        )
+        slice_identity = {"source_sha256": source_sha256, **item}
+        if source_active_trim is not None:
+            slice_identity["source_active_trim"] = list(source_active_trim)
+        item["slice_sha256"] = _canonical_hash(slice_identity)
         chunk_contracts.append(item)
-    combined_hash = _canonical_hash(
-        {
-            "timeline_video_contract_version": TIMELINE_VIDEO_CONTRACT_VERSION,
-            "source_sha256": source_sha256,
-            "size_mode": str(size_mode),
-            "target_width": target_width,
-            "target_height": target_height,
-            "chunk_slices": chunk_contracts,
-        }
-    )
+    combined_identity = {
+        "timeline_video_contract_version": TIMELINE_VIDEO_CONTRACT_VERSION,
+        "source_sha256": source_sha256,
+        "size_mode": str(size_mode),
+        "target_width": target_width,
+        "target_height": target_height,
+        "chunk_slices": chunk_contracts,
+    }
+    if source_active_trim is not None:
+        combined_identity["source_active_trim"] = list(source_active_trim)
+    combined_hash = _canonical_hash(combined_identity)
     return TimelineVideoSource(
         video=video,
         duration=duration,
@@ -259,6 +274,7 @@ def prepare_timeline_video_source(
         chunk_seconds=chunk_seconds,
         chunk_contracts=tuple(chunk_contracts),
         combined_hash=combined_hash,
+        source_active_trim=source_active_trim,
     )
 
 
@@ -439,13 +455,9 @@ def timeline_video_physical_selection_contract(
     requested = [Fraction(start_frame + index, 1) / fps for index in range(frame_count)]
     duration = Fraction(str(source.duration))
     upper = max(Fraction(0, 1), duration - Fraction(1, 1_000_000_000))
-    active_trim_window = _active_trim_window(source.video)
     active_trim = (
-        [
-            _fraction_string(active_trim_window[0]),
-            _fraction_string(active_trim_window[1]),
-        ]
-        if active_trim_window is not None
+        list(source.source_active_trim)
+        if source.source_active_trim is not None
         else None
     )
     contract = {
@@ -566,8 +578,11 @@ def prepare_timeline_video_physical_frames(
         raise TimelineVideoError("physical Timeline Video selection is empty")
 
     source_rate = _source_frame_rate(source.video)
-    active_trim_window = _active_trim_window(source.video)
-    source_start = active_trim_window[0] if active_trim_window is not None else Fraction(0, 1)
+    source_start = (
+        Fraction(source.source_active_trim[0])
+        if source.source_active_trim is not None
+        else Fraction(0, 1)
+    )
     source_indices: list[int] | None = None
     if source_rate is not None:
         source_indices = _nearest_source_indices(
