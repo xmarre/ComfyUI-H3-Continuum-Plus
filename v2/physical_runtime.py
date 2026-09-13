@@ -6,6 +6,7 @@ Qwen conditioning and compact identity/diagnostic metadata.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
@@ -19,6 +20,8 @@ from .physical_prompts import (
     physical_prompt_compiler_enabled,
     presentation_digest,
 )
+
+LOG = logging.getLogger("h3_continuum_join")
 
 
 def build_presentation_contract(
@@ -139,9 +142,28 @@ def encode_physical_prompt_conditioning(
 
     cache = {} if cache is None else cache
     candidate = physical_prompt_compiler_enabled()
+    source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
     compiled = compile_invocation_prompt(
         plan, descriptor, legacy_text=legacy_text, candidate=candidate
     )
+    if candidate and source_kind == "timeline":
+        diagnostic_codes = ",".join(
+            str(item.get("code", ""))
+            for item in compiled.diagnostics
+            if isinstance(item, dict) and item.get("code")
+        ) or "none"
+        LOG.warning(
+            "H3 Continuum physical prompt compiler active compiler=%s group=%s "
+            "global_frames=[%d,%d) intervals=%d text_sha256=%s fallback=%s diagnostics=%s",
+            compiled.compiler_version,
+            str(getattr(descriptor, "group_id", "?")),
+            int(getattr(descriptor, "global_start_frame", -1)),
+            int(getattr(descriptor, "global_end_frame", -1)),
+            len(compiled.contributing_intervals),
+            compiled.text_sha256,
+            compiled.fallback_status,
+            diagnostic_codes,
+        )
     _validate_physical_timeline_video_assets(descriptor, timeline_video_assets)
     include_first_actual = bool(include_first and assets.first_image is not None)
     include_last_actual = bool(include_last and assets.last_image is not None)
