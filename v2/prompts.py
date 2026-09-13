@@ -115,10 +115,12 @@ def _source_semantics(source: dict[str, Any]) -> dict[str, Any]:
             str(value) for value in source.get("logical_hashes") or []
         ]
     else:
-        # Fixed/fallback semantics are the normalized opaque source text. Keep
-        # exact original_text in the stored source too, but hash only its value
-        # as the actual fixed instruction rather than unrelated provenance keys.
-        result["text"] = str(source.get("original_text", ""))
+        # Fixed/fallback semantics use the same normalization as the logical
+        # prompt view. Preserve exact original_text separately for provenance and
+        # future rebuilds, but do not let surrounding whitespace salt lineage.
+        result["text"] = _normalize_prompt(
+            source.get("original_text", ""), label="fixed source"
+        )
     return result
 
 
