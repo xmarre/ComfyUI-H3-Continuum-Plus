@@ -1,8 +1,12 @@
+import copy
+
+import pytest
 import torch
 
 from ComfyUI_H3_Continuum_Join.state import make_plan
 from ComfyUI_H3_Continuum_Join.v2 import session_io
 from ComfyUI_H3_Continuum_Join.v2.session import (
+    SessionValidationError,
     entry_to_state,
     make_chunk_entry,
     make_session,
@@ -33,7 +37,7 @@ def _latent(frame_count=124):
     }
 
 
-def test_session_roundtrip_and_last_state(tmp_path, monkeypatch):
+def _initial_entry(*, reused):
     plan = make_plan(
         continuation=False,
         clip_index=1,
@@ -46,7 +50,7 @@ def test_session_roundtrip_and_last_state(tmp_path, monkeypatch):
         requested_extend_seconds=5,
         debug=False,
     )
-    entry = make_chunk_entry(
+    return make_chunk_entry(
         latent=_latent(),
         plan=plan,
         prompt="p",
@@ -54,8 +58,22 @@ def test_session_roundtrip_and_last_state(tmp_path, monkeypatch):
         seed=1,
         context_frames=0,
         motion_score=0.0,
-        reused=False,
+        reused=reused,
     )
+
+
+def _physical_contract(*, timeline_video=False):
+    return {
+        "contract_version": 1,
+        "compiler_version": "legacy_nominal_v1",
+        "candidate_enabled": True,
+        "timeline_video_physical_enabled": bool(timeline_video),
+        "prompt_source_digest": "a" * 64,
+    }
+
+
+def test_session_roundtrip_and_last_state(tmp_path, monkeypatch):
+    entry = _initial_entry(reused=False)
     session = make_session(
         chunks=[entry],
         width=96,
@@ -77,6 +95,61 @@ def test_session_roundtrip_and_last_state(tmp_path, monkeypatch):
     loaded = session_io.load_session(prefix="test", slot=1)
     assert torch.equal(loaded["chunks"][0]["video"], session["chunks"][0]["video"])
     assert loaded["session_id"] == session["session_id"]
+
+
+def test_session2_marks_reused_metadata_free_legacy_initial_for_revalidation():
+    session = make_session(
+        chunks=[_initial_entry(reused=True)],
+        width=96,
+        height=64,
+        chunk_seconds=5,
+        identity_hash="none",
+        model_fingerprint_value="f" * 64,
+        parent_session_id=None,
+        reroll_from_chunk=0,
+        settings={"physical_prompt_contract": _physical_contract()},
+    )
+
+    physical = session["settings"]["physical_prompt_contract"]
+    assert physical["legacy_initial_adapter_pending_revalidation"] is True
+    assert "physical_prompt" not in session["chunks"][0]["plan"]
+    assert validate_session(session) is session
+
+    tampered = copy.deepcopy(session)
+    tampered["chunks"][0]["reused"] = False
+    with pytest.raises(SessionValidationError, match="physical prompt contract is missing"):
+        validate_session(tampered)
+
+
+def test_session2_does_not_mark_unproven_or_physical_timeline_legacy_initial():
+    with pytest.raises(SessionValidationError, match="physical prompt contract is missing"):
+        make_session(
+            chunks=[_initial_entry(reused=False)],
+            width=96,
+            height=64,
+            chunk_seconds=5,
+            identity_hash="none",
+            model_fingerprint_value="f" * 64,
+            parent_session_id=None,
+            reroll_from_chunk=0,
+            settings={"physical_prompt_contract": _physical_contract()},
+        )
+
+    with pytest.raises(SessionValidationError, match="physical prompt contract is missing"):
+        make_session(
+            chunks=[_initial_entry(reused=True)],
+            width=96,
+            height=64,
+            chunk_seconds=5,
+            identity_hash="none",
+            model_fingerprint_value="f" * 64,
+            parent_session_id=None,
+            reroll_from_chunk=0,
+            settings={
+                "physical_prompt_contract": _physical_contract(timeline_video=True)
+            },
+        )
+
 
 def test_model_fingerprint_can_add_continuum_wrapper_without_mutating_model():
     from types import SimpleNamespace

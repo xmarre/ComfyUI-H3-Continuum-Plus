@@ -96,4 +96,4 @@ def test_v2_samples_every_chunk_before_any_decode(monkeypatch):
     assert sum(e[0]=="encode" for e in events)==1
     assert images.shape[0]==360 and audio["waveform"].shape[-1]==480000
     assert last_state["clip_index"]==3 and len(session["chunks"])==3
-    assert "call-local MODEL clone per chunk" in report
+    assert "call-local MODEL clone per physical sample" in report
