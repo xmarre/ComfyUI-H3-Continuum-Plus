@@ -97,13 +97,13 @@ def test_guided_overlap_is_not_treated_as_exact_protected_context():
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v3"
+    assert compiled.compiler_version == "physical_timeline_text_v2"
     assert not any(item["code"] == "H3C-PT206" for item in compiled.diagnostics)
     assert "gharial scene" in compiled.text
     assert "Some endure. Others adapt." in compiled.text
 
 
-def test_timeline_without_protected_prefix_uses_v3_identity_without_suppression():
+def test_timeline_without_protected_prefix_keeps_v2_identity_and_full_authored_text():
     descriptor = make_physical_sample_descriptor(
         group_id="chunk:1",
         logical_indices=(0,),
@@ -124,6 +124,6 @@ def test_timeline_without_protected_prefix_uses_v3_identity_without_suppression(
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v3"
+    assert compiled.compiler_version == "physical_timeline_text_v2"
     assert not any(item["code"] == "H3C-PT206" for item in compiled.diagnostics)
     assert "Some endure. Others adapt." in compiled.text

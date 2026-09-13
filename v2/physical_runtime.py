@@ -148,18 +148,23 @@ def _with_runtime_compiler_identity(
     *,
     protected_interval: tuple[Fraction, Fraction] | None,
 ):
+    if protected_interval is None:
+        # V3 is a semantic version only for exact-prefix suppression. Initial
+        # Timeline samples and guided-overlap continuations retain V2 identity
+        # because their emitted text is byte-for-byte the V2 compiler result.
+        return compiled
+
     diagnostics = tuple(compiled.diagnostics)
-    if protected_interval is not None:
-        start, end = protected_interval
-        diagnostics += (
-            {
-                "level": "info",
-                "code": "H3C-PT206",
-                "message": "suppressed authored instructions inside the exact protected prefix so they cannot replay into the generated suffix",
-                "global_start": fraction_string(start),
-                "global_end": fraction_string(end),
-            },
-        )
+    start, end = protected_interval
+    diagnostics += (
+        {
+            "level": "info",
+            "code": "H3C-PT206",
+            "message": "suppressed authored instructions inside the exact protected prefix so they cannot replay into the generated suffix",
+            "global_start": fraction_string(start),
+            "global_end": fraction_string(end),
+        },
+    )
     physical_hash = canonical_sha256(
         {
             "compiler_version": _RUNTIME_PHYSICAL_COMPILER_VERSION,
