@@ -61,9 +61,15 @@ class _TrimmedCoreVideo:
         return _Trimmed(frames, self.frame_rate)
 
 
-def test_physical_trim_preserves_upstream_active_trim_source_grid_phase():
-    video = _TrimmedCoreVideo(active_start=0.02, frame_rate=30.0)
-    source = prepare_timeline_video_source(
+class _OpenEndedTrimmedCoreVideo(_TrimmedCoreVideo):
+    def get_active_trim_window(self):
+        # Match Core VideoFromFile: duration 0 means "until end" and does not
+        # erase a non-zero upstream trim start.
+        return self.active_start, 0.0
+
+
+def _prepare(video):
+    return prepare_timeline_video_source(
         video,
         chunks=2,
         chunk_seconds=5.0,
@@ -71,6 +77,11 @@ def test_physical_trim_preserves_upstream_active_trim_source_grid_phase():
         output_height=32,
         size_mode=TIMELINE_VIDEO_SIZE_MATCH_OUTPUT,
     )
+
+
+def test_physical_trim_preserves_upstream_active_trim_source_grid_phase():
+    video = _TrimmedCoreVideo(active_start=0.02, frame_rate=30.0)
+    source = _prepare(video)
 
     prepared = prepare_timeline_video_physical_frames(
         source,
@@ -82,4 +93,21 @@ def test_physical_trim_preserves_upstream_active_trim_source_grid_phase():
     absolute_grid_position = (video.active_start + relative_start) * video.frame_rate
     assert abs(absolute_grid_position - round(absolute_grid_position)) < 1e-9
     assert prepared.selection_contract["source_active_trim"] == ["1/50", "10"]
+    assert prepared.selection_contract["source_grid_start"] == "1/50"
+
+
+def test_open_ended_core_trim_keeps_nonzero_source_grid_phase():
+    video = _OpenEndedTrimmedCoreVideo(active_start=0.02, frame_rate=30.0)
+    source = _prepare(video)
+
+    prepared = prepare_timeline_video_physical_frames(
+        source,
+        global_start_frame=98,
+        total_frames=143,
+    )
+
+    relative_start = video.calls[0][0]
+    absolute_grid_position = (video.active_start + relative_start) * video.frame_rate
+    assert abs(absolute_grid_position - round(absolute_grid_position)) < 1e-9
+    assert prepared.selection_contract["source_active_trim"] == ["1/50", "0"]
     assert prepared.selection_contract["source_grid_start"] == "1/50"
