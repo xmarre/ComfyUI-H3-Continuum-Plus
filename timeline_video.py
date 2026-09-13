@@ -170,6 +170,17 @@ class TimelineVideoAssets:
     selection_contract: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class TimelineVideoPreparedFrames:
+    """CPU presentation frames selected for one physical H3 invocation."""
+
+    frames: torch.Tensor
+    timestamps: tuple[float, ...]
+    processed_sha256: str
+    frame_count: int
+    selection_contract: dict[str, Any]
+
+
 def prepare_timeline_video_source(
     video: Any,
     *,
@@ -298,16 +309,17 @@ def _resize_frames(frames: torch.Tensor, source: TimelineVideoSource) -> torch.T
     ).movedim(1, -1).contiguous()
 
 
-def _encode_assets(
+def _encode_resized_assets(
     video_vae: Any,
     source: TimelineVideoSource,
     frames: torch.Tensor,
     *,
-    timestamps: list[float] | None = None,
+    timestamps: list[float] | tuple[float, ...] | None = None,
     selection_contract: dict[str, Any] | None = None,
+    processed_sha256: str | None = None,
 ) -> TimelineVideoAssets:
-    frames = _resize_frames(frames, source)
-    processed_sha256 = _tensor_hash(frames)
+    frames = frames.contiguous()
+    processed_sha256 = processed_sha256 or _tensor_hash(frames)
     latent = video_vae.encode(frames)
     qwen_step = max(1, int(round(float(FPS) / 2.0)))
     qwen_indices = list(range(0, int(frames.shape[0]), qwen_step))
@@ -336,6 +348,26 @@ def _encode_assets(
         processed_sha256=processed_sha256,
         frame_count=int(frames.shape[0]),
         selection_contract=dict(selection_contract) if selection_contract is not None else None,
+    )
+
+
+def _encode_assets(
+    video_vae: Any,
+    source: TimelineVideoSource,
+    frames: torch.Tensor,
+    *,
+    timestamps: list[float] | None = None,
+    selection_contract: dict[str, Any] | None = None,
+) -> TimelineVideoAssets:
+    """Legacy helper: resize then encode exactly as the nominal adapter did."""
+
+    frames = _resize_frames(frames, source)
+    return _encode_resized_assets(
+        video_vae,
+        source,
+        frames,
+        timestamps=timestamps,
+        selection_contract=selection_contract,
     )
 
 
@@ -380,30 +412,42 @@ def encode_timeline_video_chunk(
 
 def timeline_video_physical_selection_contract(
     source: TimelineVideoSource,
-    descriptor: Any,
+    descriptor: Any | None = None,
+    *,
+    global_start_frame: int | None = None,
+    total_frames: int | None = None,
+    fps_numerator: int = 24,
+    fps_denominator: int = 1,
 ) -> dict[str, Any]:
     """Pure physical frame-edge selection identity; no media decode is performed."""
 
-    fps = Fraction(int(descriptor.fps_numerator), int(descriptor.fps_denominator))
-    start_frame = int(descriptor.global_start_frame)
-    frame_count = int(descriptor.total_frames)
+    if descriptor is not None:
+        global_start_frame = int(descriptor.global_start_frame)
+        total_frames = int(descriptor.total_frames)
+        fps_numerator = int(descriptor.fps_numerator)
+        fps_denominator = int(descriptor.fps_denominator)
+    if global_start_frame is None or total_frames is None:
+        raise TimelineVideoError("physical Timeline Video selection requires start and frame count")
+    frame_count = int(total_frames)
+    if frame_count <= 0 or int(fps_numerator) <= 0 or int(fps_denominator) <= 0:
+        raise TimelineVideoError("physical Timeline Video selection geometry is invalid")
+    fps = Fraction(int(fps_numerator), int(fps_denominator))
+    start_frame = int(global_start_frame)
     requested = [Fraction(start_frame + index, 1) / fps for index in range(frame_count)]
-    # Core VIDEO exposes duration but not a stable source-frame timestamp index.
-    # The adapter therefore samples the requested 24-fps grid from a trimmed
-    # decoded window and clamps source times at its available endpoints.
-    upper = max(0.0, float(source.duration) - 1e-9)
-    clamped = [min(max(float(value), 0.0), upper) for value in requested]
+    duration = Fraction(str(source.duration))
+    upper = max(Fraction(0, 1), duration - Fraction(1, 1_000_000_000))
     contract = {
         "selection_version": TIMELINE_VIDEO_PHYSICAL_SELECTION_VERSION,
         "source_sha256": source.source_sha256,
+        "source_combined_hash": source.combined_hash,
         "global_start_frame": start_frame,
         "global_end_frame": start_frame + frame_count,
         "frame_count": frame_count,
-        "fps": [int(descriptor.fps_numerator), int(descriptor.fps_denominator)],
+        "fps": [int(fps_numerator), int(fps_denominator)],
         "requested_first": _fraction_string(requested[0]) if requested else "0",
         "requested_last": _fraction_string(requested[-1]) if requested else "0",
         "leading_clamped_frames": sum(1 for value in requested if value < 0),
-        "trailing_clamped_frames": sum(1 for value in requested if float(value) > upper),
+        "trailing_clamped_frames": sum(1 for value in requested if value > upper),
         "target_width": source.target_width,
         "target_height": source.target_height,
         "preprocess_version": TIMELINE_VIDEO_PREPROCESS_VERSION,
@@ -412,32 +456,44 @@ def timeline_video_physical_selection_contract(
     return contract
 
 
-def encode_timeline_video_physical(
-    video_vae: Any,
+def prepare_timeline_video_physical_frames(
     source: TimelineVideoSource,
-    descriptor: Any,
-) -> TimelineVideoAssets:
-    """Experimental descriptor-aware Timeline Video extraction.
+    *,
+    global_start_frame: int,
+    total_frames: int,
+    fps_numerator: int = 24,
+    fps_denominator: int = 1,
+) -> TimelineVideoPreparedFrames:
+    """Decode and select the actual source presentation for a physical window.
 
-    This function is intentionally separate from ``encode_timeline_video_chunk``;
-    callers must explicitly select it after the Timeline Video matched gate.
+    The returned processed hash fingerprints the resized RGB frames that Qwen
+    will receive. Reuse validation can therefore authenticate presentation
+    identity without running the H3 model or the video VAE.
     """
 
-    contract = timeline_video_physical_selection_contract(source, descriptor)
-    fps = Fraction(int(descriptor.fps_numerator), int(descriptor.fps_denominator))
-    start_frame = int(descriptor.global_start_frame)
-    frame_count = int(descriptor.total_frames)
-    requested = [float(Fraction(start_frame + index, 1) / fps) for index in range(frame_count)]
-    upper = max(0.0, float(source.duration) - 1e-9)
-    clipped = [min(max(value, 0.0), upper) for value in requested]
+    contract = timeline_video_physical_selection_contract(
+        source,
+        global_start_frame=int(global_start_frame),
+        total_frames=int(total_frames),
+        fps_numerator=int(fps_numerator),
+        fps_denominator=int(fps_denominator),
+    )
+    fps = Fraction(int(fps_numerator), int(fps_denominator))
+    start_frame = int(global_start_frame)
+    frame_count = int(total_frames)
+    requested = [Fraction(start_frame + index, 1) / fps for index in range(frame_count)]
+    duration = Fraction(str(source.duration))
+    upper = max(Fraction(0, 1), duration - Fraction(1, 1_000_000_000))
+    clipped = [min(max(value, Fraction(0, 1)), upper) for value in requested]
     if not clipped:
         raise TimelineVideoError("physical Timeline Video selection is empty")
     decode_start = min(clipped)
     decode_end = max(clipped)
-    decode_duration = max(1.0 / float(FPS), decode_end - decode_start + 1.0 / float(FPS))
+    minimum_step = Fraction(int(fps_denominator), int(fps_numerator))
+    decode_duration = max(minimum_step, decode_end - decode_start + minimum_step)
     trimmed = source.video.as_trimmed(
-        start_time=decode_start,
-        duration=decode_duration,
+        start_time=float(decode_start),
+        duration=float(decode_duration),
         strict_duration=False,
     )
     if trimmed is None:
@@ -449,21 +505,100 @@ def encode_timeline_video_physical(
     decoded = decoded[:, :, :, :3].detach().to(device="cpu", dtype=torch.float32)
     if not bool(torch.isfinite(decoded).all()):
         raise TimelineVideoError("Timeline Video contains NaN or Inf pixels")
-    if int(decoded.shape[0]) == 1 or decode_end <= decode_start:
-        indices = torch.zeros(frame_count, dtype=torch.long)
+
+    raw_rate = getattr(components, "frame_rate", None)
+    try:
+        source_rate = Fraction(raw_rate)
+        if source_rate <= 0:
+            raise ValueError
+    except (TypeError, ValueError, ZeroDivisionError):
+        if int(decoded.shape[0]) > 1 and decode_end > decode_start:
+            source_rate = Fraction(int(decoded.shape[0]) - 1, 1) / (decode_end - decode_start)
+        else:
+            source_rate = fps
+
+    if int(decoded.shape[0]) == 1:
+        index_values = [0] * frame_count
     else:
-        positions = [
-            (value - decode_start) / (decode_end - decode_start) * (int(decoded.shape[0]) - 1)
-            for value in clipped
-        ]
-        indices = torch.tensor(positions, dtype=torch.float64).round().to(dtype=torch.long)
-        indices.clamp_(0, int(decoded.shape[0]) - 1)
-    frames = decoded.index_select(0, indices).contiguous()
-    local_timestamps = [index / float(FPS) for index in range(frame_count)]
-    return _encode_assets(
-        video_vae,
-        source,
-        frames,
+        index_values = []
+        for value in clipped:
+            position = (value - decode_start) * source_rate
+            index = int(round(float(position)))
+            index_values.append(max(0, min(index, int(decoded.shape[0]) - 1)))
+    indices = torch.tensor(index_values, dtype=torch.long)
+    selected = decoded.index_select(0, indices).contiguous()
+    selected = _resize_frames(selected, source)
+    processed_sha256 = _tensor_hash(selected)
+    local_timestamps = tuple(
+        float(Fraction(index, 1) / fps) for index in range(frame_count)
+    )
+    contract = dict(contract)
+    contract.update(
+        decoded_frame_rate=[source_rate.numerator, source_rate.denominator],
+        sampled_indices_sha256=_canonical_hash(index_values),
+        processed_sha256=processed_sha256,
+    )
+    return TimelineVideoPreparedFrames(
+        frames=selected,
         timestamps=local_timestamps,
+        processed_sha256=processed_sha256,
+        frame_count=frame_count,
         selection_contract=contract,
     )
+
+
+def timeline_video_physical_presentation(
+    source: TimelineVideoSource,
+    prepared: TimelineVideoPreparedFrames,
+) -> dict[str, Any]:
+    """Presentation identity stored inside the authoritative physical descriptor."""
+
+    return {
+        "kind": "timeline_video",
+        "adapter": "physical_window_v1",
+        "source_combined_hash": source.combined_hash,
+        "source_sha256": source.source_sha256,
+        "target_width": source.target_width,
+        "target_height": source.target_height,
+        "frame_count": int(prepared.frame_count),
+        "processed_sha256": prepared.processed_sha256,
+        "selection_contract": dict(prepared.selection_contract),
+    }
+
+
+def encode_timeline_video_prepared(
+    video_vae: Any,
+    source: TimelineVideoSource,
+    prepared: TimelineVideoPreparedFrames,
+) -> TimelineVideoAssets:
+    """Encode an already-authenticated physical presentation exactly once."""
+
+    return _encode_resized_assets(
+        video_vae,
+        source,
+        prepared.frames,
+        timestamps=prepared.timestamps,
+        selection_contract=prepared.selection_contract,
+        processed_sha256=prepared.processed_sha256,
+    )
+
+
+def encode_timeline_video_physical(
+    video_vae: Any,
+    source: TimelineVideoSource,
+    descriptor: Any,
+) -> TimelineVideoAssets:
+    """Experimental descriptor-aware Timeline Video extraction.
+
+    This compatibility wrapper keeps the old call surface while delegating to
+    the prepare/encode split used by the geometry-first runtime.
+    """
+
+    prepared = prepare_timeline_video_physical_frames(
+        source,
+        global_start_frame=int(descriptor.global_start_frame),
+        total_frames=int(descriptor.total_frames),
+        fps_numerator=int(descriptor.fps_numerator),
+        fps_denominator=int(descriptor.fps_denominator),
+    )
+    return encode_timeline_video_prepared(video_vae, source, prepared)
