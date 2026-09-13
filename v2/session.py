@@ -81,7 +81,7 @@ def make_chunk_entry(
             f"chunk latent represents {actual_frames} frames but plan declares {plan['total_frames']}"
         )
     return {
-        "sequence_index": 0,
+        "sequence_index": 0,  # populated by make_session
         "clip_index": int(plan["clip_index"]),
         "prompt": str(prompt),
         "prompt_hash": str(prompt_hash),
@@ -130,15 +130,19 @@ def validate_chunk_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
-def _legacy_initial_adapter_allowed(entry: dict[str, Any], contract: dict[str, Any]) -> bool:
+def _legacy_initial_adapter_allowed(
+    entry: dict[str, Any], physical_contract: dict[str, Any]
+) -> bool:
+    """Allow only the initial reused legacy entry that still requires revalidation."""
+
     plan = entry.get("plan") or {}
     return (
         bool(entry.get("reused"))
         and int(entry.get("context_frames", -1)) == 0
         and int(plan.get("trim_frames", -1)) == 0
-        and bool(contract.get("candidate_enabled"))
-        and str(contract.get("compiler_version", "")) == "legacy_nominal_v1"
-        and not bool(contract.get("timeline_video_physical_enabled"))
+        and bool(physical_contract.get("candidate_enabled"))
+        and str(physical_contract.get("compiler_version", "")) == "legacy_nominal_v1"
+        and not bool(physical_contract.get("timeline_video_physical_enabled"))
     )
 
 
@@ -166,7 +170,11 @@ def make_session(
         item["sequence_index"] = index
         validate_chunk_entry(item)
         if require_physical and not isinstance(item["plan"].get("physical_prompt"), dict):
-            if index == 1 and not legacy_initial_missing and _legacy_initial_adapter_allowed(item, physical_contract):
+            if (
+                index == 1
+                and not legacy_initial_missing
+                and _legacy_initial_adapter_allowed(item, physical_contract)
+            ):
                 legacy_initial_missing = True
             else:
                 raise SessionValidationError(
@@ -204,7 +212,8 @@ def validate_session(session: dict[str, Any]) -> dict[str, Any]:
     schema = int(session.get("schema_version", -1))
     if schema not in (1, SESSION_SCHEMA_VERSION):
         raise SessionValidationError(
-            f"unsupported session schema {session.get('schema_version')}; expected 1 or {SESSION_SCHEMA_VERSION}"
+            f"unsupported session schema {session.get('schema_version')}; "
+            f"expected 1 or {SESSION_SCHEMA_VERSION}"
         )
     if int(session.get("width", 0)) <= 0 or int(session.get("height", 0)) <= 0:
         raise SessionValidationError("session dimensions are invalid")
@@ -217,14 +226,20 @@ def validate_session(session: dict[str, Any]) -> dict[str, Any]:
     physical_contract = settings.get("physical_prompt_contract")
     require_physical = schema >= 2 and isinstance(physical_contract, dict)
     allow_legacy_initial = bool(
-        require_physical and physical_contract.get("legacy_initial_adapter_pending_revalidation")
+        require_physical
+        and physical_contract.get("legacy_initial_adapter_pending_revalidation")
     )
     legacy_initial_seen = False
     previous_clip_index = None
     for index, entry in enumerate(chunks, start=1):
         validate_chunk_entry(entry)
         if require_physical and not isinstance((entry.get("plan") or {}).get("physical_prompt"), dict):
-            if allow_legacy_initial and index == 1 and not legacy_initial_seen and _legacy_initial_adapter_allowed(entry, physical_contract):
+            if (
+                allow_legacy_initial
+                and index == 1
+                and not legacy_initial_seen
+                and _legacy_initial_adapter_allowed(entry, physical_contract)
+            ):
                 legacy_initial_seen = True
             else:
                 raise SessionValidationError(
@@ -242,7 +257,9 @@ def validate_session(session: dict[str, Any]) -> dict[str, Any]:
         if int(video.shape[-2]) * 16 != int(session["height"]):
             raise SessionValidationError("session height does not match chunk latent")
     if allow_legacy_initial and not legacy_initial_seen:
-        raise SessionValidationError("session legacy initial adapter marker is stale or inconsistent")
+        raise SessionValidationError(
+            "session legacy initial adapter marker is stale or inconsistent"
+        )
     return session
 
 
@@ -252,7 +269,14 @@ def entry_to_latent(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 def entry_to_state(entry: dict[str, Any], *, capacity_frames: int | None = None) -> dict[str, Any]:
-    """Build a V1-compatible continuation state directly from a CPU chunk."""
+    """Build a V1-compatible continuation state directly from a CPU chunk.
+
+    This deliberately avoids reconstructing a ComfyUI ``NestedTensor``. Session
+    inspection, persistence tests, and branch selection therefore remain usable
+    outside a live ComfyUI process, while the returned state is byte-for-byte
+    compatible with the V1 state contract.
+    """
+
     entry = validate_chunk_entry(entry)
     plan = entry["plan"]
     video = entry["video"]
@@ -260,6 +284,7 @@ def entry_to_state(entry: dict[str, Any], *, capacity_frames: int | None = None)
     source_frames = int(plan["total_frames"])
     clip_index = int(plan["clip_index"])
     capacity = int(capacity_frames or plan["state_capacity_frames"])
+
     actual_video_t = int(video.shape[2])
     actual_frames = pixel_frames_for_latent_t(actual_video_t)
     if actual_frames != source_frames:
@@ -270,13 +295,19 @@ def entry_to_state(entry: dict[str, Any], *, capacity_frames: int | None = None)
         raise SessionValidationError(
             f"chunk video latent T={actual_video_t} is not on the native H3 temporal grid"
         )
+
     slots = context_slots(capacity)
     audio_steps = audio_latent_t(capacity)
     if int(video.shape[2]) < slots or int(audio.shape[-1]) < audio_steps:
-        raise SessionValidationError(f"chunk is too short for a {capacity}-frame continuation state")
+        raise SessionValidationError(
+            f"chunk is too short for a {capacity}-frame continuation state"
+        )
     grid_offset = audio_grid_offset(source_frames, int(audio.shape[-1]))
     if not (-0.500001 <= grid_offset <= 0.500001):
-        raise SessionValidationError(f"unexpected signed audio-grid offset {grid_offset:.6f}")
+        raise SessionValidationError(
+            f"unexpected signed audio-grid offset {grid_offset:.6f}"
+        )
+
     video_tail = video[:, :, -slots:].contiguous().clone()
     audio_tail = audio[..., -audio_steps:].contiguous().clone()
     return {
