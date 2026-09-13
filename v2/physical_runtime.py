@@ -12,7 +12,6 @@ import torch
 
 from .h3_builder import encode_prompt_conditioning
 from .physical_prompts import (
-    LEGACY_COMPILER_VERSION,
     compile_legacy_nominal,
     compile_physical_prompt,
     physical_metadata,
@@ -65,7 +64,7 @@ def build_presentation_contract(
     return contract
 
 
-def _compile_for_invocation(
+def compile_invocation_prompt(
     plan: dict[str, Any], descriptor: Any, *, legacy_text: str, candidate: bool
 ):
     """Select physical Timeline compilation without changing opaque plan semantics.
@@ -100,7 +99,7 @@ def encode_physical_prompt_conditioning(
 
     cache = {} if cache is None else cache
     candidate = physical_prompt_compiler_enabled()
-    compiled = _compile_for_invocation(
+    compiled = compile_invocation_prompt(
         plan, descriptor, legacy_text=legacy_text, candidate=candidate
     )
     include_first_actual = bool(include_first and assets.first_image is not None)
