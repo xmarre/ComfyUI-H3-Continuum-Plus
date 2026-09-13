@@ -65,6 +65,23 @@ def build_presentation_contract(
     return contract
 
 
+def _compile_for_invocation(
+    plan: dict[str, Any], descriptor: Any, *, legacy_text: str, candidate: bool
+):
+    """Select physical Timeline compilation without changing opaque plan semantics.
+
+    Fixed/List/migrated legacy plans remain per-invocation opaque instructions.
+    In particular, terminal merged opaque plans must keep the existing paired
+    ``legacy_text`` emitted by ``_terminal_pair_prompt`` rather than selecting
+    only the first covered logical prompt.
+    """
+
+    source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
+    if candidate and source_kind == "timeline":
+        return compile_physical_prompt(plan, descriptor)
+    return compile_legacy_nominal(plan, descriptor, text=legacy_text)
+
+
 def encode_physical_prompt_conditioning(
     *,
     clip: Any,
@@ -83,13 +100,12 @@ def encode_physical_prompt_conditioning(
 
     cache = {} if cache is None else cache
     candidate = physical_prompt_compiler_enabled()
-    if candidate:
-        compiled = compile_physical_prompt(plan, descriptor)
-    else:
-        compiled = compile_legacy_nominal(plan, descriptor, text=legacy_text)
+    compiled = _compile_for_invocation(
+        plan, descriptor, legacy_text=legacy_text, candidate=candidate
+    )
     include_first_actual = bool(include_first and assets.first_image is not None)
     include_last_actual = bool(include_last and assets.last_image is not None)
-    if compiled.compiler_version == LEGACY_COMPILER_VERSION and not candidate:
+    if not candidate:
         # Preserve PR #20's legacy conditioning-cache identity exactly.
         key: Any = (legacy_text, include_first_actual, include_last_actual)
     else:
