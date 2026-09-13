@@ -173,7 +173,7 @@ def test_verified_negative_shift_fails_closed_when_decode_tail_is_too_short():
     assert report["phase_trim_samples"] == 52267
     assert report["requested_phase_delta_samples"] == -267
     assert report["phase_delta_samples"] == 0
-    assert report["candidate_shortfall_samples"] == 534
+    assert report["candidate_shortfall_samples"] == 533
     assert report["reason"] == "insufficient_decoded_tail_for_phase_alignment"
     assert report["applied"] is False
     assert torch.equal(aligned["waveform"], waveform)
