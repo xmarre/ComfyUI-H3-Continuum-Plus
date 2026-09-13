@@ -162,6 +162,34 @@ def video_presentation_contract(
     return None
 
 
+def _physical_timeline_video_presentation(
+    *,
+    timeline_video_source: Any,
+    geometry: ResolvedInvocationGeometry,
+    retained_before: int,
+) -> dict[str, Any]:
+    """Authenticate the exact CPU RGB presentation before descriptor hashing.
+
+    Geometry is already resolved by the existing Continuum path. The Timeline
+    Video adapter therefore derives its source window from the same R/C/F values
+    instead of independently rounding nominal chunk time.
+    """
+
+    from ..timeline_video import (
+        prepare_timeline_video_physical_frames,
+        timeline_video_physical_presentation,
+    )
+
+    prepared = prepare_timeline_video_physical_frames(
+        timeline_video_source,
+        global_start_frame=int(retained_before) - int(geometry.context_frames),
+        total_frames=int(geometry.total_frames),
+        fps_numerator=int(FPS),
+        fps_denominator=1,
+    )
+    return timeline_video_physical_presentation(timeline_video_source, prepared)
+
+
 def make_normal_descriptor(
     *,
     geometry: ResolvedInvocationGeometry,
@@ -177,17 +205,25 @@ def make_normal_descriptor(
     reference_video_source: Any = None,
     timeline_video_source: Any = None,
 ):
+    if timeline_video_source is not None and physical_timeline_video_enabled():
+        video_presentation = _physical_timeline_video_presentation(
+            timeline_video_source=timeline_video_source,
+            geometry=geometry,
+            retained_before=retained_before,
+        )
+    else:
+        video_presentation = video_presentation_contract(
+            reference_video_source=reference_video_source,
+            timeline_video_source=timeline_video_source,
+            logical_index=geometry.sequence_index,
+        )
     presentation = build_presentation_contract(
         assets=assets,
         include_first=include_first,
         include_last=include_last,
         reference_assets=reference_assets,
         reference_audio_source=reference_audio_source,
-        video_presentation=video_presentation_contract(
-            reference_video_source=reference_video_source,
-            timeline_video_source=timeline_video_source,
-            logical_index=geometry.sequence_index,
-        ),
+        video_presentation=video_presentation,
     )
     return make_physical_sample_descriptor(
         group_id=f"chunk:{geometry.sequence_index + 1}",
@@ -229,8 +265,15 @@ def compile_active_metadata(
         legacy_text=legacy_text,
         candidate=candidate,
     )
+    video_presentation = descriptor.presentation_contract.get("video")
+    timeline_video = (
+        video_presentation
+        if isinstance(video_presentation, dict)
+        and video_presentation.get("kind") == "timeline_video"
+        else None
+    )
     return compiled, physical_metadata(
         descriptor,
         compiled,
-        timeline_video=descriptor.presentation_contract.get("video"),
+        timeline_video=timeline_video,
     )
