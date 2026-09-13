@@ -1,4 +1,6 @@
-# ComfyUI-H3-Continuum 3.4.0
+# ComfyUI-H3-Continuum-Plus 3.4.0
+
+> **Plus フォーク:** これは `xmarre` が保守する [ukr8b3g-cmyk/ComfyUI-H3-Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum) の Plus フォークです。上流プロジェクトを基盤として維持しつつ、上流と意図的に異なる機能、統合、修正、挙動を含む場合があります。
 
 **V3.4.0 Stable:** Driving Audio、Video Reference、Audio / Video Seam、Run Storageを含む安定版です。
 

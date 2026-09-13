@@ -1,4 +1,6 @@
-# ComfyUI-H3-Continuum 3.4.0
+# ComfyUI-H3-Continuum-Plus 3.4.0
+
+> **Plus fork:** This is the `xmarre` maintained Plus fork of [ukr8b3g-cmyk/ComfyUI-H3-Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum). It preserves the upstream project's foundation while carrying additional features, integrations, fixes, and behavior that may intentionally diverge from upstream.
 
 > **V3.4 hotfix notice:** The initial V3.4 repository package was incomplete. Although the public V3.4 nodes were present after the first hotfix, their parent sampler and sequence runtime did not yet accept the new Driving Audio and Video Reference contracts. We apologize for the incomplete release. The complete V3.4 runtime has now been synchronized. If you installed V3.4 earlier, run `git pull` or reinstall the node, then restart ComfyUI.
 
@@ -121,7 +123,7 @@ Search for H3 Continuum or Continuum in ComfyUI Manager, or install manually:
 
 ~~~bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum.git
+git clone https://github.com/xmarre/ComfyUI-H3-Continuum-Plus.git ComfyUI-H3-Continuum
 ~~~
 
 Restart ComfyUI after installation or update.
