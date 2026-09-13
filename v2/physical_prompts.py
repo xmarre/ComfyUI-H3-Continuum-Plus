@@ -557,18 +557,127 @@ def physical_metadata(
     return result
 
 
+def _require_int(value: Any, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PhysicalPromptError(f"physical prompt {field} is invalid")
+    return int(value)
+
+
+def _validate_descriptor_semantics(descriptor: dict[str, Any]) -> None:
+    if int(descriptor.get("version", -1)) != PHYSICAL_DESCRIPTOR_VERSION:
+        raise PhysicalPromptError("physical prompt descriptor is invalid")
+    logical_indices = descriptor.get("logical_indices")
+    if not isinstance(logical_indices, list) or not logical_indices or not all(
+        isinstance(value, int) and not isinstance(value, bool) for value in logical_indices
+    ):
+        raise PhysicalPromptError("physical prompt logical indices are invalid")
+    fps = descriptor.get("fps")
+    if (
+        not isinstance(fps, list)
+        or len(fps) != 2
+        or any(isinstance(value, bool) or not isinstance(value, int) for value in fps)
+        or int(fps[0]) <= 0
+        or int(fps[1]) <= 0
+    ):
+        raise PhysicalPromptError("physical prompt fps is invalid")
+    retained = _require_int(descriptor.get("retained_before"), field="retained_before")
+    context = _require_int(descriptor.get("context_frames"), field="context_frames")
+    total = _require_int(descriptor.get("total_frames"), field="total_frames")
+    start = _require_int(descriptor.get("global_start_frame"), field="global_start_frame")
+    end = _require_int(descriptor.get("global_end_frame"), field="global_end_frame")
+    target = _require_int(descriptor.get("target_duration_frames"), field="target_duration_frames")
+    if retained < 0 or context < 0 or total <= context or target <= 0:
+        raise PhysicalPromptError("physical prompt descriptor geometry is invalid")
+    if start != retained - context or end != start + total:
+        raise PhysicalPromptError("physical prompt descriptor window is inconsistent")
+    expected_overlap = [start, retained] if context else None
+    exact = descriptor.get("exact_protected_interval")
+    guided = descriptor.get("guided_overlap_interval")
+    if exact is not None and exact != expected_overlap:
+        raise PhysicalPromptError("physical prompt exact protected interval is inconsistent")
+    if guided is not None and guided != expected_overlap:
+        raise PhysicalPromptError("physical prompt guided overlap interval is inconsistent")
+    if exact is not None and guided is not None:
+        raise PhysicalPromptError("physical prompt overlap cannot be both exact and guided")
+    expected_suffix = [retained, retained + total - context]
+    if descriptor.get("retained_suffix_interval") != expected_suffix:
+        raise PhysicalPromptError("physical prompt retained suffix interval is inconsistent")
+    include_last = descriptor.get("include_last")
+    if not isinstance(descriptor.get("include_first"), bool) or not isinstance(include_last, bool):
+        raise PhysicalPromptError("physical prompt presentation flags are invalid")
+    expected_last_index = total - 1 if include_last else None
+    if descriptor.get("last_keyframe_index") != expected_last_index:
+        raise PhysicalPromptError("physical prompt last keyframe index is inconsistent")
+    if not isinstance(descriptor.get("presentation_contract"), dict):
+        raise PhysicalPromptError("physical prompt presentation contract is invalid")
+    terminal = descriptor.get("terminal_contract")
+    if terminal is not None and not isinstance(terminal, dict):
+        raise PhysicalPromptError("physical prompt terminal contract is invalid")
+
+
 def validate_physical_metadata(value: Any) -> dict[str, Any]:
+    """Validate stored transport metadata by recomputing every persisted digest.
+
+    Stored hashes are integrity fields, not trusted assertions. Reuse therefore
+    rejects stale or corrupted descriptor/text/presentation metadata even when a
+    duplicated top-level hash still has the expected shape.
+    """
+
     if not isinstance(value, dict):
         raise PhysicalPromptError("physical prompt metadata is missing")
     descriptor = value.get("descriptor")
     compiled = value.get("compiled")
-    if not isinstance(descriptor, dict) or int(descriptor.get("version", -1)) != PHYSICAL_DESCRIPTOR_VERSION:
+    if not isinstance(descriptor, dict):
         raise PhysicalPromptError("physical prompt descriptor is invalid")
+    _validate_descriptor_semantics(descriptor)
     if not isinstance(compiled, dict) or int(compiled.get("version", -1)) != COMPILED_PHYSICAL_PROMPT_VERSION:
         raise PhysicalPromptError("compiled physical prompt metadata is invalid")
-    condition_hash = str(value.get("physical_conditioning_hash", ""))
-    if len(condition_hash) != 64 or condition_hash != str(compiled.get("physical_conditioning_hash", "")):
-        raise PhysicalPromptError("physical conditioning hash is invalid")
+    compiler_version = compiled.get("compiler_version")
+    text = compiled.get("text")
+    if not isinstance(compiler_version, str) or not compiler_version or not isinstance(text, str):
+        raise PhysicalPromptError("compiled physical prompt identity is invalid")
+    if not isinstance(compiled.get("contributing_intervals"), list):
+        raise PhysicalPromptError("compiled physical prompt intervals are invalid")
+    if not isinstance(compiled.get("diagnostics"), list):
+        raise PhysicalPromptError("compiled physical prompt diagnostics are invalid")
+    if not isinstance(compiled.get("fallback_status"), str) or not isinstance(compiled.get("overrun"), bool):
+        raise PhysicalPromptError("compiled physical prompt status is invalid")
+    timeline_video = value.get("timeline_video")
+    if timeline_video is not None and not isinstance(timeline_video, dict):
+        raise PhysicalPromptError("physical prompt Timeline Video metadata is invalid")
+
+    descriptor_hash = canonical_sha256(descriptor)
+    if str(value.get("descriptor_digest", "")) != descriptor_hash:
+        raise PhysicalPromptError("physical prompt descriptor digest mismatch")
+    if str(compiled.get("descriptor_digest", "")) != descriptor_hash:
+        raise PhysicalPromptError("compiled physical prompt descriptor digest mismatch")
+
+    text_hash = text_sha256(text)
+    if str(compiled.get("text_sha256", "")) != text_hash:
+        raise PhysicalPromptError("compiled physical prompt text digest mismatch")
+
+    presentation = descriptor["presentation_contract"]
+    expected_presentation_hash = presentation_digest(presentation)
+    if str(compiled.get("presentation_digest", "")) != expected_presentation_hash:
+        raise PhysicalPromptError("compiled physical prompt presentation digest mismatch")
+
+    expected_conditioning_hash = canonical_sha256(
+        {
+            "compiler_version": compiler_version,
+            "descriptor": descriptor,
+            "text": text,
+            "presentation_contract": presentation,
+            "terminal_contract": descriptor.get("terminal_contract"),
+        }
+    )
+    compiled_conditioning_hash = str(compiled.get("physical_conditioning_hash", ""))
+    top_conditioning_hash = str(value.get("physical_conditioning_hash", ""))
+    if (
+        len(expected_conditioning_hash) != 64
+        or compiled_conditioning_hash != expected_conditioning_hash
+        or top_conditioning_hash != expected_conditioning_hash
+    ):
+        raise PhysicalPromptError("physical conditioning hash mismatch")
     return value
 
 
