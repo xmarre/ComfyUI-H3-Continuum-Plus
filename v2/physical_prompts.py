@@ -7,6 +7,7 @@ latents, mutate sampler state, or own continuation geometry.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from fractions import Fraction
 import hashlib
 import json
@@ -19,6 +20,7 @@ PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v1"
 LEGACY_COMPILER_VERSION = "legacy_nominal_v1"
 PHYSICAL_PROMPT_ENV = "H3_CONTINUUM_PHYSICAL_PROMPTS"
 PHYSICAL_TIMELINE_VIDEO_ENV = "H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO"
+_RENDER_QUANTUM = Decimal("0.000001")
 
 
 class PhysicalPromptError(ValueError):
@@ -73,9 +75,16 @@ def parse_fraction(value: Any) -> Fraction:
 
 
 def _format_seconds(value: Fraction) -> str:
-    # Rendering is deterministic at six decimals, while exact fractions remain
-    # in metadata. Python's fixed formatting gives the required half-even rule.
-    rendered = f"{float(value):.6f}".rstrip("0").rstrip(".")
+    """Render exact rational seconds with deterministic six-place half-even rounding."""
+
+    numerator = int(value.numerator)
+    denominator = int(value.denominator)
+    precision = max(28, len(str(abs(numerator))) + len(str(abs(denominator))) + 12)
+    with localcontext() as context:
+        context.prec = precision
+        decimal_value = Decimal(numerator) / Decimal(denominator)
+        rounded = decimal_value.quantize(_RENDER_QUANTUM, rounding=ROUND_HALF_EVEN)
+    rendered = format(rounded, "f").rstrip("0").rstrip(".")
     return rendered or "0"
 
 
@@ -352,12 +361,22 @@ def _priority(section: dict[str, Any]) -> tuple[int, int]:
     return (1, -int(section.get("ordinal", 0)))
 
 
-def _earliest_body(candidates: list[dict[str, Any]]) -> str:
+def _source_ordinals(items: Iterable[dict[str, Any]]) -> list[int]:
+    return sorted(
+        {
+            int(item.get("ordinal", -1))
+            for item in items
+            if int(item.get("ordinal", -1)) >= 0
+        }
+    )
+
+
+def _earliest_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
     usable = sorted(
         candidates,
         key=lambda item: (item["_start"], -_priority(item)[0], int(item.get("ordinal", 0))),
     )
-    return str(usable[0].get("body", "")) if usable else ""
+    return usable[0] if usable else None
 
 
 def _body_for_atomic_interval(
@@ -396,6 +415,70 @@ def _join_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return joined
 
 
+def _render_segments(
+    segments: list[dict[str, Any]],
+    *,
+    start: Fraction,
+    diagnostics: list[dict[str, Any]],
+) -> str:
+    """Render ranges without emitting a visually zero-width six-decimal block.
+
+    Exact interval metadata stays untouched. A range that collapses only after
+    six-place rendering is folded into an adjacent rendered block while all
+    original body text is retained and a diagnostic records the approximation.
+    """
+
+    rendered: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for segment in segments:
+        local_start = segment["start"] - start
+        local_end = segment["end"] - start
+        if local_end <= local_start:
+            continue
+        start_text = _format_seconds(local_start)
+        end_text = _format_seconds(local_end)
+        if start_text == end_text:
+            diagnostics.append(
+                {
+                    "level": "warning",
+                    "code": "H3C-PT204",
+                    "message": "sub-microsecond source interval coalesced for six-decimal prompt rendering; exact interval retained in metadata",
+                    "local_start": fraction_string(local_start),
+                    "local_end": fraction_string(local_end),
+                }
+            )
+            if rendered:
+                rendered[-1]["end"] = local_end
+                rendered[-1]["bodies"].append(segment["body"].strip())
+            else:
+                pending.append(segment)
+            continue
+        bodies = [item["body"].strip() for item in pending]
+        bodies.append(segment["body"].strip())
+        render_start = pending[0]["start"] - start if pending else local_start
+        pending.clear()
+        rendered.append(
+            {
+                "start": render_start,
+                "end": local_end,
+                "bodies": bodies,
+            }
+        )
+    if pending:
+        if rendered:
+            rendered[-1]["end"] = pending[-1]["end"] - start
+            rendered[-1]["bodies"].extend(item["body"].strip() for item in pending)
+        else:
+            return "\n\n".join(item["body"].strip() for item in pending)
+
+    blocks = []
+    for item in rendered:
+        label = f"[{_format_seconds(item['start'])}-{_format_seconds(item['end'])}s]"
+        bodies = "\n\n".join(body for body in item["bodies"] if body)
+        blocks.append(f"{label}\n{bodies}" if bodies else label)
+    return "\n\n".join(blocks)
+
+
 def compile_physical_prompt(
     plan: dict[str, Any],
     descriptor: PhysicalSampleDescriptor,
@@ -429,13 +512,18 @@ def compile_physical_prompt(
     if ordered[-1] != end:
         ordered.append(end)
 
-    first_body = _earliest_body(candidates)
+    first_item = _earliest_candidate(candidates)
+    first_body = str(first_item.get("body", "")) if first_item is not None else ""
+    first_sources = _source_ordinals([first_item]) if first_item is not None else []
     previous_body: str | None = None
+    previous_sources: list[int] = []
     # Find the authored body immediately before the requested domain end for
     # physical native-grid overrun. Do not pull future authored sections in.
     before_end = [item for item in candidates if item["_start"] < domain_end]
     before_end.sort(key=lambda item: (min(item["_end"], domain_end), _priority(item)), reverse=True)
-    overrun_body = str(before_end[0].get("body", first_body)) if before_end else first_body
+    overrun_item = before_end[0] if before_end else first_item
+    overrun_body = str(overrun_item.get("body", first_body)) if overrun_item is not None else first_body
+    overrun_sources = _source_ordinals([overrun_item]) if overrun_item is not None else first_sources
     diagnostics: list[dict[str, Any]] = []
     segments: list[dict[str, Any]] = []
     fallback_status = "none"
@@ -446,6 +534,7 @@ def compile_physical_prompt(
         sources: list[int] = []
         if right <= 0:
             body = first_body
+            sources = list(first_sources)
             fallback = True
             fallback_status = "unknown_prior_state"
             diagnostics.append(
@@ -457,21 +546,24 @@ def compile_physical_prompt(
             )
         elif left >= domain_end:
             body = overrun_body
+            sources = list(overrun_sources)
             fallback = True
             if fallback_status == "none":
                 fallback_status = "physical_overrun_hold"
         else:
             body, active, local_diagnostics = _body_for_atomic_interval(candidates, left, right)
             diagnostics.extend(local_diagnostics)
-            sources = sorted({int(item.get("ordinal", -1)) for item in active if int(item.get("ordinal", -1)) >= 0})
+            sources = _source_ordinals(active)
             if body is None:
                 fallback = True
                 if previous_body is not None:
                     body = previous_body
+                    sources = list(previous_sources)
                     if fallback_status == "none":
                         fallback_status = "gap_hold_previous"
                 else:
                     body = first_body
+                    sources = list(first_sources)
                     if fallback_status == "none":
                         fallback_status = "leading_gap_earliest"
                 diagnostics.append(
@@ -484,6 +576,7 @@ def compile_physical_prompt(
                     }
                 )
         previous_body = str(body)
+        previous_sources = list(sources)
         segments.append(
             {
                 "start": left,
@@ -501,15 +594,7 @@ def compile_physical_prompt(
         body = segments[0]["body"].strip()
         emitted = f"{preamble}\n\n{body}" if preamble and body else (preamble or body)
     else:
-        blocks = []
-        for segment in segments:
-            local_start = segment["start"] - start
-            local_end = segment["end"] - start
-            if local_end <= local_start:
-                continue
-            label = f"[{_format_seconds(local_start)}-{_format_seconds(local_end)}s]"
-            blocks.append(f"{label}\n{segment['body'].strip()}")
-        body = "\n\n".join(blocks)
+        body = _render_segments(segments, start=start, diagnostics=diagnostics)
         emitted = f"{preamble}\n\n{body}" if preamble and body else (preamble or body)
 
     interval_metadata = []
