@@ -6,6 +6,9 @@ Qwen conditioning and compact identity/diagnostic metadata.
 """
 from __future__ import annotations
 
+import copy
+from dataclasses import replace
+from fractions import Fraction
 import logging
 from typing import Any
 
@@ -14,14 +17,29 @@ import torch
 from .h3_builder import encode_prompt_conditioning
 from .physical_prompts import (
     PhysicalPromptError,
+    canonical_sha256,
     compile_legacy_nominal,
     compile_physical_prompt,
+    fraction_string,
     physical_metadata,
     physical_prompt_compiler_enabled,
     presentation_digest,
 )
 
 LOG = logging.getLogger("h3_continuum_join")
+
+# V3 keeps V2's strict inner-range parser, but changes the conditioning domain
+# for exact Native Masked continuation. Authored instructions that belong only
+# to the caller-owned protected prefix must not be presented as fresh generation
+# instructions, because H3 timestamps are learned guidance rather than a hard
+# per-frame routing mask. 00421 demonstrated the failure mode directly: the
+# continuation began by replaying the earliest protected-prefix scene/dialogue.
+_RUNTIME_PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v3"
+_EXACT_PREFIX_CONTEXT_BODY = (
+    "Immutable carried continuation context. This interval already exists in the protected input "
+    "and is not new generation. Do not restage or replay content from this protected interval "
+    "after new generation begins."
+)
 
 
 def build_presentation_contract(
@@ -68,6 +86,97 @@ def build_presentation_contract(
     return contract
 
 
+def _timeline_plan_with_exact_prefix_context(
+    plan: dict[str, Any], descriptor: Any
+) -> tuple[dict[str, Any], tuple[Fraction, Fraction] | None]:
+    """Replace only exact protected-prefix authored semantics with neutral context.
+
+    The protected prefix is caller-owned and restored exactly at the sampler
+    boundary. Repeating its scene/dialogue body in the Qwen timeline can only
+    leak stale semantics into the newly generated suffix. Rather than parsing or
+    deleting authored text after compilation, inject one highest-priority exact
+    interval into a copied schema-2 source before normal interval resolution.
+    The full physical local clock is preserved, so suffix timestamps do not move.
+    """
+
+    exact = getattr(descriptor, "exact_protected_interval", None)
+    if exact is None:
+        return plan, None
+    if not isinstance(exact, (tuple, list)) or len(exact) != 2:
+        raise PhysicalPromptError("physical exact protected interval is invalid")
+    start_frame, end_frame = int(exact[0]), int(exact[1])
+    if start_frame != int(getattr(descriptor, "global_start_frame", -1)):
+        raise PhysicalPromptError("physical exact protected interval must begin at the physical window")
+    if end_frame != int(getattr(descriptor, "retained_before", -1)):
+        raise PhysicalPromptError("physical exact protected interval must end at retained_before")
+    if end_frame <= start_frame or end_frame >= int(getattr(descriptor, "global_end_frame", -1)):
+        raise PhysicalPromptError("physical exact protected interval leaves no generated suffix")
+
+    source = plan.get("source")
+    if not isinstance(source, dict) or source.get("kind") != "timeline":
+        return plan, None
+
+    fps = getattr(descriptor, "fps", None)
+    if not isinstance(fps, Fraction) or fps <= 0:
+        raise PhysicalPromptError("physical exact protected interval has invalid fps")
+    start = Fraction(start_frame, 1) / fps
+    end = Fraction(end_frame, 1) / fps
+
+    rewritten = copy.deepcopy(plan)
+    rewritten_source = dict(rewritten.get("source") or {})
+    sections = list(rewritten_source.get("sections") or [])
+    # A source-level override is intentional here: it participates in the same
+    # atomic interval resolver as authored sections, while avoiding a second
+    # timestamp parser or any post-render text surgery. Negative ordinal keeps
+    # the synthetic transport interval out of authored source provenance.
+    protected_context = {
+        "kind": "override",
+        "start": fraction_string(start),
+        "end": fraction_string(end),
+        "body": _EXACT_PREFIX_CONTEXT_BODY,
+        "ordinal": -1_000_000_000,
+        "header": "<exact-protected-prefix>",
+    }
+    rewritten_source["sections"] = [protected_context, *sections]
+    rewritten["source"] = rewritten_source
+    return rewritten, (start, end)
+
+
+def _with_runtime_compiler_identity(
+    compiled: Any,
+    descriptor: Any,
+    *,
+    protected_interval: tuple[Fraction, Fraction] | None,
+):
+    diagnostics = tuple(compiled.diagnostics)
+    if protected_interval is not None:
+        start, end = protected_interval
+        diagnostics += (
+            {
+                "level": "info",
+                "code": "H3C-PT206",
+                "message": "suppressed authored instructions inside the exact protected prefix so they cannot replay into the generated suffix",
+                "global_start": fraction_string(start),
+                "global_end": fraction_string(end),
+            },
+        )
+    physical_hash = canonical_sha256(
+        {
+            "compiler_version": _RUNTIME_PHYSICAL_COMPILER_VERSION,
+            "descriptor": descriptor.semantic_dict(),
+            "text": compiled.text,
+            "presentation_contract": descriptor.presentation_contract,
+            "terminal_contract": descriptor.terminal_contract,
+        }
+    )
+    return replace(
+        compiled,
+        compiler_version=_RUNTIME_PHYSICAL_COMPILER_VERSION,
+        diagnostics=diagnostics,
+        physical_conditioning_hash=physical_hash,
+    )
+
+
 def compile_invocation_prompt(
     plan: dict[str, Any], descriptor: Any, *, legacy_text: str, candidate: bool
 ):
@@ -77,11 +186,22 @@ def compile_invocation_prompt(
     In particular, terminal merged opaque plans must keep the existing paired
     ``legacy_text`` emitted by ``_terminal_pair_prompt`` rather than selecting
     only the first covered logical prompt.
+
+    Timeline V3 additionally treats an exact Native Masked prefix as immutable
+    context instead of fresh authored content. This preserves the full physical
+    local clock while preventing protected-prefix scene/dialogue instructions
+    from being replayed at the start of the generated suffix.
     """
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
     if candidate and source_kind == "timeline":
-        return compile_physical_prompt(plan, descriptor)
+        runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(plan, descriptor)
+        compiled = compile_physical_prompt(runtime_plan, descriptor)
+        return _with_runtime_compiler_identity(
+            compiled,
+            descriptor,
+            protected_interval=protected_interval,
+        )
     return compile_legacy_nominal(plan, descriptor, text=legacy_text)
 
 
