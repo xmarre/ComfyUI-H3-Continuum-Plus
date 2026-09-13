@@ -30,11 +30,18 @@ def _exact_audio_prefix_ticks(trim_frames: int) -> int | None:
     return numerator // FPS
 
 
-def _phase_unavailable(group: dict[str, Any], *, reason: str, prefix_ticks: int | None = None) -> None:
+def _phase_unavailable(
+    group: dict[str, Any],
+    *,
+    reason: str,
+    prefix_ticks: int | None = None,
+) -> None:
     group["audio_phase_contract"] = AUDIO_PHASE_CONTRACT
     group["audio_phase_verified"] = False
     group["audio_phase_origin_latent"] = None
-    group["audio_phase_prefix_latents"] = None if prefix_ticks is None else int(prefix_ticks)
+    group["audio_phase_prefix_latents"] = (
+        None if prefix_ticks is None else int(prefix_ticks)
+    )
     group["audio_phase_reason"] = str(reason)
 
 
@@ -44,11 +51,16 @@ def annotate_audio_phase_origins(
 ) -> list[dict[str, Any]]:
     """Attach physical 40-Hz origins proven by exact carried audio prefixes.
 
-    Origin zero is authoritative for the first physical decode group. Every later
-    origin is propagated only when the current group's frame trim lands exactly on
-    the 40-Hz grid and the corresponding audio prefix is bit-identical to the tail
-    of the previous physical group. Once proof is lost, later origins remain
-    unavailable rather than being re-anchored heuristically.
+    Origin zero is authoritative only when the first physical decode group starts
+    at the assembled timeline origin (trim_frames == 0). A run that begins from an
+    external continuation state has no preceding physical group inside this plan,
+    so its nonzero protected prefix cannot establish a global 40-Hz origin and is
+    deliberately left on the native trim path.
+
+    Every later origin is propagated only when the current group's frame trim lands
+    exactly on the 40-Hz grid and the corresponding audio prefix is bit-identical
+    to the tail of the previous physical group. Once proof is lost, later origins
+    remain unavailable rather than being re-anchored heuristically.
     """
 
     if len(entries) != len(groups):
@@ -61,28 +73,50 @@ def annotate_audio_phase_origins(
 
     annotated = [dict(group) for group in groups]
     first_audio = entries[0].get("audio") if isinstance(entries[0], dict) else None
-    if not torch.is_tensor(first_audio) or first_audio.ndim != 4 or tuple(first_audio.shape[:3]) != (1, 32, 2):
-        raise ValueError("audio phase annotation requires native [1,32,2,T] H3 audio latents")
+    if (
+        not torch.is_tensor(first_audio)
+        or first_audio.ndim != 4
+        or tuple(first_audio.shape[:3]) != (1, 32, 2)
+    ):
+        raise ValueError(
+            "audio phase annotation requires native [1,32,2,T] H3 audio latents"
+        )
 
-    annotated[0].update(
-        {
-            "audio_phase_contract": AUDIO_PHASE_CONTRACT,
-            "audio_phase_verified": True,
-            "audio_phase_origin_latent": 0,
-            "audio_phase_prefix_latents": 0,
-            "audio_phase_reason": "timeline_origin",
-        }
-    )
-    previous_origin: int | None = 0
+    first_trim = int(annotated[0].get("trim_frames", -1))
+    if first_trim == 0:
+        annotated[0].update(
+            {
+                "audio_phase_contract": AUDIO_PHASE_CONTRACT,
+                "audio_phase_verified": True,
+                "audio_phase_origin_latent": 0,
+                "audio_phase_prefix_latents": 0,
+                "audio_phase_reason": "timeline_origin",
+            }
+        )
+        previous_origin: int | None = 0
+    else:
+        first_prefix = _exact_audio_prefix_ticks(first_trim)
+        _phase_unavailable(
+            annotated[0],
+            reason="first_group_has_unanchored_prefix",
+            prefix_ticks=first_prefix,
+        )
+        previous_origin = None
     previous_audio = first_audio
 
     for index in range(1, len(annotated)):
         group = annotated[index]
-        current_audio = entries[index].get("audio") if isinstance(entries[index], dict) else None
+        current_audio = (
+            entries[index].get("audio") if isinstance(entries[index], dict) else None
+        )
         prefix_ticks = _exact_audio_prefix_ticks(int(group.get("trim_frames", -1)))
 
         if previous_origin is None:
-            _phase_unavailable(group, reason="previous_origin_unverified", prefix_ticks=prefix_ticks)
+            _phase_unavailable(
+                group,
+                reason="previous_origin_unverified",
+                prefix_ticks=prefix_ticks,
+            )
             previous_audio = current_audio
             continue
         if prefix_ticks is None:
@@ -91,12 +125,24 @@ def annotate_audio_phase_origins(
             previous_audio = current_audio
             continue
         if prefix_ticks <= 0:
-            _phase_unavailable(group, reason="continuation_has_no_exact_audio_prefix", prefix_ticks=prefix_ticks)
+            _phase_unavailable(
+                group,
+                reason="continuation_has_no_exact_audio_prefix",
+                prefix_ticks=prefix_ticks,
+            )
             previous_origin = None
             previous_audio = current_audio
             continue
-        if not torch.is_tensor(current_audio) or current_audio.ndim != 4 or tuple(current_audio.shape[:3]) != (1, 32, 2):
-            _phase_unavailable(group, reason="invalid_current_audio_latent", prefix_ticks=prefix_ticks)
+        if (
+            not torch.is_tensor(current_audio)
+            or current_audio.ndim != 4
+            or tuple(current_audio.shape[:3]) != (1, 32, 2)
+        ):
+            _phase_unavailable(
+                group,
+                reason="invalid_current_audio_latent",
+                prefix_ticks=prefix_ticks,
+            )
             previous_origin = None
             previous_audio = current_audio
             continue
@@ -107,17 +153,34 @@ def annotate_audio_phase_origins(
             or previous_audio.dtype != current_audio.dtype
             or previous_audio.device != current_audio.device
         ):
-            _phase_unavailable(group, reason="adjacent_audio_latent_contract_mismatch", prefix_ticks=prefix_ticks)
+            _phase_unavailable(
+                group,
+                reason="adjacent_audio_latent_contract_mismatch",
+                prefix_ticks=prefix_ticks,
+            )
             previous_origin = None
             previous_audio = current_audio
             continue
-        if prefix_ticks > int(previous_audio.shape[-1]) or prefix_ticks > int(current_audio.shape[-1]):
-            _phase_unavailable(group, reason="exact_audio_prefix_exceeds_physical_group", prefix_ticks=prefix_ticks)
+        if (
+            prefix_ticks > int(previous_audio.shape[-1])
+            or prefix_ticks > int(current_audio.shape[-1])
+        ):
+            _phase_unavailable(
+                group,
+                reason="exact_audio_prefix_exceeds_physical_group",
+                prefix_ticks=prefix_ticks,
+            )
             previous_origin = None
             previous_audio = current_audio
             continue
-        if not torch.equal(previous_audio[..., -prefix_ticks:], current_audio[..., :prefix_ticks]):
-            _phase_unavailable(group, reason="exact_audio_prefix_not_bit_identical", prefix_ticks=prefix_ticks)
+        if not torch.equal(
+            previous_audio[..., -prefix_ticks:], current_audio[..., :prefix_ticks]
+        ):
+            _phase_unavailable(
+                group,
+                reason="exact_audio_prefix_not_bit_identical",
+                prefix_ticks=prefix_ticks,
+            )
             previous_origin = None
             previous_audio = current_audio
             continue
@@ -142,7 +205,10 @@ def _frame_sample(frame: int, sample_rate: int) -> int:
     return int(round(int(frame) / FPS * int(sample_rate)))
 
 
-def _shift_for_native_trim(waveform: torch.Tensor, delta_samples: int) -> torch.Tensor:
+def _shift_for_native_trim(
+    waveform: torch.Tensor,
+    delta_samples: int,
+) -> torch.Tensor:
     """Shift decode-only samples while keeping Continuum's native trim index fixed."""
 
     delta = int(delta_samples)
@@ -179,22 +245,30 @@ def phase_align_decoded_audio(
         "verified": bool(group.get("audio_phase_verified", False)),
         "origin_latent": group.get("audio_phase_origin_latent"),
         "prefix_latents": group.get("audio_phase_prefix_latents"),
-        "reason": str(group.get("audio_phase_reason", "legacy_plan_no_phase_metadata")),
+        "reason": str(
+            group.get("audio_phase_reason", "legacy_plan_no_phase_metadata")
+        ),
         "native_trim_samples": _frame_sample(int(group.get("trim_frames", 0)), rate),
         "phase_trim_samples": None,
         "phase_delta_samples": 0,
         "applied": False,
     }
 
-    if group.get("audio_phase_contract") != AUDIO_PHASE_CONTRACT or not report["verified"]:
+    if (
+        group.get("audio_phase_contract") != AUDIO_PHASE_CONTRACT
+        or not report["verified"]
+    ):
         return {"waveform": waveform, "sample_rate": rate}, report
 
     origin = group.get("audio_phase_origin_latent")
     if type(origin) is not int or origin < 0:
-        raise ValueError("verified audio phase metadata requires a non-negative integer latent origin")
+        raise ValueError(
+            "verified audio phase metadata requires a non-negative integer latent origin"
+        )
     if rate <= 0 or rate % AUDIO_LATENT_FPS:
         raise ValueError(
-            f"decoded audio sample rate {rate} is not divisible by the H3 {AUDIO_LATENT_FPS}-Hz audio latent grid"
+            f"decoded audio sample rate {rate} is not divisible by the H3 "
+            f"{AUDIO_LATENT_FPS}-Hz audio latent grid"
         )
 
     samples_per_latent = rate // AUDIO_LATENT_FPS
@@ -203,8 +277,8 @@ def phase_align_decoded_audio(
     if phase_trim < 0 or phase_trim > int(waveform.shape[-1]):
         raise ValueError(
             "proven audio phase origin maps outside the decoded waveform: "
-            f"origin={origin}, frame_cursor={int(frame_cursor)}, phase_trim={phase_trim}, "
-            f"waveform={int(waveform.shape[-1])}"
+            f"origin={origin}, frame_cursor={int(frame_cursor)}, "
+            f"phase_trim={phase_trim}, waveform={int(waveform.shape[-1])}"
         )
 
     native_trim = int(report["native_trim_samples"])
