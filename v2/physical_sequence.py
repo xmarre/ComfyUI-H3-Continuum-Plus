@@ -265,8 +265,12 @@ def make_normal_descriptor(
             if initial_state_external and geometry.sequence_index == 0
             else "sequence"
         ),
-        include_first=bool(include_first),
-        include_last=bool(include_last),
+        # The descriptor must record the presentation that actually reached
+        # Qwen, not only the caller's requested role. With no connected First/
+        # Last Frame, the request is intentionally a no-op and must not salt
+        # reuse/storage identity.
+        include_first=bool(presentation.get("include_first", False)),
+        include_last=bool(presentation.get("include_last", False)),
         presentation_contract=presentation,
         exact_protected=(
             geometry.context_frames > 0
