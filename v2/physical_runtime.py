@@ -14,6 +14,7 @@ from typing import Any
 
 import torch
 
+from . import physical_prompts as _physical_prompts
 from .h3_builder import encode_prompt_conditioning
 from .physical_prompts import (
     PhysicalPromptError,
@@ -86,22 +87,55 @@ def build_presentation_contract(
     return contract
 
 
+def _active_timeline_candidate_across_boundary(
+    plan: dict[str, Any], boundary: Fraction
+) -> dict[str, Any] | None:
+    """Return the exact V2 winner whose authored interval crosses ``boundary``.
+
+    Use the physical compiler's own parser and priority rules. This is not a
+    second timestamp interpretation: it asks the same resolved candidate set
+    which body is already active before the exact-prefix boundary and remains
+    active after it.
+    """
+
+    source = _physical_prompts._timeline_source(plan)
+    if source is None:
+        return None
+    chunk_seconds = _physical_prompts.parse_fraction(
+        source.get("chunk_seconds", plan.get("chunk_seconds", 0))
+    )
+    candidates = _physical_prompts._resolved_candidates(source, chunk_seconds)
+    crossing = [
+        item
+        for item in candidates
+        if item["_start"] < boundary < item["_end"]
+    ]
+    return max(crossing, key=_physical_prompts._priority) if crossing else None
+
+
 def _timeline_plan_with_exact_prefix_context(
     plan: dict[str, Any], descriptor: Any
-) -> tuple[dict[str, Any], tuple[Fraction, Fraction] | None]:
-    """Replace only exact protected-prefix authored semantics with neutral context.
+) -> tuple[
+    dict[str, Any],
+    tuple[Fraction, Fraction] | None,
+    tuple[Fraction, Fraction] | None,
+    tuple[Fraction, Fraction] | None,
+]:
+    """Suppress stale protected semantics without restarting a crossing interval.
 
-    The protected prefix is caller-owned and restored exactly at the sampler
-    boundary. Repeating its scene/dialogue body in the Qwen timeline can only
-    leak stale semantics into the newly generated suffix. Rather than parsing or
-    deleting authored text after compilation, inject one highest-priority exact
-    interval into a copied schema-2 source before normal interval resolution.
-    The full physical local clock is preserved, so suffix timestamps do not move.
+    Prefix-only authored bodies are caller-owned context and must not leak into
+    fresh generation. However, an authored interval that begins inside the exact
+    prefix and remains active after the fresh-generation boundary is *not* stale:
+    masking its protected part and reintroducing the same body exactly at the
+    boundary creates an artificial semantic onset. Preserve that winning V2 body
+    from its authored start onward, and neutralize only the earlier stale part of
+    the exact prefix. The physical clock and authored interval boundaries remain
+    unchanged.
     """
 
     exact = getattr(descriptor, "exact_protected_interval", None)
     if exact is None:
-        return plan, None
+        return plan, None, None, None
     if not isinstance(exact, (tuple, list)) or len(exact) != 2:
         raise PhysicalPromptError("physical exact protected interval is invalid")
     start_frame, end_frame = int(exact[0]), int(exact[1])
@@ -114,57 +148,85 @@ def _timeline_plan_with_exact_prefix_context(
 
     source = plan.get("source")
     if not isinstance(source, dict) or source.get("kind") != "timeline":
-        return plan, None
+        return plan, None, None, None
 
     fps = getattr(descriptor, "fps", None)
     if not isinstance(fps, Fraction) or fps <= 0:
         raise PhysicalPromptError("physical exact protected interval has invalid fps")
     start = Fraction(start_frame, 1) / fps
     end = Fraction(end_frame, 1) / fps
+    exact_interval = (start, end)
+
+    crossing = _active_timeline_candidate_across_boundary(plan, end)
+    preserved_crossing: tuple[Fraction, Fraction] | None = None
+    neutral_end = end
+    if crossing is not None:
+        crossing_start = crossing["_start"]
+        crossing_end = crossing["_end"]
+        if crossing_start < end < crossing_end:
+            preserved_crossing = (crossing_start, crossing_end)
+            neutral_end = max(start, crossing_start)
+
+    suppressed_interval = (start, neutral_end) if neutral_end > start else None
+    if suppressed_interval is None:
+        return plan, exact_interval, None, preserved_crossing
 
     rewritten = copy.deepcopy(plan)
     rewritten_source = dict(rewritten.get("source") or {})
     sections = list(rewritten_source.get("sections") or [])
-    # A source-level override is intentional here: it participates in the same
-    # atomic interval resolver as authored sections, while avoiding a second
-    # timestamp parser or any post-render text surgery. Negative ordinal keeps
-    # the synthetic transport interval out of authored source provenance.
+    # A source-level override participates in the same V2 atomic interval
+    # resolver. It ends at the authored start of any interval that genuinely
+    # crosses into fresh generation, so that body remains continuously active
+    # rather than being reintroduced at the sampling boundary.
     protected_context = {
         "kind": "override",
         "start": fraction_string(start),
-        "end": fraction_string(end),
+        "end": fraction_string(neutral_end),
         "body": _EXACT_PREFIX_CONTEXT_BODY,
         "ordinal": -1_000_000_000,
         "header": "<exact-protected-prefix>",
     }
     rewritten_source["sections"] = [protected_context, *sections]
     rewritten["source"] = rewritten_source
-    return rewritten, (start, end)
+    return rewritten, exact_interval, suppressed_interval, preserved_crossing
 
 
 def _with_runtime_compiler_identity(
     compiled: Any,
     descriptor: Any,
     *,
-    protected_interval: tuple[Fraction, Fraction] | None,
+    exact_interval: tuple[Fraction, Fraction] | None,
+    suppressed_interval: tuple[Fraction, Fraction] | None,
+    preserved_crossing: tuple[Fraction, Fraction] | None,
 ):
-    if protected_interval is None:
-        # V3 is a semantic version only for exact-prefix suppression. Initial
-        # Timeline samples and guided-overlap continuations retain V2 identity
-        # because their emitted text is byte-for-byte the V2 compiler result.
+    if exact_interval is None:
+        # V3 is a semantic version only for exact-prefix transport. Initial
+        # Timeline samples and guided-overlap continuations retain V2 identity.
         return compiled
 
-    diagnostics = tuple(compiled.diagnostics)
-    start, end = protected_interval
-    diagnostics += (
-        {
-            "level": "info",
-            "code": "H3C-PT206",
-            "message": "suppressed authored instructions inside the exact protected prefix so they cannot replay into the generated suffix",
-            "global_start": fraction_string(start),
-            "global_end": fraction_string(end),
-        },
-    )
+    diagnostics = list(compiled.diagnostics)
+    if suppressed_interval is not None:
+        start, end = suppressed_interval
+        diagnostics.append(
+            {
+                "level": "info",
+                "code": "H3C-PT206",
+                "message": "suppressed stale authored instructions that belong only to the exact protected prefix",
+                "global_start": fraction_string(start),
+                "global_end": fraction_string(end),
+            }
+        )
+    if preserved_crossing is not None:
+        start, end = preserved_crossing
+        diagnostics.append(
+            {
+                "level": "info",
+                "code": "H3C-PT207",
+                "message": "preserved an authored interval already active across the exact-prefix generation boundary without restarting it",
+                "global_start": fraction_string(start),
+                "global_end": fraction_string(end),
+            }
+        )
     physical_hash = canonical_sha256(
         {
             "compiler_version": _RUNTIME_PHYSICAL_COMPILER_VERSION,
@@ -177,7 +239,7 @@ def _with_runtime_compiler_identity(
     return replace(
         compiled,
         compiler_version=_RUNTIME_PHYSICAL_COMPILER_VERSION,
-        diagnostics=diagnostics,
+        diagnostics=tuple(diagnostics),
         physical_conditioning_hash=physical_hash,
     )
 
@@ -192,20 +254,24 @@ def compile_invocation_prompt(
     ``legacy_text`` emitted by ``_terminal_pair_prompt`` rather than selecting
     only the first covered logical prompt.
 
-    Timeline V3 additionally treats an exact Native Masked prefix as immutable
-    context instead of fresh authored content. This preserves the full physical
-    local clock while preventing protected-prefix scene/dialogue instructions
-    from being replayed at the start of the generated suffix.
+    Timeline V3 treats stale exact-prefix-only semantics as immutable context but
+    preserves an authored interval that is already active across the generation
+    boundary. This keeps the full physical clock and avoids manufacturing a new
+    semantic onset exactly where fresh frames begin.
     """
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
     if candidate and source_kind == "timeline":
-        runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(plan, descriptor)
+        runtime_plan, exact_interval, suppressed_interval, preserved_crossing = (
+            _timeline_plan_with_exact_prefix_context(plan, descriptor)
+        )
         compiled = compile_physical_prompt(runtime_plan, descriptor)
         return _with_runtime_compiler_identity(
             compiled,
             descriptor,
-            protected_interval=protected_interval,
+            exact_interval=exact_interval,
+            suppressed_interval=suppressed_interval,
+            preserved_crossing=preserved_crossing,
         )
     return compile_legacy_nominal(plan, descriptor, text=legacy_text)
 
