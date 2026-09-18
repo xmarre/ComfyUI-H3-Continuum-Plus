@@ -17,6 +17,7 @@ from ..constants import (
     normalize_diagnostics_mode,
 )
 from ..v2.seam_guard import correct_audio_seam
+from .audio_phase import phase_align_decoded_audio
 from .plan import FPS, validate_assembly_plan
 
 AUDIO_SEAM_OFF = "Off"
@@ -235,14 +236,32 @@ def assemble_decoded_chunks(
             )
 
         waveform, sample_rate = validate_audio(raw_audio)
-        waveform = waveform.detach().to("cpu")
-        sample_rate = int(sample_rate)
-        raw_audio_cpu = {"waveform": waveform, "sample_rate": sample_rate}
+        raw_audio_cpu = {
+            "waveform": waveform.detach().to("cpu"),
+            "sample_rate": int(sample_rate),
+        }
+        raw_audio_cpu, phase_report = phase_align_decoded_audio(
+            raw_audio_cpu,
+            group=chunk,
+            frame_cursor=frame_cursor,
+        )
+        waveform = raw_audio_cpu["waveform"]
+        sample_rate = int(raw_audio_cpu["sample_rate"])
         if audio_rate is None:
             audio_rate = sample_rate
         elif sample_rate != audio_rate:
             raise ValueError(
                 f"audio sample rate changed between chunks: {audio_rate} -> {sample_rate}"
+            )
+
+        if phase_report["applied"] or diagnostics_mode == DIAGNOSTICS_FULL:
+            reports.append(
+                f"audio phase group {index}: verified={phase_report['verified']}, "
+                f"origin_latent={phase_report['origin_latent']}, "
+                f"native_trim={phase_report['native_trim_samples']}, "
+                f"phase_trim={phase_report['phase_trim_samples']}, "
+                f"delta={int(phase_report['phase_delta_samples']):+d} samples, "
+                f"reason={phase_report['reason']}"
             )
 
         frame_stop = frame_cursor + net_frames
@@ -452,7 +471,8 @@ def finalize_assembled_timeline(
 class H3ContinuumAssembleV3:
     DESCRIPTION = (
         "Assemble full AV chunks decoded by ComfyUI Core. Trims decoded context, "
-        "aligns audio on cumulative frame boundaries, and optionally applies Audio Seam Auto."
+        "aligns proven exact-continuation audio to the physical 24-fps/40-Hz timeline, "
+        "and optionally applies Audio Seam Auto."
     )
     SEARCH_ALIASES = ["H3 latent assemble", "H3 external VAE decode"]
 
