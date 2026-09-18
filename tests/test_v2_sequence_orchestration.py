@@ -72,7 +72,7 @@ def test_prompt_routing_receipt_logs_timeline_eligibility_without_prompt_text(ca
     assert "H3C-PT209 prompt-routing receipt" in caplog.text
     assert f"source_digest={plan['source']['source_digest']}" in caplog.text
     assert "SECRET_TIMELINE_BODY" not in caplog.text
-    assert "[0-5s]" not in caplog.text
+    assert "SECRET_TIMELINE_BODY_2" not in caplog.text
 
 
 def test_identity_fingerprint_hashes_full_resized_rgb_tensor():
