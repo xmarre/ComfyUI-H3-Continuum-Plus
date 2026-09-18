@@ -59,7 +59,7 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
 
     assert compiled.compiler_version == "physical_timeline_text_v3"
     codes = {item["code"] for item in compiled.diagnostics}
-    assert {"H3C-PT205", "H3C-PT206"}.issubset(codes)
+    assert {"H3C-PT205", "H3C-PT206", "H3C-PT208"}.issubset(codes)
     assert "H3C-PT207" not in codes
 
     # 00421's physical chunk 2 begins at frame 136, while Native Masked owns
@@ -101,10 +101,55 @@ def test_guided_overlap_is_not_treated_as_exact_protected_context():
     )
 
     assert compiled.compiler_version == "physical_timeline_text_v2"
-    assert not any(item["code"] == "H3C-PT206" for item in compiled.diagnostics)
-    assert "gharial scene" in compiled.text
-    assert "Some endure. Others adapt." in compiled.text
+    codes = {item["code"] for item in compiled.diagnostics}
+    assert "H3C-PT206" not in codes
+    assert "H3C-PT208" in codes
 
+    # The outer [7-14s] header is the chunk-routing signal. Guided overlap may
+    # alter physical geometry, but it must not import the [0-7s] chunk body.
+    assert "persistent documentary guidance" in compiled.text
+    assert "gharial scene" not in compiled.text
+    assert "Some endure. Others adapt." not in compiled.text
+    assert "lizard first half" not in compiled.text
+    assert "lizard continuation" in compiled.text
+    assert "iguana" in compiled.text
+    assert "turtle" in compiled.text
+    assert "blue jay" in compiled.text
+
+
+def test_initial_chunk_signal_does_not_import_next_chunk_body_from_physical_overrun():
+    descriptor = make_physical_sample_descriptor(
+        group_id="chunk:1",
+        logical_indices=(0,),
+        retained_before=0,
+        context_frames=0,
+        total_frames=175,
+        target_duration_frames=336,
+        continuation_method=CONTINUATION_NATIVE_MASKED,
+        initial_state_origin="sequence",
+        include_first=False,
+        include_last=False,
+        presentation_contract={"reference_count": 7},
+    )
+    compiled = compile_invocation_prompt(
+        _plan(),
+        descriptor,
+        legacy_text="unused",
+        candidate=True,
+    )
+
+    codes = {item["code"] for item in compiled.diagnostics}
+    assert "H3C-PT208" in codes
+    assert "H3C-PT206" not in codes
+    assert "persistent documentary guidance" in compiled.text
+    assert "fish" in compiled.text
+    assert "frog" in compiled.text
+    assert "gharial scene" in compiled.text
+    assert "lizard first half" in compiled.text
+    assert "lizard continuation" not in compiled.text
+    assert "iguana" not in compiled.text
+    assert "turtle" not in compiled.text
+    assert "blue jay" not in compiled.text
 
 def test_timeline_without_protected_prefix_keeps_v2_identity_and_full_authored_text():
     descriptor = make_physical_sample_descriptor(
@@ -128,5 +173,9 @@ def test_timeline_without_protected_prefix_keeps_v2_identity_and_full_authored_t
     )
 
     assert compiled.compiler_version == "physical_timeline_text_v2"
-    assert not any(item["code"] == "H3C-PT206" for item in compiled.diagnostics)
+    codes = {item["code"] for item in compiled.diagnostics}
+    assert "H3C-PT206" not in codes
+    assert "H3C-PT208" in codes
     assert "Some endure. Others adapt." in compiled.text
+    assert "lizard continuation" not in compiled.text
+    assert "iguana" not in compiled.text
