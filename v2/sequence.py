@@ -78,6 +78,37 @@ from .session import (
     session_summary, validate_chunk_entry, validate_session,
 )
 LOG=logging.getLogger("h3_continuum_join")
+
+def _prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -> dict[str, Any]:
+    """Return bounded prompt-routing provenance without exposing prompt text."""
+
+    source = plan.get("source") or {}
+    source_kind = str(source.get("kind", "unknown"))
+    return {
+        "requested_prompt_mode": str(source.get("requested_mode", plan.get("mode", "unknown"))),
+        "resolved_plan_mode": str(plan.get("mode", "unknown")),
+        "source_kind": source_kind,
+        "physical_compiler_enabled": bool(physical_candidate),
+        "physical_compiler_eligible": bool(physical_candidate and source_kind == "timeline"),
+        "source_digest": str(source.get("source_digest", "")),
+    }
+
+
+def _log_prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -> dict[str, Any]:
+    receipt = _prompt_routing_receipt(plan, physical_candidate=physical_candidate)
+    LOG.info(
+        "H3C-PT209 prompt-routing receipt requested_mode=%r resolved_mode=%r "
+        "source_kind=%s physical_compiler_enabled=%s physical_compiler_eligible=%s source_digest=%s",
+        receipt["requested_prompt_mode"],
+        receipt["resolved_plan_mode"],
+        receipt["source_kind"],
+        receipt["physical_compiler_enabled"],
+        receipt["physical_compiler_eligible"],
+        receipt["source_digest"],
+    )
+    return receipt
+
+
 class SequenceRuntimeError(RuntimeError): pass
 
 def _record_context_diagnostics(*,tracker,reports,state,continuity,reused,continuation_method=CONTINUATION_GUIDE,audio_continuity=True,driving_audio_active=False):
@@ -538,6 +569,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     continuation_method=current_continuation_method()
     diagnostics_mode=normalize_diagnostics_mode(diagnostics_mode); plan=validate_prompt_plan(prompt_plan); chunks=int(plan["chunks"]); chunk_seconds=float(plan["chunk_seconds"]); prompts=list(plan["prompts"]); prompt_hashes=list(plan["hashes"]); width,height=int(width),int(height)
     physical_candidate=physical_prompt_compiler_enabled()
+    _log_prompt_routing_receipt(plan, physical_candidate=physical_candidate)
     if continuation_method==CONTINUATION_NATIVE_MASKED: require_native_mask_support()
     # Legacy workflow input only. Runtime compatibility is advisory in V3.4.
     strict_compatibility=False
