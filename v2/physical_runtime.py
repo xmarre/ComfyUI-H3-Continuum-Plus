@@ -21,6 +21,7 @@ from .physical_prompts import (
     compile_legacy_nominal,
     compile_physical_prompt,
     fraction_string,
+    parse_fraction,
     physical_metadata,
     physical_prompt_compiler_enabled,
     presentation_digest,
@@ -85,6 +86,91 @@ def build_presentation_contract(
         contract["video"] = dict(video_presentation)
     return contract
 
+
+def _timeline_plan_for_logical_signal(
+    plan: dict[str, Any], descriptor: Any
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Scope physical Timeline compilation to the current logical signal block.
+
+    Continuum outer Timeline headers such as [0-7s] / [7-14s] are routing
+    signals when they exactly match configured chunk boundaries. They select
+    which authored body belongs to a logical chunk; physical overlap must not
+    pull text from adjacent logical chunks.
+
+    Fine-grained top-level timelines keep the existing physical-window behavior.
+    Explicit [Chunk N] sections are always routing signals. Multi-logical merged
+    invocations are left unchanged.
+    """
+
+    source = plan.get("source")
+    if not isinstance(source, dict) or source.get("kind") != "timeline":
+        return plan, None
+
+    logical_indices = tuple(getattr(descriptor, "logical_indices", ()) or ())
+    if len(logical_indices) != 1:
+        return plan, None
+    logical_index = int(logical_indices[0])
+    if logical_index < 0:
+        raise PhysicalPromptError("physical prompt logical index is invalid")
+
+    chunk_seconds = parse_fraction(source.get("chunk_seconds", plan.get("chunk_seconds", 0)))
+    if chunk_seconds <= 0:
+        raise PhysicalPromptError("physical prompt chunk duration is invalid")
+    chunk_index = logical_index + 1
+    signal_start = Fraction(logical_index, 1) * chunk_seconds
+    signal_end = signal_start + chunk_seconds
+
+    sections = list(source.get("sections") or [])
+    explicit = [
+        item for item in sections
+        if isinstance(item, dict)
+        and item.get("kind") == "chunk"
+        and int(item.get("chunk_index", -1)) == chunk_index
+    ]
+    exact_time = [
+        item for item in sections
+        if isinstance(item, dict)
+        and item.get("kind") == "time"
+        and parse_fraction(item.get("start")) == signal_start
+        and parse_fraction(item.get("end")) == signal_end
+    ]
+    selected = explicit[0] if explicit else (exact_time[0] if exact_time else None)
+    if selected is None:
+        return plan, None
+
+    rewritten = copy.deepcopy(plan)
+    rewritten_source = dict(rewritten.get("source") or {})
+    rewritten_source["sections"] = [copy.deepcopy(selected)]
+    overrides = rewritten_source.get("overrides")
+    if isinstance(overrides, dict):
+        key = str(chunk_index)
+        rewritten_source["overrides"] = {key: overrides[key]} if key in overrides else {}
+    rewritten["source"] = rewritten_source
+    return rewritten, {
+        "chunk_index": chunk_index,
+        "global_start": signal_start,
+        "global_end": signal_end,
+        "header": str(selected.get("header", f"<chunk:{chunk_index}>")),
+    }
+
+
+def _with_logical_signal_diagnostic(
+    compiled: Any, scope: dict[str, Any] | None
+):
+    if scope is None:
+        return compiled
+    diagnostics = tuple(compiled.diagnostics) + (
+        {
+            "level": "info",
+            "code": "H3C-PT208",
+            "message": "scoped physical Timeline text to the current logical chunk signal; adjacent chunk bodies were not imported by overlap",
+            "chunk_index": int(scope["chunk_index"]),
+            "global_start": fraction_string(scope["global_start"]),
+            "global_end": fraction_string(scope["global_end"]),
+            "header": str(scope["header"]),
+        },
+    )
+    return replace(compiled, diagnostics=diagnostics)
 
 def _timeline_plan_with_exact_prefix_context(
     plan: dict[str, Any], descriptor: Any
@@ -193,6 +279,10 @@ def compile_invocation_prompt(
     ``legacy_text`` emitted by ``_terminal_pair_prompt`` rather than selecting
     only the first covered logical prompt.
 
+    Exact logical Timeline signal headers such as [0-7s] / [7-14s] remain
+    chunk-routing boundaries. Physical overlap may remap timestamps inside the
+    selected chunk body, but it must not import adjacent chunk bodies.
+
     Timeline V3 additionally treats an exact Native Masked prefix as immutable
     context instead of fresh authored content. This preserves the full physical
     local clock while preventing protected-prefix scene/dialogue instructions
@@ -201,13 +291,17 @@ def compile_invocation_prompt(
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
     if candidate and source_kind == "timeline":
-        runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(plan, descriptor)
+        scoped_plan, logical_scope = _timeline_plan_for_logical_signal(plan, descriptor)
+        runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(
+            scoped_plan, descriptor
+        )
         compiled = compile_physical_prompt(runtime_plan, descriptor)
-        return _with_runtime_compiler_identity(
+        compiled = _with_runtime_compiler_identity(
             compiled,
             descriptor,
             protected_interval=protected_interval,
         )
+        return _with_logical_signal_diagnostic(compiled, logical_scope)
     return compile_legacy_nominal(plan, descriptor, text=legacy_text)
 
 def _validate_physical_timeline_video_assets(
