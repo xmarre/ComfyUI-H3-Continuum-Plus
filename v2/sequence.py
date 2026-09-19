@@ -84,7 +84,7 @@ def _prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -
 
     source = plan.get("source") or {}
     source_kind = str(source.get("kind", "unknown"))
-    return {
+    receipt = {
         "requested_prompt_mode": str(source.get("requested_mode", plan.get("mode", "unknown"))),
         "resolved_plan_mode": str(plan.get("mode", "unknown")),
         "source_kind": source_kind,
@@ -92,19 +92,49 @@ def _prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -
         "physical_compiler_eligible": bool(physical_candidate and source_kind == "timeline"),
         "source_digest": str(source.get("source_digest", "")),
     }
+    transport = plan.get("managed_prompt_transport")
+    if isinstance(transport, dict):
+        receipt.update(
+            {
+                "transport_version": transport.get("transport_version"),
+                "transport_status": transport.get("status"),
+                "declared_format": transport.get("declared_format"),
+                "declared_routing": transport.get("declared_routing"),
+                "original_text_sha256": transport.get("original_text_sha256"),
+                "expanded_text_sha256": transport.get("expanded_text_sha256"),
+                "geometry_match": transport.get("geometry_match"),
+                "skeleton_match": transport.get("skeleton_match"),
+                "sequence_verified": bool(transport.get("sequence_verified", False)),
+                "fallback_reason": transport.get("fallback_reason"),
+            }
+        )
+    return receipt
 
 
 def _log_prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -> dict[str, Any]:
     receipt = _prompt_routing_receipt(plan, physical_candidate=physical_candidate)
     LOG.info(
         "H3C-PT209 prompt-routing receipt requested_mode=%r resolved_mode=%r "
-        "source_kind=%s physical_compiler_enabled=%s physical_compiler_eligible=%s source_digest=%s",
+        "source_kind=%s physical_compiler_enabled=%s physical_compiler_eligible=%s source_digest=%s "
+        "transport_v=%s transport_status=%s declared_format=%s declared_routing=%s "
+        "original_sha256=%s expanded_sha256=%s geometry_match=%s skeleton_match=%s "
+        "sequence_verified=%s fallback_reason=%s",
         receipt["requested_prompt_mode"],
         receipt["resolved_plan_mode"],
         receipt["source_kind"],
         receipt["physical_compiler_enabled"],
         receipt["physical_compiler_eligible"],
         receipt["source_digest"],
+        receipt.get("transport_version"),
+        receipt.get("transport_status"),
+        receipt.get("declared_format"),
+        receipt.get("declared_routing"),
+        receipt.get("original_text_sha256"),
+        receipt.get("expanded_text_sha256"),
+        receipt.get("geometry_match"),
+        receipt.get("skeleton_match"),
+        receipt.get("sequence_verified"),
+        receipt.get("fallback_reason"),
     )
     return receipt
 

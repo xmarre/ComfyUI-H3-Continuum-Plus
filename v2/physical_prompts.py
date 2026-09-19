@@ -408,6 +408,31 @@ def _strict_inner_ranges(
     return ranges
 
 
+def inspect_strict_inner_ranges(
+    section: dict[str, Any],
+    *,
+    outer_start: Fraction,
+    outer_end: Fraction,
+) -> list[dict[str, Any]] | None:
+    """Expose the physical compiler's strict-inner grammar for transport validation."""
+    ranges = _strict_inner_ranges(section, outer_start=outer_start, outer_end=outer_end)
+    if ranges is None:
+        return None
+    return [
+        {
+            "start": fraction_string(item["_start"]),
+            "end": fraction_string(item["_end"]),
+            "header": str(item.get("inner_header", "")),
+            "body": str(item.get("body", "")),
+        }
+        for item in ranges
+    ]
+
+
+def inner_range_header_like(line: str) -> bool:
+    return bool(_INNER_RANGE_HEADER.match(str(line)))
+
+
 def _resolved_candidates(source: dict[str, Any], chunk_seconds: Fraction) -> list[dict[str, Any]]:
     result = []
     for raw in source.get("sections") or []:

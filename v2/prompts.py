@@ -266,6 +266,23 @@ def _parse_timeline_sections(script, *, allow_preamble=True):
     return sections
 
 
+def parse_timeline_sections(script):
+    """Public structural parser used by prompt-transport adapters."""
+    return copy.deepcopy(_parse_timeline_sections(script))
+
+
+def timeline_preamble(script):
+    return _timeline_preamble(script)
+
+
+def timeline_header_like(line):
+    return bool(
+        _TIMELINE_HEADER.match(str(line))
+        or _CHUNK_HEADER.match(str(line))
+        or _TIMELINE_LIKE_HEADER.match(str(line))
+    )
+
+
 def parse_sparse_prompt_overrides(script):
     sections = _parse_timeline_sections(script, allow_preamble=False)
     overrides = {}
@@ -602,10 +619,29 @@ def _rebuild_schema2_source(plan: dict[str, Any], *, chunks: int, chunk_seconds:
     return result
 
 
-def build_sampler_prompt_plan(*, prompt_mode, prompt_script, sequence_prompt, prompt_plan, chunks, chunk_seconds):
+def build_sampler_prompt_plan(
+    *,
+    prompt_mode,
+    prompt_script,
+    sequence_prompt,
+    prompt_plan,
+    chunks,
+    chunk_seconds,
+    managed_prompt_source_json=None,
+):
     chunks = int(chunks)
     chunk_seconds = float(chunk_seconds)
     if sequence_prompt is not None:
+        if managed_prompt_source_json:
+            from .prompt_transport import resolve_managed_prompt_plan
+
+            return resolve_managed_prompt_plan(
+                prompt_mode=prompt_mode,
+                expanded_text=sequence_prompt,
+                managed_prompt_source_json=managed_prompt_source_json,
+                chunks=chunks,
+                chunk_seconds=chunk_seconds,
+            )
         return make_prompt_plan(mode=prompt_mode, script=sequence_prompt, chunks=chunks, chunk_seconds=chunk_seconds)
     if prompt_plan is not None:
         plan = validate_prompt_plan(prompt_plan)
