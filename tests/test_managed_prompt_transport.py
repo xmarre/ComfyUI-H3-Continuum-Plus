@@ -372,6 +372,56 @@ class _CaptureClip:
         return [[torch.zeros((1, 1, 2)), {"captured": tokens}]]
 
 
+def test_legacy_transport_isolated_at_actual_physical_qwen_input_boundary(monkeypatch):
+    text = "SHARED_ENV_SENTINEL [0-7s] ONE_RED_CUBE_SENTINEL [7-14s] TWO_GREEN_SPHERE_SENTINEL"
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=text,
+        prompt_plan=None,
+        chunks=2,
+        chunk_seconds=7.0,
+        managed_prompt_source_json=_sidecar(
+            text,
+            fmt="inherit",
+            chunks=2,
+            seconds="7",
+            origin="legacy_absent",
+        ),
+    )
+    assert plan["managed_prompt_transport"]["status"] == "verified_legacy_sequence"
+    descriptor = make_physical_sample_descriptor(
+        group_id="legacy-managed-chunk-2",
+        logical_indices=(1,),
+        retained_before=120,
+        context_frames=24,
+        total_frames=144,
+        target_duration_frames=336,
+        continuation_method=CONTINUATION_GUIDE,
+        initial_state_origin="sequence",
+        include_first=False,
+        include_last=False,
+        presentation_contract={"include_first": False, "include_last": False},
+        guided_overlap=True,
+    )
+    monkeypatch.setattr(physical_runtime, "physical_prompt_compiler_enabled", lambda: True)
+    clip = _CaptureClip()
+    assets = SimpleNamespace(first_image=None, last_image=None)
+    _conditioning, compiled, _metadata, _key = physical_runtime.encode_physical_prompt_conditioning(
+        clip=clip,
+        plan=plan,
+        descriptor=descriptor,
+        legacy_text=plan["prompts"][1],
+        assets=assets,
+        include_first=False,
+        include_last=False,
+    )
+    assert clip.prompt == compiled.text
+    assert "SHARED_ENV_SENTINEL" in clip.prompt
+    assert "TWO_GREEN_SPHERE_SENTINEL" in clip.prompt
+    assert "ONE_RED_CUBE_SENTINEL" not in clip.prompt
+
+
 def test_verified_transport_isolated_at_actual_physical_qwen_input_boundary(monkeypatch):
     plan = _plan()
     descriptor = make_physical_sample_descriptor(
