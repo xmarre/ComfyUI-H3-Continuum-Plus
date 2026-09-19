@@ -238,14 +238,6 @@ class H3ContinuumSamplerV2:
                         ),
                     },
                 ),
-                "managed_prompt_source_json": (
-                    "STRING",
-                    {
-                        "default": "",
-                        "advanced": True,
-                        "tooltip": "Request-local State Manager prompt provenance. Leave empty for ordinary STRING workflows.",
-                    },
-                ),
                 "first_frame": ("IMAGE",),
                 "last_frame": ("IMAGE",),
                 "session": ("H3_CONTINUUM_SESSION",),
@@ -268,6 +260,14 @@ class H3ContinuumSamplerV2:
                     )
                     for index in range(1, 17)
                 },
+                "managed_prompt_source_json": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "advanced": True,
+                        "tooltip": "Request-local State Manager prompt provenance. Leave empty for ordinary STRING workflows.",
+                    },
+                ),
             },
         }
 
