@@ -7,6 +7,7 @@ schema-2 and physical prompt machinery consumes it.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from fractions import Fraction
 import hashlib
 import json
@@ -342,6 +343,37 @@ def resolve_managed_prompt_plan(
     ))
 
 
+def render_logical_timeline_skeleton(*, chunks: int, chunk_seconds: str) -> str:
+    """Render canonical outer Timeline headers without inventing prompt bodies."""
+
+    document = _validate_prompt_document(
+        {
+            "schema_version": 1,
+            "format": "timeline",
+            "routing": "logical_chunks",
+            "geometry": {
+                "chunks": chunks,
+                "chunk_seconds": chunk_seconds,
+            },
+        }
+    )
+    geometry = document["geometry"]
+    step = Decimal(geometry["chunk_seconds"])
+
+    def decimal_text(value: Decimal) -> str:
+        text = format(value, "f")
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text or "0"
+
+    sections = []
+    for index in range(int(geometry["chunks"])):
+        start = decimal_text(step * index)
+        end = decimal_text(step * (index + 1))
+        sections.append(f"[{start}-{end}s]\n")
+    return "\n".join(sections)
+
+
 def provider_capabilities() -> dict[str, Any]:
     return {
         "provider_version": PROMPT_TRANSPORT_PROVIDER_VERSION,
@@ -358,4 +390,5 @@ PROMPT_TRANSPORT_PROVIDER_V1 = {
     **provider_capabilities(),
     "classify": classify_prompt_text,
     "inspect": inspect_prompt_structure,
+    "logical_skeleton": render_logical_timeline_skeleton,
 }

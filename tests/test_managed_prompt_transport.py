@@ -209,6 +209,10 @@ def test_provider_exposes_native_geometry_and_parser_inspection():
     assert PROMPT_TRANSPORT_PROVIDER_V1["classify"](CANONICAL) == "timeline"
     structure = PROMPT_TRANSPORT_PROVIDER_V1["inspect"](CANONICAL)
     assert [item["kind"] for item in structure["sections"]] == ["time", "time", "time"]
+    assert PROMPT_TRANSPORT_PROVIDER_V1["logical_skeleton"](
+        chunks=3,
+        chunk_seconds="2.500",
+    ) == "[0-2.5s]\n\n[2.5-5s]\n\n[5-7.5s]\n"
 
 
 class _CaptureClip:
