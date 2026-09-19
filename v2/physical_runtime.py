@@ -343,6 +343,64 @@ def _validate_physical_timeline_video_assets(
         )
 
 
+def _bounded_hash_prefix(value: Any) -> str:
+    text = str(value or "none")
+    if text == "none":
+        return text
+    return text[:16]
+
+
+def _physical_presentation_receipt(
+    *,
+    descriptor: Any,
+    assets: Any,
+    include_first_requested: bool,
+    include_first_actual: bool,
+    include_last_requested: bool,
+    include_last_actual: bool,
+    cache_hit: bool,
+) -> dict[str, Any]:
+    """Return bounded Qwen/presentation provenance without prompt or image data."""
+
+    presentation = getattr(descriptor, "presentation_contract", None)
+    presentation = presentation if isinstance(presentation, dict) else {}
+    exact = getattr(descriptor, "exact_protected_interval", None)
+    exact_prefix = None
+    if isinstance(exact, (tuple, list)) and len(exact) == 2:
+        exact_prefix = [int(exact[0]), int(exact[1])]
+    reference_hashes = tuple(
+        _bounded_hash_prefix(value)
+        for value in (presentation.get("reference_image_hashes") or ())
+    )
+    return {
+        "group": str(getattr(descriptor, "group_id", "?")),
+        "logical_indices": tuple(
+            int(value) for value in (getattr(descriptor, "logical_indices", ()) or ())
+        ),
+        "include_first_requested": bool(include_first_requested),
+        "include_first_actual": bool(include_first_actual),
+        "descriptor_include_first": bool(presentation.get("include_first", False)),
+        "include_last_requested": bool(include_last_requested),
+        "include_last_actual": bool(include_last_actual),
+        "descriptor_include_last": bool(presentation.get("include_last", False)),
+        "first_asset_present": bool(getattr(assets, "first_image", None) is not None),
+        "first_asset_hash": _bounded_hash_prefix(
+            getattr(assets, "first_frame_hash", "none")
+        ),
+        "reference_count": int(presentation.get("reference_count", 0) or 0),
+        "reference_hashes": reference_hashes,
+        "picture_offset": int(presentation.get("picture_offset", 0) or 0),
+        "public_to_qwen_picture": dict(
+            presentation.get("public_to_qwen_picture") or {}
+        ),
+        "presentation_order": tuple(
+            str(value) for value in (presentation.get("presentation_order") or ())
+        ),
+        "cache_hit": bool(cache_hit),
+        "exact_prefix": exact_prefix,
+    }
+
+
 def encode_physical_prompt_conditioning(
     *,
     clip: Any,
@@ -397,7 +455,41 @@ def encode_physical_prompt_conditioning(
             include_last_actual,
             presentation_digest(descriptor.presentation_contract),
         )
-    if key not in cache:
+    cache_hit = key in cache
+    presentation_receipt = _physical_presentation_receipt(
+        descriptor=descriptor,
+        assets=assets,
+        include_first_requested=include_first,
+        include_first_actual=include_first_actual,
+        include_last_requested=include_last,
+        include_last_actual=include_last_actual,
+        cache_hit=cache_hit,
+    )
+    LOG.info(
+        "H3C-PT210 physical-presentation receipt group=%s logical=%s "
+        "include_first_requested=%s include_first_actual=%s descriptor_include_first=%s "
+        "include_last_requested=%s include_last_actual=%s descriptor_include_last=%s "
+        "first_asset_present=%s first_asset_hash=%s reference_count=%d reference_hashes=%s "
+        "picture_offset=%d public_to_qwen=%s presentation_order=%s cache_hit=%s exact_prefix=%s",
+        presentation_receipt["group"],
+        list(presentation_receipt["logical_indices"]),
+        presentation_receipt["include_first_requested"],
+        presentation_receipt["include_first_actual"],
+        presentation_receipt["descriptor_include_first"],
+        presentation_receipt["include_last_requested"],
+        presentation_receipt["include_last_actual"],
+        presentation_receipt["descriptor_include_last"],
+        presentation_receipt["first_asset_present"],
+        presentation_receipt["first_asset_hash"],
+        presentation_receipt["reference_count"],
+        list(presentation_receipt["reference_hashes"]),
+        presentation_receipt["picture_offset"],
+        presentation_receipt["public_to_qwen_picture"],
+        list(presentation_receipt["presentation_order"]),
+        presentation_receipt["cache_hit"],
+        presentation_receipt["exact_prefix"],
+    )
+    if not cache_hit:
         first_image = assets.first_image if include_first_actual else None
         last_image = assets.last_image if include_last_actual else None
         if reference_assets is not None:

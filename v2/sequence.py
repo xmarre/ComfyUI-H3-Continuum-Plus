@@ -84,7 +84,7 @@ def _prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -
 
     source = plan.get("source") or {}
     source_kind = str(source.get("kind", "unknown"))
-    return {
+    receipt = {
         "requested_prompt_mode": str(source.get("requested_mode", plan.get("mode", "unknown"))),
         "resolved_plan_mode": str(plan.get("mode", "unknown")),
         "source_kind": source_kind,
@@ -92,19 +92,144 @@ def _prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -
         "physical_compiler_eligible": bool(physical_candidate and source_kind == "timeline"),
         "source_digest": str(source.get("source_digest", "")),
     }
+    transport = plan.get("managed_prompt_transport")
+    if isinstance(transport, dict):
+        receipt.update(
+            {
+                "transport_version": transport.get("transport_version"),
+                "transport_status": transport.get("status"),
+                "declared_format": transport.get("declared_format"),
+                "declared_routing": transport.get("declared_routing"),
+                "document_origin": transport.get("document_origin"),
+                "legacy_separator_normalized": bool(
+                    transport.get("legacy_separator_normalized", False)
+                ),
+                "original_text_sha256": transport.get("original_text_sha256"),
+                "expanded_text_sha256": transport.get("expanded_text_sha256"),
+                "geometry_match": transport.get("geometry_match"),
+                "skeleton_match": transport.get("skeleton_match"),
+                "sequence_verified": bool(transport.get("sequence_verified", False)),
+                "fallback_reason": transport.get("fallback_reason"),
+            }
+        )
+    return receipt
 
 
 def _log_prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -> dict[str, Any]:
     receipt = _prompt_routing_receipt(plan, physical_candidate=physical_candidate)
     LOG.info(
         "H3C-PT209 prompt-routing receipt requested_mode=%r resolved_mode=%r "
-        "source_kind=%s physical_compiler_enabled=%s physical_compiler_eligible=%s source_digest=%s",
+        "source_kind=%s physical_compiler_enabled=%s physical_compiler_eligible=%s source_digest=%s "
+        "transport_v=%s transport_status=%s declared_format=%s declared_routing=%s "
+        "document_origin=%s legacy_separator_normalized=%s "
+        "original_sha256=%s expanded_sha256=%s geometry_match=%s skeleton_match=%s "
+        "sequence_verified=%s fallback_reason=%s",
         receipt["requested_prompt_mode"],
         receipt["resolved_plan_mode"],
         receipt["source_kind"],
         receipt["physical_compiler_enabled"],
         receipt["physical_compiler_eligible"],
         receipt["source_digest"],
+        receipt.get("transport_version"),
+        receipt.get("transport_status"),
+        receipt.get("declared_format"),
+        receipt.get("declared_routing"),
+        receipt.get("document_origin"),
+        receipt.get("legacy_separator_normalized"),
+        receipt.get("original_text_sha256"),
+        receipt.get("expanded_text_sha256"),
+        receipt.get("geometry_match"),
+        receipt.get("skeleton_match"),
+        receipt.get("sequence_verified"),
+        receipt.get("fallback_reason"),
+    )
+    return receipt
+
+
+def _continuation_source_receipt(
+    *,
+    plan: dict[str, Any],
+    entries: list[dict[str, Any]],
+    previous_state: dict[str, Any],
+    video_context: torch.Tensor,
+    context_frames: int,
+) -> dict[str, Any] | None:
+    """Prove which prior latent region supplied a managed continuation prefix."""
+
+    transport = plan.get("managed_prompt_transport")
+    if not isinstance(transport, dict):
+        return None
+    if not torch.is_tensor(video_context) or video_context.ndim != 5:
+        return None
+    slots = int(video_context.shape[2])
+    state_tail = previous_state.get("video_tail")
+    state_tail_match = bool(
+        torch.is_tensor(state_tail)
+        and state_tail.ndim == 5
+        and int(state_tail.shape[2]) >= slots
+        and torch.equal(video_context, state_tail[:, :, -slots:])
+    )
+    prior_head_match = None
+    prior_tail_match = None
+    prior_slots = None
+    if entries:
+        prior_video = entries[-1].get("video")
+        if (
+            torch.is_tensor(prior_video)
+            and prior_video.ndim == 5
+            and int(prior_video.shape[2]) >= slots
+        ):
+            prior_slots = int(prior_video.shape[2])
+            prior_head_match = bool(
+                torch.equal(video_context, prior_video[:, :, :slots])
+            )
+            prior_tail_match = bool(
+                torch.equal(video_context, prior_video[:, :, -slots:])
+            )
+    return {
+        "transport_status": transport.get("status"),
+        "source_clip_index": int(previous_state.get("clip_index", -1)),
+        "source_mode": str(previous_state.get("source_mode", "unknown")),
+        "context_frames": int(context_frames),
+        "video_slots": slots,
+        "prior_total_slots": prior_slots,
+        "selected_matches_state_tail": state_tail_match,
+        "selected_matches_prior_tail": prior_tail_match,
+        "selected_matches_prior_head": prior_head_match,
+    }
+
+
+def _log_continuation_source_receipt(
+    *,
+    plan: dict[str, Any],
+    entries: list[dict[str, Any]],
+    previous_state: dict[str, Any],
+    video_context: torch.Tensor,
+    context_frames: int,
+) -> dict[str, Any] | None:
+    receipt = _continuation_source_receipt(
+        plan=plan,
+        entries=entries,
+        previous_state=previous_state,
+        video_context=video_context,
+        context_frames=context_frames,
+    )
+    if receipt is None:
+        return None
+    LOG.info(
+        "H3C-PT211 continuation-source receipt transport_status=%s source_clip=%d "
+        "source_mode=%s context_frames=%d video_slots=%d prior_total_slots=%s "
+        "selected_matches_state_tail=%s selected_matches_prior_tail=%s "
+        "selected_matches_prior_head=%s",
+        receipt["transport_status"],
+        receipt["source_clip_index"],
+        receipt["source_mode"],
+        receipt["context_frames"],
+        receipt["video_slots"],
+        receipt["prior_total_slots"],
+        receipt["selected_matches_state_tail"],
+        receipt["selected_matches_prior_tail"],
+        receipt["selected_matches_prior_head"],
     )
     return receipt
 
@@ -775,6 +900,13 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             keyed_conditioning=attach_keyframes(base_conditioning,frame_count=geometry.total_frames,first_latent=None,last_latent=assets.last_latent if geometry.is_final else None)
             carry_generated_audio=bool(audio_continuity) and driving_audio_source is None
             video_context,audio_context,grid_offset=select_context(previous_state,geometry.context_frames,include_audio=carry_generated_audio); context_before=context_fingerprint(video_context,audio_context)
+            _log_continuation_source_receipt(
+                plan=plan,
+                entries=entries,
+                previous_state=previous_state,
+                video_context=video_context,
+                context_frames=geometry.context_frames,
+            )
             if continuation_method==CONTINUATION_NATIVE_MASKED:
                 latent=apply_native_masked_continuation(latent,video_context=video_context,audio_context=audio_context,context_frames=geometry.context_frames)
                 conditioning=prepare_masked_conditioning(keyed_conditioning,context_frames=geometry.context_frames,new_frame_count=geometry.total_frames)
