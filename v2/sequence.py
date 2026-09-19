@@ -100,6 +100,10 @@ def _prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: bool) -
                 "transport_status": transport.get("status"),
                 "declared_format": transport.get("declared_format"),
                 "declared_routing": transport.get("declared_routing"),
+                "document_origin": transport.get("document_origin"),
+                "legacy_separator_normalized": bool(
+                    transport.get("legacy_separator_normalized", False)
+                ),
                 "original_text_sha256": transport.get("original_text_sha256"),
                 "expanded_text_sha256": transport.get("expanded_text_sha256"),
                 "geometry_match": transport.get("geometry_match"),
@@ -117,6 +121,7 @@ def _log_prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: boo
         "H3C-PT209 prompt-routing receipt requested_mode=%r resolved_mode=%r "
         "source_kind=%s physical_compiler_enabled=%s physical_compiler_eligible=%s source_digest=%s "
         "transport_v=%s transport_status=%s declared_format=%s declared_routing=%s "
+        "document_origin=%s legacy_separator_normalized=%s "
         "original_sha256=%s expanded_sha256=%s geometry_match=%s skeleton_match=%s "
         "sequence_verified=%s fallback_reason=%s",
         receipt["requested_prompt_mode"],
@@ -129,6 +134,8 @@ def _log_prompt_routing_receipt(plan: dict[str, Any], *, physical_candidate: boo
         receipt.get("transport_status"),
         receipt.get("declared_format"),
         receipt.get("declared_routing"),
+        receipt.get("document_origin"),
+        receipt.get("legacy_separator_normalized"),
         receipt.get("original_text_sha256"),
         receipt.get("expanded_text_sha256"),
         receipt.get("geometry_match"),
