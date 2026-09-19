@@ -19,3 +19,17 @@ def test_v34_frontend_keeps_three_visible_and_grows_to_eight():
     assert "node.addInput?.(`reference_image_${index}`, \"IMAGE\")" in source
     assert "node.removeInput?.(slot)" in source
     assert "highestConnected + 1" in source
+
+
+def test_v34_managed_prompt_sidecar_preserves_existing_reference_socket_order():
+    optional = H3ContinuumSamplerV34.INPUT_TYPES()["optional"]
+    keys = list(optional)
+
+    reference_positions = [keys.index(f"reference_image_{index}") for index in range(1, 9)]
+    assert reference_positions == list(
+        range(reference_positions[0], reference_positions[0] + 8)
+    )
+    assert keys.index("reference_image_8") < keys.index("reference_video_1")
+    assert keys.index("reference_video_1") < keys.index("driving_audio")
+    assert keys.index("driving_audio") < keys.index("audio_vae")
+    assert keys[-1] == "managed_prompt_source_json"
