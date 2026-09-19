@@ -359,6 +359,17 @@ def render_logical_timeline_skeleton(*, chunks: int, chunk_seconds: str) -> str:
     )
     geometry = document["geometry"]
     step = Decimal(geometry["chunk_seconds"])
+    limits = provider_capabilities()
+    chunk_limits = limits["chunks"]
+    seconds_limits = limits["chunk_seconds"]
+    if not int(chunk_limits["min"]) <= int(geometry["chunks"]) <= int(chunk_limits["max"]):
+        raise ValueError("logical Timeline chunk count is outside provider limits")
+    if not (
+        Decimal(str(seconds_limits["min"]))
+        <= step
+        <= Decimal(str(seconds_limits["max"]))
+    ):
+        raise ValueError("logical Timeline chunk_seconds is outside provider limits")
 
     def decimal_text(value: Decimal) -> str:
         text = format(value, "f")
