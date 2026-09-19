@@ -34,10 +34,10 @@ MANAGED_PROMPT_SOURCE_MAGIC = "DSM_H3_PROMPT_SOURCE"
 MANAGED_PROMPT_SOURCE_SCHEMA_VERSION = 1
 MANAGED_PROMPT_TRANSPORT_VERSION = 1
 PROMPT_TRANSPORT_PROVIDER_VERSION = 1
-_DECIMAL = re.compile(r"^(?:0|[1-9]\\d*)(?:\\.\\d+)?$")
+_DECIMAL = re.compile(r"^(?:0|[1-9]\d*)(?:\.\d+)?$")
 _LEGACY_INTERVAL_TOKEN = re.compile(
-    r"\\[\\s*(?P<start>\\d+(?:\\.\\d+)?)\\s*(?:s|sec|seconds)?\\s*[-–—]\\s*"
-    r"(?P<end>\\d+(?:\\.\\d+)?)\\s*(?:s|sec|seconds)?\\s*\\]",
+    r"\[\s*(?P<start>\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?\s*[-–—]\s*"
+    r"(?P<end>\d+(?:\.\d+)?)\s*(?:s|sec|seconds)?\s*\]",
     re.IGNORECASE,
 )
 
