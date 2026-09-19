@@ -2,8 +2,14 @@
 
 ## Unreleased
 
-- Scope First Frame Qwen visual presentation to the initial physical sample. Continuation chunks now rely on carried/generated context plus persistent Reference Images, preventing the opening composition from being reintroduced later while preserving initial I2VA/FL2VA semantics.
-- Keep continuation conditioning caches distinct from initial-sample conditioning so identical prompt text cannot accidentally reuse a First-Frame-bearing Qwen embedding after the sequence start.
+## 3.4.3
+
+- Scope First Frame Qwen visual presentation to the initial physical sample only. Continuation chunks now use carried/generated context plus persistent Reference Images, and conditioning cache identity distinguishes initial First-Frame-bearing embeddings from continuation embeddings.
+- Promote physical Timeline text transport with prompt-plan schema 2, physical-window compilation, strict inner-range remapping, and logical outer-chunk routing so shared preamble remains global while adjacent `[start-end]` / `[Chunk N]` bodies cannot leak across overlap or overrun.
+- Keep exact Native Masked carried-prefix time immutable at fresh-generation conditioning: protected prefix instructions are not replayed as new action, while only the remaining suffix of the active logical instruction is exposed to generation.
+- Add the managed State Manager prompt-transport adapter. Explicit Fixed/List/Timeline documents remain authoritative; legacy presets without `prompt_document` may recover exact chunk-aligned separators such as `[0-7s]` / `[7-14s]` only after structural, geometry, and pre/post-Impact verification, without persisting inferred metadata.
+- Add bounded PT209/PT210/PT211 receipts for prompt routing, actual Qwen/reference presentation, and continuation-source provenance. Diagnostics record hashes/structure only and do not log prompt or image contents.
+- Production validation confirmed verified Timeline routing, seven stable Reference Images in exact public order, no continuation First Frame presentation, and prior-tail rather than prior-head continuation. The remaining slight visual boundary shift is isolated to downstream Flow exact-prefix/seam handling and is not part of this release.
 
 ## 3.4.2
 
