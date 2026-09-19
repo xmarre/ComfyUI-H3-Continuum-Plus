@@ -170,6 +170,30 @@ def test_impact_header_injection_falls_back_instead_of_activating_schedule():
     assert plan["managed_prompt_transport"]["skeleton_match"] is False
 
 
+def test_invalid_timeline_receipt_does_not_include_private_source_line():
+    text = "[0-5s PRIVATE_SECRET_HEADER]\nbody"
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=text,
+        prompt_plan=None,
+        chunks=1,
+        chunk_seconds=5.0,
+        managed_prompt_source_json=_sidecar(
+            text,
+            chunks=1,
+            seconds="5",
+        ),
+    )
+
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["status"] == "fallback_fixed"
+    assert "PRIVATE_SECRET_HEADER" not in str(receipt.get("fallback_reason"))
+    assert str(receipt.get("fallback_reason", "")).startswith(
+        "Timeline structure is invalid: H3C-P001"
+    )
+
+
 def test_invalid_sidecar_hash_preserves_legacy_execution_but_not_verification():
     payload = json.loads(_sidecar())
     payload["raw_text_sha256"] = "0" * 64
