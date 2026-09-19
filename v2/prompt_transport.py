@@ -34,7 +34,12 @@ MANAGED_PROMPT_SOURCE_MAGIC = "DSM_H3_PROMPT_SOURCE"
 MANAGED_PROMPT_SOURCE_SCHEMA_VERSION = 1
 MANAGED_PROMPT_TRANSPORT_VERSION = 1
 PROMPT_TRANSPORT_PROVIDER_VERSION = 1
-_DECIMAL = re.compile(r"^(?:0|[1-9]\d*)(?:\.\d+)?$")
+_DECIMAL = re.compile(r"^(?:0|[1-9]\\d*)(?:\\.\\d+)?$")
+_LEGACY_INTERVAL_TOKEN = re.compile(
+    r"\\[\\s*(?P<start>\\d+(?:\\.\\d+)?)\\s*(?:s|sec|seconds)?\\s*[-–—]\\s*"
+    r"(?P<end>\\d+(?:\\.\\d+)?)\\s*(?:s|sec|seconds)?\\s*\\]",
+    re.IGNORECASE,
+)
 
 
 def _sha256(text: str) -> str:
@@ -123,6 +128,9 @@ def parse_managed_prompt_source(value: Any) -> tuple[dict[str, Any] | None, str 
         if not isinstance(raw_hash, str) or raw_hash != _sha256(text):
             raise ValueError("managed prompt source raw text hash mismatch")
         document = _validate_prompt_document(payload.get("prompt_document"))
+        document_origin = payload.get("prompt_document_origin", "persistent")
+        if document_origin not in {"persistent", "legacy_absent"}:
+            raise ValueError("managed prompt source document origin is invalid")
         revision = payload.get("library_revision")
         if type(revision) is not int or revision < 0:
             raise ValueError("managed prompt source library revision is invalid")
@@ -139,6 +147,7 @@ def parse_managed_prompt_source(value: Any) -> tuple[dict[str, Any] | None, str 
             raise ValueError("managed prompt source queue contract is not verified")
         result = dict(payload)
         result["prompt_document"] = document
+        result["prompt_document_origin"] = document_origin
         result["binding"] = dict(binding)
         return result, None
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -180,6 +189,61 @@ def classify_prompt_text(text: str) -> str:
     return {PROMPT_MODE_FIXED: "fixed", PROMPT_MODE_LIST: "list", PROMPT_MODE_TIMELINE: "timeline"}[mode]
 
 
+def _decimal_token(value: str) -> str:
+    number = Decimal(str(value))
+    text = format(number, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _normalize_legacy_logical_timeline(
+    text: str,
+    *,
+    chunks: int,
+    chunk_seconds: float,
+) -> str | None:
+    """Recover pre-v5 explicit [start-end] separators without guessing prose.
+
+    The compatibility path is intentionally narrow: it requires exactly one
+    interval token per configured logical chunk and every token must equal the
+    sampler's contiguous chunk boundaries. Tokens may be inline (the historical
+    State Manager form) or already line-isolated. Arbitrary prose, partial
+    ranges, overlaps and nonmatching geometry are left untouched.
+    """
+
+    source = str(text)
+    matches = list(_LEGACY_INTERVAL_TOKEN.finditer(source))
+    if len(matches) != int(chunks):
+        return None
+
+    step = Fraction(str(chunk_seconds))
+    if step <= 0:
+        return None
+    for index, match in enumerate(matches):
+        try:
+            start = Fraction(match.group("start"))
+            end = Fraction(match.group("end"))
+        except (ValueError, ZeroDivisionError):
+            return None
+        if start != index * step or end != (index + 1) * step:
+            return None
+
+    preamble = source[: matches[0].start()].strip()
+    rendered: list[str] = []
+    if preamble:
+        rendered.append(preamble)
+    for index, match in enumerate(matches):
+        body_end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        body = source[match.end() : body_end].strip()
+        if not body:
+            return None
+        rendered.append(
+            f"[{_decimal_token(match.group('start'))}-{_decimal_token(match.group('end'))}s]\n{body}"
+        )
+    return "\n\n".join(rendered)
+
+
 def _logical_geometry_matches(document: dict[str, Any], *, chunks: int, chunk_seconds: float) -> tuple[bool, str | None]:
     geometry = document.get("geometry")
     if not isinstance(geometry, dict):
@@ -217,7 +281,7 @@ def _transport_metadata(
     *, status: str, payload: dict[str, Any] | None, expanded_text: str,
     sequence_verified: bool, geometry_match: bool | None, skeleton_match: bool | None,
     fallback_reason: str | None = None, conflict: str | None = None,
-    parse_error: str | None = None,
+    parse_error: str | None = None, legacy_separator_normalized: bool = False,
 ) -> dict[str, Any]:
     document = (payload or {}).get("prompt_document") or {}
     return {
@@ -225,6 +289,8 @@ def _transport_metadata(
         "status": str(status),
         "declared_format": document.get("format"),
         "declared_routing": document.get("routing"),
+        "document_origin": (payload or {}).get("prompt_document_origin"),
+        "legacy_separator_normalized": bool(legacy_separator_normalized),
         "original_text_sha256": (payload or {}).get("raw_text_sha256"),
         "expanded_text_sha256": _sha256(expanded_text),
         "geometry_match": geometry_match,
@@ -265,7 +331,92 @@ def resolve_managed_prompt_plan(
     if explicit is not None:
         effective = explicit
     elif declared == "inherit":
-        plan = prompt_parser.make_prompt_plan(mode=PROMPT_FORMAT_AUTO, script=expanded_text, chunks=chunks, chunk_seconds=chunk_seconds)
+        plan = prompt_parser.make_prompt_plan(
+            mode=PROMPT_FORMAT_AUTO,
+            script=expanded_text,
+            chunks=chunks,
+            chunk_seconds=chunk_seconds,
+        )
+
+        # Libraries created before prompt_document v1 have no explicit
+        # interpretation metadata. Preserve Auto for ordinary Fixed/List text,
+        # but recover the old State Manager convention when the authoritative
+        # text contains an exact chunk-aligned [start-end] separator for every
+        # configured logical chunk. This is parser-owned, request-local
+        # compatibility; nothing is persisted and no prose-derived timing is
+        # invented.
+        if payload.get("prompt_document_origin") == "legacy_absent":
+            original_legacy = _normalize_legacy_logical_timeline(
+                payload["text"],
+                chunks=chunks,
+                chunk_seconds=chunk_seconds,
+            )
+            expanded_legacy = _normalize_legacy_logical_timeline(
+                expanded_text,
+                chunks=chunks,
+                chunk_seconds=chunk_seconds,
+            )
+            if original_legacy is not None and expanded_legacy is not None:
+                try:
+                    original_structure = inspect_prompt_structure(original_legacy)
+                    expanded_structure = inspect_prompt_structure(expanded_legacy)
+                    geometry_match, reason = _logical_signals_match(
+                        original_structure,
+                        chunks=chunks,
+                        chunk_seconds=chunk_seconds,
+                    )
+                    skeleton_match = original_structure == expanded_structure
+                    if geometry_match and skeleton_match:
+                        legacy_plan = prompt_parser.make_prompt_plan(
+                            mode=PROMPT_FORMAT_TIMELINE,
+                            script=expanded_legacy,
+                            chunks=chunks,
+                            chunk_seconds=chunk_seconds,
+                        )
+                        if legacy_plan.get("mode") == PROMPT_MODE_TIMELINE:
+                            normalized = (
+                                original_legacy != payload["text"]
+                                or expanded_legacy != expanded_text
+                            )
+                            return _attach(
+                                legacy_plan,
+                                _transport_metadata(
+                                    status="verified_legacy_sequence",
+                                    payload=payload,
+                                    expanded_text=expanded_text,
+                                    sequence_verified=True,
+                                    geometry_match=True,
+                                    skeleton_match=True,
+                                    legacy_separator_normalized=normalized,
+                                ),
+                            )
+                    elif not geometry_match:
+                        return _attach(
+                            plan,
+                            _transport_metadata(
+                                status="legacy_inherit_unverified",
+                                payload=payload,
+                                expanded_text=expanded_text,
+                                sequence_verified=False,
+                                geometry_match=False,
+                                skeleton_match=skeleton_match,
+                                fallback_reason=reason,
+                            ),
+                        )
+                except (TypeError, ValueError, prompt_parser.PromptPlanError) as exc:
+                    return _attach(
+                        plan,
+                        _transport_metadata(
+                            status="legacy_inherit_unverified",
+                            payload=payload,
+                            expanded_text=expanded_text,
+                            sequence_verified=False,
+                            geometry_match=False,
+                            skeleton_match=False,
+                            fallback_reason=f"Legacy Timeline structure is invalid: {_bounded_error_reason(exc)}",
+                        ),
+                    )
+
         return _attach(plan, _transport_metadata(
             status="inherit_unverified", payload=payload, expanded_text=expanded_text,
             sequence_verified=False, geometry_match=None, skeleton_match=None,
