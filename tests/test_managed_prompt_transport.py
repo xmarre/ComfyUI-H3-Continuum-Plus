@@ -16,6 +16,7 @@ from ComfyUI_H3_Continuum_Join.constants import (
 from ComfyUI_H3_Continuum_Join.masked_continuation import CONTINUATION_GUIDE
 from ComfyUI_H3_Continuum_Join.v2.physical_prompts import make_physical_sample_descriptor
 from ComfyUI_H3_Continuum_Join.v2 import physical_runtime
+from ComfyUI_H3_Continuum_Join.v2 import sequence as sequence_runtime
 from ComfyUI_H3_Continuum_Join.v2.prompt_transport import (
     MANAGED_PROMPT_SOURCE_MAGIC,
     PROMPT_TRANSPORT_PROVIDER_V1,
@@ -420,6 +421,81 @@ def test_legacy_transport_isolated_at_actual_physical_qwen_input_boundary(monkey
     assert "SHARED_ENV_SENTINEL" in clip.prompt
     assert "TWO_GREEN_SPHERE_SENTINEL" in clip.prompt
     assert "ONE_RED_CUBE_SENTINEL" not in clip.prompt
+
+
+def test_physical_presentation_receipt_proves_first_frame_is_withheld_from_continuation():
+    first_image = torch.zeros((1, 32, 32, 3))
+    assets = SimpleNamespace(
+        first_image=first_image,
+        last_image=None,
+        first_frame_hash="f" * 64,
+    )
+    descriptor = make_physical_sample_descriptor(
+        group_id="managed-chunk-2",
+        logical_indices=(1,),
+        retained_before=120,
+        context_frames=24,
+        total_frames=144,
+        target_duration_frames=360,
+        continuation_method=CONTINUATION_GUIDE,
+        initial_state_origin="sequence",
+        include_first=False,
+        include_last=False,
+        presentation_contract={
+            "include_first": False,
+            "include_last": False,
+            "reference_count": 2,
+            "reference_image_hashes": ["1" * 64, "2" * 64],
+            "picture_offset": 0,
+            "public_to_qwen_picture": {"1": 1, "2": 2},
+            "presentation_order": ["Reference Image 1", "Reference Image 2"],
+        },
+        guided_overlap=True,
+    )
+    receipt = physical_runtime._physical_presentation_receipt(
+        descriptor=descriptor,
+        assets=assets,
+        include_first_requested=False,
+        include_first_actual=False,
+        include_last_requested=False,
+        include_last_actual=False,
+        cache_hit=False,
+    )
+    assert receipt["include_first_actual"] is False
+    assert receipt["descriptor_include_first"] is False
+    assert receipt["first_asset_present"] is True
+    assert receipt["first_asset_hash"] == "f" * 16
+    assert receipt["reference_hashes"] == ("1" * 16, "2" * 16)
+    assert receipt["picture_offset"] == 0
+    assert receipt["presentation_order"] == (
+        "Reference Image 1",
+        "Reference Image 2",
+    )
+
+
+def test_continuation_source_receipt_distinguishes_prior_tail_from_prior_head():
+    prior_video = torch.arange(
+        1 * 24 * 8 * 2 * 2, dtype=torch.float32
+    ).reshape(1, 24, 8, 2, 2)
+    video_context = prior_video[:, :, -3:].clone()
+    previous_state = {
+        "clip_index": 1,
+        "source_mode": "latent_direct",
+        "video_tail": prior_video[:, :, -5:].clone(),
+    }
+    receipt = sequence_runtime._continuation_source_receipt(
+        plan={"managed_prompt_transport": {"status": "verified_legacy_sequence"}},
+        entries=[{"video": prior_video}],
+        previous_state=previous_state,
+        video_context=video_context,
+        context_frames=39,
+    )
+    assert receipt is not None
+    assert receipt["transport_status"] == "verified_legacy_sequence"
+    assert receipt["selected_matches_state_tail"] is True
+    assert receipt["selected_matches_prior_tail"] is True
+    assert receipt["selected_matches_prior_head"] is False
+    assert receipt["prior_total_slots"] == 8
 
 
 def test_verified_transport_isolated_at_actual_physical_qwen_input_boundary(monkeypatch):
