@@ -211,8 +211,13 @@ def test_provider_exposes_native_geometry_and_parser_inspection():
     assert [item["kind"] for item in structure["sections"]] == ["time", "time", "time"]
     assert PROMPT_TRANSPORT_PROVIDER_V1["logical_skeleton"](
         chunks=3,
-        chunk_seconds="2.500",
-    ) == "[0-2.5s]\n\n[2.5-5s]\n\n[5-7.5s]\n"
+        chunk_seconds="4.500",
+    ) == "[0-4.5s]\n\n[4.5-9s]\n\n[9-13.5s]\n"
+    with pytest.raises(ValueError, match="outside provider limits"):
+        PROMPT_TRANSPORT_PROVIDER_V1["logical_skeleton"](
+            chunks=3,
+            chunk_seconds="2.500",
+        )
 
 
 class _CaptureClip:
