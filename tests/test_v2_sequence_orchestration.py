@@ -1,7 +1,8 @@
 from types import SimpleNamespace
 import hashlib
+import logging
 import torch
-from ComfyUI_H3_Continuum_Join.constants import CONTINUUM_INTEROP_KEY, DIAGNOSTICS_BASIC, PROMPT_MODE_FIXED, V2_CONTINUITY_OPTIONS
+from ComfyUI_H3_Continuum_Join.constants import CONTINUUM_INTEROP_KEY, DIAGNOSTICS_BASIC, PROMPT_FORMAT_FIXED, PROMPT_FORMAT_TIMELINE, PROMPT_MODE_FIXED, PROMPT_MODE_TIMELINE, V2_CONTINUITY_OPTIONS
 from ComfyUI_H3_Continuum_Join.temporal import audio_latent_t, video_latent_t
 from ComfyUI_H3_Continuum_Join.v2.h3_builder import IdentityAssets, _tensor_fingerprint, encode_prompt_conditioning
 from ComfyUI_H3_Continuum_Join.v2.prompts import make_prompt_plan
@@ -29,6 +30,49 @@ class ReferenceAudioClip:
 
     def encode_from_tokens_scheduled(self, tokens):
         return [[torch.zeros(1, 1, 2), {}]]
+
+
+def test_prompt_routing_receipt_preserves_explicit_fixed_mode_for_timeline_shaped_text():
+    plan = make_prompt_plan(
+        mode=PROMPT_FORMAT_FIXED,
+        script="[0-5s]\nSECRET_FIXED_BODY\n[5-10s]\nSECRET_FIXED_BODY_2",
+        chunks=2,
+        chunk_seconds=5,
+    )
+    receipt = sequence._prompt_routing_receipt(plan, physical_candidate=True)
+
+    assert plan["mode"] == PROMPT_MODE_FIXED
+    assert plan["source"]["kind"] == "fixed"
+    assert receipt == {
+        "requested_prompt_mode": PROMPT_FORMAT_FIXED,
+        "resolved_plan_mode": PROMPT_MODE_FIXED,
+        "source_kind": "fixed",
+        "physical_compiler_enabled": True,
+        "physical_compiler_eligible": False,
+        "source_digest": plan["source"]["source_digest"],
+    }
+
+
+def test_prompt_routing_receipt_logs_timeline_eligibility_without_prompt_text(caplog):
+    plan = make_prompt_plan(
+        mode=PROMPT_FORMAT_TIMELINE,
+        script="[0-5s]\nSECRET_TIMELINE_BODY\n[5-10s]\nSECRET_TIMELINE_BODY_2",
+        chunks=2,
+        chunk_seconds=5,
+    )
+    caplog.set_level(logging.INFO, logger="h3_continuum_join")
+
+    receipt = sequence._log_prompt_routing_receipt(plan, physical_candidate=True)
+
+    assert plan["mode"] == PROMPT_MODE_TIMELINE
+    assert receipt["source_kind"] == "timeline"
+    assert receipt["physical_compiler_enabled"] is True
+    assert receipt["physical_compiler_eligible"] is True
+    assert receipt["source_digest"] == plan["source"]["source_digest"]
+    assert "H3C-PT209 prompt-routing receipt" in caplog.text
+    assert f"source_digest={plan['source']['source_digest']}" in caplog.text
+    assert "SECRET_TIMELINE_BODY" not in caplog.text
+    assert "SECRET_TIMELINE_BODY_2" not in caplog.text
 
 
 def test_identity_fingerprint_hashes_full_resized_rgb_tensor():
@@ -96,4 +140,4 @@ def test_v2_samples_every_chunk_before_any_decode(monkeypatch):
     assert sum(e[0]=="encode" for e in events)==1
     assert images.shape[0]==360 and audio["waveform"].shape[-1]==480000
     assert last_state["clip_index"]==3 and len(session["chunks"])==3
-    assert "call-local MODEL clone per chunk" in report
+    assert "call-local MODEL clone per physical sample" in report
