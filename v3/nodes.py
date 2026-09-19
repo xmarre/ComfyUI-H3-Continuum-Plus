@@ -16,6 +16,7 @@ from ..v2.nodes import (
     validate_sparse_prompt_overrides,
 )
 from .assembly import H3ContinuumAssembleSeamExperimental, H3ContinuumAssembleV3
+from ..v2.prompt_transport import PROMPT_TRANSPORT_PROVIDER_V1
 from .plan import prepare_physical_decode_entries
 from ..timeline_video import TIMELINE_VIDEO_SIZE_OPTIONS
 
@@ -133,6 +134,7 @@ class H3ContinuumAdvancedV3:
 
 
 class H3ContinuumSamplerV3:
+    H3_CONTINUUM_PROMPT_TRANSPORT_PROVIDER_V1 = PROMPT_TRANSPORT_PROVIDER_V1
     DESCRIPTION = (
         "Latent-first N-chunk MiniMax H3 sampler. Sampling, native continuation, "
         "State/Session, and Spectrum interop stay inside Continuum; ComfyUI Core "
@@ -210,6 +212,14 @@ class H3ContinuumSamplerV3:
                     "IMAGE",
                     {"tooltip": "Optional. Leave image inputs disconnected for T2VA."},
                 ),
+                "managed_prompt_source_json": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "advanced": True,
+                        "tooltip": "Request-local State Manager prompt provenance. Leave empty for ordinary STRING workflows.",
+                    },
+                ),
                 "prompt_overrides": ("H3_CONTINUUM_CLIP_OVERRIDES",),
                 "advanced": ("H3_CONTINUUM_ADVANCED_V3",),
             },
@@ -247,6 +257,7 @@ class H3ContinuumSamplerV3:
         continuity,
         base_seed,
         first_frame=None,
+        managed_prompt_source_json="",
         prompt_overrides=None,
         advanced=None,
         reference_assets=None,
@@ -326,6 +337,7 @@ class H3ContinuumSamplerV3:
             initial_state=advanced_values["initial_state"],
             prompt_plan=advanced_values["prompt_plan"],
             sequence_prompt=sequence_prompt,
+            managed_prompt_source_json=managed_prompt_source_json,
             show_preview=advanced_values["show_preview"],
             latent_only=True,
             reference_assets=reference_assets,
@@ -595,6 +607,14 @@ class H3ContinuumSamplerProduction(H3ContinuumSamplerV3):
                 "reference_image_3": ("IMAGE",),
                 "reference_audio_1": ("AUDIO",),
                 "reference_audio_vae": ("VAE",),
+                "managed_prompt_source_json": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "advanced": True,
+                        "tooltip": "Request-local State Manager prompt provenance. Leave empty for ordinary STRING workflows.",
+                    },
+                ),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -638,6 +658,7 @@ class H3ContinuumSamplerProduction(H3ContinuumSamplerV3):
         reference_image_3=None,
         reference_audio_1=None,
         reference_audio_vae=None,
+        managed_prompt_source_json="",
         driving_audio_source=None,
         driving_audio_vae=None,
         reference_video_source=None,
@@ -675,6 +696,7 @@ class H3ContinuumSamplerProduction(H3ContinuumSamplerV3):
                 sampler=sampler,
                 sigmas=sigmas,
                 sequence_prompt=sequence_prompt,
+                managed_prompt_source_json=managed_prompt_source_json,
                 prompt_mode=prompt_mode,
                 chunks=chunks,
                 chunk_seconds=chunk_seconds,
