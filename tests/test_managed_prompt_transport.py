@@ -82,6 +82,47 @@ def test_direct_managed_timeline_is_verified_without_prompt_writer():
     assert receipt["sequence_verified"] is True
 
 
+def test_managed_decimal_unicode_crlf_timeline_uses_native_rational_geometry():
+    text = (
+        "Shared café identity.\r\n\r\n"
+        "[0-4.5s]\r\nFIRST_雪\r\n\r\n"
+        "[4.5-9s]\r\nSECOND_é"
+    )
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=text,
+        prompt_plan=None,
+        chunks=2,
+        chunk_seconds=4.5,
+        managed_prompt_source_json=_sidecar(
+            text,
+            chunks=2,
+            seconds="4.5",
+        ),
+    )
+
+    assert plan["mode"] == PROMPT_MODE_TIMELINE
+    assert plan["prompts"] == [
+        "Shared café identity.\n\nFIRST_雪",
+        "Shared café identity.\n\nSECOND_é",
+    ]
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["status"] == "verified_sequence"
+    assert receipt["geometry_match"] is True
+    assert receipt["skeleton_match"] is True
+
+
+def test_managed_physical_timeline_preserves_native_broader_interval_semantics():
+    plan = _plan(sidecar=_sidecar(routing="physical_timeline"))
+    assert plan["mode"] == PROMPT_MODE_TIMELINE
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["status"] == "verified_sequence"
+    assert receipt["declared_routing"] == "physical_timeline"
+    assert receipt["geometry_match"] is None
+    assert receipt["skeleton_match"] is True
+
+
 def test_fixed_document_keeps_header_looking_text_opaque_under_auto():
     text = "[0-5s]\nThis is literal Fixed prose."
     plan = build_sampler_prompt_plan(
