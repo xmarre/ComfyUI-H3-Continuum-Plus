@@ -40,6 +40,14 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
 
 
+def _bounded_error_reason(exc: BaseException, *, limit: int = 240) -> str:
+    # Native PromptPlanError messages may include a second "Source:" line that
+    # contains authored prompt text. Receipts/logs keep only the bounded reason
+    # line; full exceptions remain available to direct parser callers.
+    first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+    return first_line[: max(1, int(limit))]
+
+
 def _mode_kind(value: Any) -> str | None:
     mapping = {
         PROMPT_FORMAT_FIXED: "fixed",
@@ -296,7 +304,8 @@ def resolve_managed_prompt_plan(
         return _attach(fallback, _transport_metadata(
             status="fallback_fixed", payload=payload, expanded_text=expanded_text,
             sequence_verified=False, geometry_match=False if routing == "logical_chunks" else None,
-            skeleton_match=False, fallback_reason=f"Timeline structure is invalid: {exc}",
+            skeleton_match=False,
+            fallback_reason=f"Timeline structure is invalid: {_bounded_error_reason(exc)}",
         ))
 
     if routing == "logical_chunks":
