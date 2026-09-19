@@ -4,6 +4,7 @@ import hashlib
 import json
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from ComfyUI_H3_Continuum_Join.constants import (
