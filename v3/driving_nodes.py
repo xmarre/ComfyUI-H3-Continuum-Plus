@@ -284,6 +284,11 @@ class H3ContinuumSamplerV34(H3ContinuumSamplerProduction):
         optional = dict(schema.get("optional", {}))
         optional.pop("reference_audio_1", None)
         optional.pop("reference_audio_vae", None)
+        # The managed prompt sidecar was added to the inherited V3 schema after
+        # V3.4 already had serialized dynamic Reference Image 4..8 sockets.
+        # Re-append it only after every pre-existing V3.4 optional input so saved
+        # workflows keep the established positional socket topology.
+        managed_prompt_source = optional.pop("managed_prompt_source_json", None)
         for index in range(4, 9):
             optional[f"reference_image_{index}"] = ("IMAGE",)
         optional["reference_video_1"] = (
@@ -314,6 +319,8 @@ class H3ContinuumSamplerV34(H3ContinuumSamplerProduction):
                 )
             },
         )
+        if managed_prompt_source is not None:
+            optional["managed_prompt_source_json"] = managed_prompt_source
         schema["required"] = required
         schema["optional"] = optional
         return schema
