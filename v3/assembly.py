@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from typing import Any
@@ -19,6 +20,9 @@ from ..constants import (
 from ..v2.seam_guard import correct_audio_seam
 from .audio_phase import phase_align_decoded_audio
 from .plan import FPS, validate_assembly_plan
+from .trajectory_diagnostics import measure_decoded_boundary_trajectory
+
+LOG = logging.getLogger("h3_continuum_join")
 
 AUDIO_SEAM_OFF = "Off"
 AUDIO_SEAM_AUTO = "Auto"
@@ -305,6 +309,65 @@ def assemble_decoded_chunks(
                 )
         elif tuple(segment_images.shape[1:]) != tuple(image_buffer.shape[1:]):
             raise ValueError(f"decoded image geometry changed at chunk {index}")
+
+        if index > 1 and image_buffer is not None and frame_cursor > 1:
+            try:
+                previous_window = image_buffer[max(0, frame_cursor - 8) : frame_cursor]
+                trajectory = measure_decoded_boundary_trajectory(
+                    previous_window,
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_global_frame=frame_cursor,
+                    forward_frames=6,
+                    previous_transitions=4,
+                )
+                for roi_name in ("upper45", "full"):
+                    fields = trajectory[roi_name]
+                    LOG.info(
+                        "H3C-PT212 decoded-trajectory receipt "
+                        "boundary_global_frame=%d trim_frame=%d roi=%s "
+                        "pairwise_dx_px=%s pairwise_dy_px=%s "
+                        "pairwise_net_dx_px=%.4f pairwise_net_dy_px=%.4f "
+                        "anchor_dx_px=%s anchor_dy_px=%s "
+                        "anchor_final_dx_px=%.4f anchor_final_dy_px=%.4f "
+                        "pre_median_dx_px=%.4f pre_median_dy_px=%.4f "
+                        "post_first3_median_dx_px=%.4f post_first3_median_dy_px=%.4f "
+                        "response=%s clipped=%s",
+                        int(trajectory["boundary_global_frame"]),
+                        int(trajectory["current_trim_frame"]),
+                        roi_name,
+                        fields["pairwise_dx_px"],
+                        fields["pairwise_dy_px"],
+                        fields["pairwise_net_dx_px"],
+                        fields["pairwise_net_dy_px"],
+                        fields["anchor_dx_px"],
+                        fields["anchor_dy_px"],
+                        fields["anchor_final_dx_px"],
+                        fields["anchor_final_dy_px"],
+                        fields["pre_median_dx_px"],
+                        fields["pre_median_dy_px"],
+                        fields["post_first3_median_dx_px"],
+                        fields["post_first3_median_dy_px"],
+                        fields["pairwise_response"],
+                        fields["pairwise_clipped"],
+                    )
+                    if diagnostics_mode == DIAGNOSTICS_FULL:
+                        reports.append(
+                            "decoded trajectory "
+                            f"{index-1}->{index} {roi_name}: "
+                            f"dy={fields['pairwise_dy_px']}, "
+                            f"net={fields['pairwise_net_dy_px']:+.3f}px, "
+                            f"pre_median={fields['pre_median_dy_px']:+.3f}px"
+                        )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT212 decoded-trajectory unavailable boundary_global_frame=%d "
+                    "trim_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    trim_frames,
+                    type(exc).__name__,
+                    exc,
+                )
 
         # copy_ supports CPU<->CUDA directly, so do not first materialize a full
         # retained-chunk CUDA temporary with segment_images.to(device=...).
