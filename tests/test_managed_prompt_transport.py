@@ -32,7 +32,15 @@ CANONICAL = (
 )
 
 
-def _sidecar(text=CANONICAL, *, fmt="timeline", routing="logical_chunks", chunks=3, seconds="5"):
+def _sidecar(
+    text=CANONICAL,
+    *,
+    fmt="timeline",
+    routing="logical_chunks",
+    chunks=3,
+    seconds="5",
+    origin="persistent",
+):
     document = {"schema_version": 1, "format": fmt}
     if fmt == "timeline":
         document["routing"] = routing
@@ -43,6 +51,7 @@ def _sidecar(text=CANONICAL, *, fmt="timeline", routing="logical_chunks", chunks
         "schema_version": 1,
         "text": text,
         "prompt_document": document,
+        "prompt_document_origin": origin,
         "raw_text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "library_revision": 42,
         "binding": {
@@ -81,6 +90,136 @@ def test_direct_managed_timeline_is_verified_without_prompt_writer():
     assert receipt["geometry_match"] is True
     assert receipt["skeleton_match"] is True
     assert receipt["sequence_verified"] is True
+
+
+def test_legacy_state_manager_inline_chunk_separators_are_recovered_without_manual_metadata():
+    text = "SHARED_ENV_SENTINEL [0-7s] ONE_RED_CUBE_SENTINEL [7-14s] TWO_GREEN_SPHERE_SENTINEL"
+    sidecar = _sidecar(
+        text,
+        fmt="inherit",
+        chunks=2,
+        seconds="7",
+        origin="legacy_absent",
+    )
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=text,
+        prompt_plan=None,
+        chunks=2,
+        chunk_seconds=7.0,
+        managed_prompt_source_json=sidecar,
+    )
+
+    assert plan["mode"] == PROMPT_MODE_TIMELINE
+    assert plan["prompts"] == [
+        "SHARED_ENV_SENTINEL\n\nONE_RED_CUBE_SENTINEL",
+        "SHARED_ENV_SENTINEL\n\nTWO_GREEN_SPHERE_SENTINEL",
+    ]
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["status"] == "verified_legacy_sequence"
+    assert receipt["document_origin"] == "legacy_absent"
+    assert receipt["legacy_separator_normalized"] is True
+    assert receipt["geometry_match"] is True
+    assert receipt["skeleton_match"] is True
+    assert receipt["sequence_verified"] is True
+
+
+def test_legacy_state_manager_standalone_chunk_separators_are_verified_without_persisting_descriptor():
+    text = "Shared.\n\n[0-7s]\nONE\n\n[7-14s]\nTWO"
+    sidecar = _sidecar(
+        text,
+        fmt="inherit",
+        chunks=2,
+        seconds="7",
+        origin="legacy_absent",
+    )
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=text,
+        prompt_plan=None,
+        chunks=2,
+        chunk_seconds=7.0,
+        managed_prompt_source_json=sidecar,
+    )
+
+    assert plan["mode"] == PROMPT_MODE_TIMELINE
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["status"] == "verified_legacy_sequence"
+    assert receipt["legacy_separator_normalized"] is False
+    assert receipt["sequence_verified"] is True
+
+
+def test_legacy_inherit_does_not_promote_partial_or_nonmatching_ranges():
+    text = "Literal discussion of [0-7s] only."
+    sidecar = _sidecar(
+        text,
+        fmt="inherit",
+        chunks=2,
+        seconds="7",
+        origin="legacy_absent",
+    )
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=text,
+        prompt_plan=None,
+        chunks=2,
+        chunk_seconds=7.0,
+        managed_prompt_source_json=sidecar,
+    )
+
+    assert plan["mode"] == PROMPT_MODE_FIXED
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["status"] == "inherit_unverified"
+    assert receipt["sequence_verified"] is False
+
+
+def test_explicit_fixed_document_still_wins_over_legacy_shaped_inline_ranges():
+    text = "Literal [0-7s] first [7-14s] second"
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=text,
+        prompt_plan=None,
+        chunks=2,
+        chunk_seconds=7.0,
+        managed_prompt_source_json=_sidecar(
+            text,
+            fmt="fixed",
+            chunks=2,
+            seconds="7",
+            origin="persistent",
+        ),
+    )
+    assert plan["mode"] == PROMPT_MODE_FIXED
+    assert plan["prompts"] == [text, text]
+    assert plan["managed_prompt_transport"]["status"] == "document_applied"
+
+
+def test_legacy_separator_recovery_rejects_impact_header_injection():
+    original = "Shared [0-7s] ONE [7-14s] TWO"
+    expanded = "Shared [0-7s] ONE [3-4s] INJECTED [7-14s] TWO"
+    plan = build_sampler_prompt_plan(
+        prompt_mode=PROMPT_FORMAT_AUTO,
+        prompt_script="legacy",
+        sequence_prompt=expanded,
+        prompt_plan=None,
+        chunks=2,
+        chunk_seconds=7.0,
+        managed_prompt_source_json=_sidecar(
+            original,
+            fmt="inherit",
+            chunks=2,
+            seconds="7",
+            origin="legacy_absent",
+        ),
+    )
+
+    assert plan["mode"] == PROMPT_MODE_FIXED
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["sequence_verified"] is False
 
 
 def test_managed_decimal_unicode_crlf_timeline_uses_native_rational_geometry():
