@@ -97,7 +97,7 @@ def test_hybrid_qwen_presentation_includes_keyframes_and_keeps_reference_numberi
     ]
 
 
-def test_hybrid_conditioning_cache_exposes_last_image_only_to_final_prompt(monkeypatch):
+def test_hybrid_conditioning_cache_scopes_first_to_sequence_start_and_last_to_final(monkeypatch):
     from types import SimpleNamespace
 
     from ComfyUI_H3_Continuum_Join import reference
@@ -111,20 +111,72 @@ def test_hybrid_conditioning_cache_exposes_last_image_only_to_final_prompt(monke
 
     monkeypatch.setattr(reference, "encode_reference_prompt", fake_encode)
     assets = SimpleNamespace(first_image="first", last_image="last")
+    cache = {}
     sequence._conditioning_cache(
         clip=object(),
-        prompts=["opening", "finish"],
+        prompts=["opening"],
+        assets=assets,
+        final_has_last_frame=False,
+        reference_assets=object(),
+        reference_audio_assets=None,
+        timeline_video_assets=None,
+        include_first_frame=True,
+        cache=cache,
+    )
+    sequence._conditioning_cache(
+        clip=object(),
+        prompts=["finish"],
         assets=assets,
         final_has_last_frame=True,
         reference_assets=object(),
         reference_audio_assets=None,
         timeline_video_assets=None,
+        include_first_frame=False,
+        cache=cache,
     )
 
     assert calls == [
         ("opening", "first", None),
-        ("finish", "first", "last"),
+        ("finish", None, "last"),
     ]
+
+
+def test_hybrid_conditioning_cache_separates_initial_and_continuation_presentations(monkeypatch):
+    from types import SimpleNamespace
+
+    from ComfyUI_H3_Continuum_Join import reference
+    from ComfyUI_H3_Continuum_Join.v2 import sequence
+
+    calls = []
+
+    def fake_encode(_clip, prompt, _references, **kwargs):
+        calls.append((prompt, kwargs["first_image"], kwargs["last_image"]))
+        return [[torch.zeros(1), {}]]
+
+    monkeypatch.setattr(reference, "encode_reference_prompt", fake_encode)
+    assets = SimpleNamespace(first_image="first", last_image=None)
+    cache = {}
+    common = {
+        "clip": object(),
+        "prompts": ["same"],
+        "assets": assets,
+        "final_has_last_frame": False,
+        "reference_assets": object(),
+        "reference_audio_assets": None,
+        "timeline_video_assets": None,
+        "cache": cache,
+    }
+    sequence._conditioning_cache(**common, include_first_frame=True)
+    sequence._conditioning_cache(**common, include_first_frame=False)
+
+    assert calls == [
+        ("same", "first", None),
+        ("same", None, None),
+    ]
+    assert set(cache) == {
+        ("same", True, False),
+        ("same", False, False),
+    }
 
 
 def test_native_masked_hybrid_drops_only_prefix_keyframe_and_keeps_reference_and_last():

@@ -15,6 +15,7 @@ from ..constants import (
     V2_CONTINUITY_OPTIONS,
     normalize_diagnostics_mode,
 )
+from .prompt_transport import PROMPT_TRANSPORT_PROVIDER_V1
 from .prompts import (
     apply_prompt_overrides,
     build_sampler_prompt_plan,
@@ -89,6 +90,7 @@ def _repair_v200_example_widget_shift(
 
 
 class H3ContinuumSamplerV2:
+    H3_CONTINUUM_PROMPT_TRANSPORT_PROVIDER_V1 = PROMPT_TRANSPORT_PROVIDER_V1
     DESCRIPTION = (
         "Integrated N-chunk MiniMax H3 continuation sampler. Precomputes prompt/image "
         "conditioning, isolates accelerator runtime state per chunk, captures "
@@ -258,6 +260,14 @@ class H3ContinuumSamplerV2:
                     )
                     for index in range(1, 17)
                 },
+                "managed_prompt_source_json": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "advanced": True,
+                        "tooltip": "Request-local State Manager prompt provenance. Leave empty for ordinary STRING workflows.",
+                    },
+                ),
             },
         }
 
@@ -302,6 +312,7 @@ class H3ContinuumSamplerV2:
         initial_state=None,
         prompt_plan=None,
         sequence_prompt=None,
+        managed_prompt_source_json="",
         show_preview=True,
         latent_only=False,
         reference_assets=None,
@@ -342,6 +353,7 @@ class H3ContinuumSamplerV2:
             prompt_plan=prompt_plan,
             chunks=int(chunks),
             chunk_seconds=float(chunk_seconds),
+            managed_prompt_source_json=managed_prompt_source_json,
         )
         prompt_plan = apply_prompt_overrides(
             prompt_plan,
