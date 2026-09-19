@@ -20,6 +20,7 @@ from ComfyUI_H3_Continuum_Join.v2.prompt_transport import (
     PROMPT_TRANSPORT_PROVIDER_V1,
 )
 from ComfyUI_H3_Continuum_Join.v2.prompts import build_sampler_prompt_plan
+from ComfyUI_H3_Continuum_Join.v2.nodes import H3ContinuumSamplerV2
 
 
 CANONICAL = (
@@ -57,6 +58,13 @@ def _plan(expanded=CANONICAL, *, mode=PROMPT_FORMAT_AUTO, sidecar=None):
         prompt_plan=None, chunks=3, chunk_seconds=5.0,
         managed_prompt_source_json=_sidecar() if sidecar is None else sidecar,
     )
+
+
+def test_v2_managed_sidecar_is_appended_after_existing_optional_widgets():
+    optional = H3ContinuumSamplerV2.INPUT_TYPES()["optional"]
+    keys = list(optional)
+    assert keys[-1] == "managed_prompt_source_json"
+    assert keys.index("show_preview") < keys.index("managed_prompt_source_json")
 
 
 def test_direct_managed_timeline_is_verified_without_prompt_writer():
