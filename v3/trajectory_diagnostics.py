@@ -326,6 +326,161 @@ def measure_decoded_audio_boundary(
     }
 
 
+
+def _decoded_audio_overlap_pair_metrics(
+    previous: torch.Tensor,
+    current: torch.Tensor,
+) -> dict[str, float]:
+    if previous.shape != current.shape or previous.ndim < 2:
+        raise ValueError("decoded audio overlap regions must have matching [...,samples] shapes")
+    left = previous.detach().to(device="cpu", dtype=torch.float32)
+    right = current.detach().to(device="cpu", dtype=torch.float32)
+    if not bool(torch.isfinite(left).all().item()) or not bool(torch.isfinite(right).all().item()):
+        raise ValueError("decoded audio overlap contains NaN or Inf")
+
+    left_rms = float(torch.sqrt(torch.mean(left.square())).item())
+    right_rms = float(torch.sqrt(torch.mean(right.square())).item())
+    ratio = (right_rms + _EPS) / (left_rms + _EPS)
+
+    # Scalar correlation/gain receipts use FP64 accumulation so long exact
+    # carried-prefix regions do not report impossible |corr| > 1 or a spurious
+    # sub-ppm mismatch solely from FP32 reduction order.
+    left_flat = left.reshape(-1).to(dtype=torch.float64)
+    right_flat = right.reshape(-1).to(dtype=torch.float64)
+    left_centered = left_flat - left_flat.mean()
+    right_centered = right_flat - right_flat.mean()
+    correlation_denominator = torch.linalg.vector_norm(left_centered) * torch.linalg.vector_norm(
+        right_centered
+    )
+    if float(correlation_denominator.item()) <= _EPS:
+        correlation = 1.0 if torch.equal(left, right) else 0.0
+    else:
+        correlation = float(
+            torch.dot(left_centered, right_centered).item()
+            / float(correlation_denominator.item())
+        )
+        correlation = max(-1.0, min(1.0, correlation))
+
+    gain_denominator = float(torch.dot(left_flat, left_flat).item())
+    if gain_denominator <= _EPS:
+        gain = 1.0 if right_rms <= _EPS else 0.0
+    else:
+        gain = float(torch.dot(left_flat, right_flat).item() / gain_denominator)
+    residual = right_flat - left_flat * gain
+    residual_rms = float(torch.sqrt(torch.mean(residual.square())).item())
+    residual_ratio = residual_rms / max(right_rms, _EPS)
+
+    return {
+        "previous_rms": left_rms,
+        "current_rms": right_rms,
+        "current_over_previous_db": 20.0 * math.log10(ratio),
+        "correlation": correlation,
+        "least_squares_gain": gain,
+        "least_squares_gain_db": (
+            20.0 * math.log10(abs(gain)) if abs(gain) > _EPS else float("-inf")
+        ),
+        "gain_aligned_residual_rms_ratio": residual_ratio,
+    }
+
+
+def measure_decoded_audio_overlap_context(
+    previous_waveform: torch.Tensor,
+    current_waveform: torch.Tensor,
+    *,
+    sample_rate: int,
+    prefix_latents: int,
+    latent_hz: int = 40,
+    edge_seconds: float = 0.25,
+    middle_seconds: float = 0.5,
+) -> dict[str, Any]:
+    """Compare the waveform decoded twice from a bit-identical carried audio prefix.
+
+    Continuum's exact audio carry duplicates the same latent prefix at the tail of
+    the previous physical group and the head of the continuation group. Core VAE
+    Decode Audio evaluates those groups independently. This diagnostic compares
+    the decoded copies before phase alignment, seam processing, or timeline trim.
+
+    A nearly constant gain with high correlation across the complete overlap is
+    evidence for decode-call-level scaling. Differences concentrated near the two
+    overlap edges instead implicate decoder context/padding. If the overlap itself
+    remains close while the retained boundary is loud, the generated suffix is the
+    first demonstrated source rather than duplicate-prefix decode.
+    """
+
+    rate = int(sample_rate)
+    ticks = int(prefix_latents)
+    latent_hz = int(latent_hz)
+    if rate <= 0 or latent_hz <= 0 or rate % latent_hz:
+        raise ValueError("decoded audio overlap requires sample rate divisible by latent_hz")
+    if ticks <= 0:
+        raise ValueError("decoded audio overlap requires a positive exact prefix length")
+    if not torch.is_tensor(previous_waveform) or not torch.is_tensor(current_waveform):
+        raise ValueError("decoded audio overlap requires tensor waveforms")
+    if tuple(previous_waveform.shape[:-1]) != tuple(current_waveform.shape[:-1]):
+        raise ValueError("decoded audio channel structure changed across carried overlap")
+
+    samples_per_latent = rate // latent_hz
+    overlap_samples = ticks * samples_per_latent
+    if (
+        overlap_samples > int(previous_waveform.shape[-1])
+        or overlap_samples > int(current_waveform.shape[-1])
+    ):
+        raise ValueError(
+            "decoded audio carried-prefix overlap exceeds one of the decoded waveforms"
+        )
+
+    previous = previous_waveform[..., -overlap_samples:]
+    current = current_waveform[..., :overlap_samples]
+    edge = min(
+        max(8, int(round(float(edge_seconds) * rate))),
+        max(8, overlap_samples // 3),
+    )
+    middle = min(
+        max(8, int(round(float(middle_seconds) * rate))),
+        max(8, overlap_samples - 2 * edge),
+    )
+    middle_start = max(0, (overlap_samples - middle) // 2)
+
+    regions = {
+        "full": (0, overlap_samples),
+        "head": (0, edge),
+        "middle": (middle_start, middle_start + middle),
+        "tail": (overlap_samples - edge, overlap_samples),
+    }
+    measured = {
+        name: _decoded_audio_overlap_pair_metrics(
+            previous[..., start:stop],
+            current[..., start:stop],
+        )
+        for name, (start, stop) in regions.items()
+    }
+
+    previous_whole_std = float(
+        torch.std(
+            previous_waveform.detach().to(device="cpu", dtype=torch.float32),
+            dim=tuple(range(previous_waveform.ndim)),
+        ).item()
+    )
+    current_whole_std = float(
+        torch.std(
+            current_waveform.detach().to(device="cpu", dtype=torch.float32),
+            dim=tuple(range(current_waveform.ndim)),
+        ).item()
+    )
+    return {
+        "audio_overlap_context_version": 1,
+        "sample_rate": rate,
+        "latent_hz": latent_hz,
+        "prefix_latents": ticks,
+        "samples_per_latent": samples_per_latent,
+        "overlap_samples": overlap_samples,
+        "overlap_seconds": overlap_samples / float(rate),
+        "previous_whole_std": previous_whole_std,
+        "current_whole_std": current_whole_std,
+        "regions": measured,
+    }
+
+
 def measure_decoded_boundary_trajectory(
     previous_images: torch.Tensor,
     current_raw_images: torch.Tensor,
