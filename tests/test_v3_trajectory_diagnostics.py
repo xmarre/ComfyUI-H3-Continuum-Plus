@@ -126,8 +126,12 @@ def test_decoded_audio_overlap_context_identical_carried_prefix_is_exact():
         prefix_latents=prefix_latents,
     )
 
-    assert result["audio_overlap_context_version"] == 1
+    assert result["audio_overlap_context_version"] == 2
     assert result["overlap_samples"] == overlap_samples
+    assert result["decoder_context_margin_latents"] == 30
+    assert result["interior_latents"] == 5
+    assert result["interior_samples"] == 4000
+    assert result["interior_seconds"] == pytest.approx(0.125)
     for region in result["regions"].values():
         assert region["current_over_previous_db"] == pytest.approx(0.0, abs=1e-7)
         assert region["correlation"] == pytest.approx(1.0, abs=1e-7)
@@ -188,5 +192,53 @@ def test_decoded_audio_overlap_context_localizes_edge_context_difference():
 
     assert result["regions"]["head"]["current_over_previous_db"] > 4.5
     assert result["regions"]["tail"]["current_over_previous_db"] < -3.5
-    assert result["regions"]["middle"]["current_over_previous_db"] == pytest.approx(0.0, abs=1e-6)
-    assert result["regions"]["middle"]["correlation"] == pytest.approx(1.0, abs=1e-6)
+    assert result["regions"]["interior"]["current_over_previous_db"] == pytest.approx(0.0, abs=1e-6)
+    assert result["regions"]["interior"]["correlation"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_decoded_audio_overlap_context_requires_context_safe_interior():
+    sample_rate = 32000
+    prefix_latents = 60
+    overlap_samples = prefix_latents * (sample_rate // 40)
+    carried = torch.randn(
+        1,
+        2,
+        overlap_samples,
+        generator=torch.Generator().manual_seed(217),
+    )
+    previous = torch.cat((torch.randn(1, 2, 4000), carried), dim=-1)
+    current = torch.cat((carried.clone(), torch.randn(1, 2, 6000)), dim=-1)
+
+    with pytest.raises(ValueError, match="too short to expose a decoder-context-safe interior"):
+        measure_decoded_audio_overlap_context(
+            previous,
+            current,
+            sample_rate=sample_rate,
+            prefix_latents=prefix_latents,
+        )
+
+
+def test_decoded_audio_overlap_context_reports_core_normalizer_inactive_proof():
+    sample_rate = 32000
+    prefix_latents = 65
+    overlap_samples = prefix_latents * (sample_rate // 40)
+    carried = torch.randn(
+        1,
+        2,
+        overlap_samples,
+        generator=torch.Generator().manual_seed(218),
+    ) * 0.05
+    previous = torch.cat((torch.zeros(1, 2, 4000), carried), dim=-1)
+    current = torch.cat((carried.clone(), torch.zeros(1, 2, 6000)), dim=-1)
+
+    result = measure_decoded_audio_overlap_context(
+        previous,
+        current,
+        sample_rate=sample_rate,
+        prefix_latents=prefix_latents,
+    )
+
+    assert result["previous_whole_std"] < 0.1995
+    assert result["current_whole_std"] < 0.1995
+    assert result["previous_core_normalizer_provably_inactive"] is True
+    assert result["current_core_normalizer_provably_inactive"] is True
