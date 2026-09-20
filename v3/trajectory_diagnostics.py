@@ -12,6 +12,14 @@ import torch.nn.functional as F
 COMPARE_LONG_SIDE = 512
 DEFAULT_FORWARD_FRAMES = 6
 DEFAULT_PREVIOUS_TRANSITIONS = 4
+# Core's current MiniMax-H3 BigVGAN decoder has a finite, non-causal
+# receptive field spanning at most 58 audio-latent ticks for one output
+# sample. Thirty ticks on each side is therefore a conservative context
+# exclusion margin. A 65-tick Continuum carry leaves a 5-tick (125 ms)
+# center whose decoder dependency is entirely inside the carried prefix.
+MINIMAX_H3_AUDIO_DECODER_CONTEXT_MARGIN_LATENTS = 30
+CORE_AUDIO_NORMALIZED_STD = 0.2
+CORE_AUDIO_NORMALIZED_STD_TOLERANCE = 5.0e-4
 _EPS = 1.0e-12
 
 
@@ -391,7 +399,7 @@ def measure_decoded_audio_overlap_context(
     prefix_latents: int,
     latent_hz: int = 40,
     edge_seconds: float = 0.25,
-    middle_seconds: float = 0.5,
+    decoder_context_margin_latents: int = MINIMAX_H3_AUDIO_DECODER_CONTEXT_MARGIN_LATENTS,
 ) -> dict[str, Any]:
     """Compare the waveform decoded twice from a bit-identical carried audio prefix.
 
@@ -400,11 +408,18 @@ def measure_decoded_audio_overlap_context(
     Decode Audio evaluates those groups independently. This diagnostic compares
     the decoded copies before phase alignment, seam processing, or timeline trim.
 
-    A nearly constant gain with high correlation across the complete overlap is
-    evidence for decode-call-level scaling. Differences concentrated near the two
-    overlap edges instead implicate decoder context/padding. If the overlap itself
-    remains close while the retained boundary is loud, the generated suffix is the
-    first demonstrated source rather than duplicate-prefix decode.
+    The Core MiniMax-H3 audio decoder is non-causal and has a wide finite
+    receptive field, so an arbitrary center window is not a valid context-free
+    control. The interior region excludes a conservative 30 latent ticks from
+    both ends of the carried prefix. For the production 65-tick carry this leaves
+    five ticks / 125 ms whose complete decoder dependency is still inside the
+    bit-identical carried prefix.
+
+    A nearly constant gain with high correlation across the complete overlap and
+    the context-safe interior is evidence for decode-call-level scaling. Edge-only
+    differences with a matching interior implicate decoder context/padding. If the
+    context-safe interior and overlap remain close while the retained boundary is
+    loud, the newly generated suffix is the first demonstrated source.
     """
 
     rate = int(sample_rate)
@@ -420,6 +435,15 @@ def measure_decoded_audio_overlap_context(
         raise ValueError("decoded audio channel structure changed across carried overlap")
 
     samples_per_latent = rate // latent_hz
+    context_margin_latents = int(decoder_context_margin_latents)
+    if context_margin_latents < 0:
+        raise ValueError("decoded audio overlap context margin must be non-negative")
+    interior_latents = ticks - 2 * context_margin_latents
+    if interior_latents <= 0:
+        raise ValueError(
+            "decoded audio carried prefix is too short to expose a decoder-context-safe interior: "
+            f"prefix={ticks}, margin={context_margin_latents}"
+        )
     overlap_samples = ticks * samples_per_latent
     if (
         overlap_samples > int(previous_waveform.shape[-1])
@@ -435,16 +459,14 @@ def measure_decoded_audio_overlap_context(
         max(8, int(round(float(edge_seconds) * rate))),
         max(8, overlap_samples // 3),
     )
-    middle = min(
-        max(8, int(round(float(middle_seconds) * rate))),
-        max(8, overlap_samples - 2 * edge),
-    )
-    middle_start = max(0, (overlap_samples - middle) // 2)
+    interior_start = context_margin_latents * samples_per_latent
+    interior_stop = (ticks - context_margin_latents) * samples_per_latent
+    interior_samples = interior_stop - interior_start
 
     regions = {
         "full": (0, overlap_samples),
         "head": (0, edge),
-        "middle": (middle_start, middle_start + middle),
+        "interior": (interior_start, interior_stop),
         "tail": (overlap_samples - edge, overlap_samples),
     }
     measured = {
@@ -468,15 +490,26 @@ def measure_decoded_audio_overlap_context(
         ).item()
     )
     return {
-        "audio_overlap_context_version": 1,
+        "audio_overlap_context_version": 2,
         "sample_rate": rate,
         "latent_hz": latent_hz,
         "prefix_latents": ticks,
         "samples_per_latent": samples_per_latent,
         "overlap_samples": overlap_samples,
         "overlap_seconds": overlap_samples / float(rate),
+        "decoder_context_margin_latents": context_margin_latents,
+        "decoder_context_margin_seconds": context_margin_latents / float(latent_hz),
+        "interior_latents": interior_latents,
+        "interior_samples": interior_samples,
+        "interior_seconds": interior_samples / float(rate),
         "previous_whole_std": previous_whole_std,
         "current_whole_std": current_whole_std,
+        "previous_core_normalizer_provably_inactive": (
+            previous_whole_std < CORE_AUDIO_NORMALIZED_STD - CORE_AUDIO_NORMALIZED_STD_TOLERANCE
+        ),
+        "current_core_normalizer_provably_inactive": (
+            current_whole_std < CORE_AUDIO_NORMALIZED_STD - CORE_AUDIO_NORMALIZED_STD_TOLERANCE
+        ),
         "regions": measured,
     }
 
