@@ -20,7 +20,10 @@ from ..constants import (
 from ..v2.seam_guard import correct_audio_seam
 from .audio_phase import phase_align_decoded_audio
 from .plan import FPS, validate_assembly_plan
-from .trajectory_diagnostics import measure_decoded_boundary_trajectory
+from .trajectory_diagnostics import (
+    measure_decoded_audio_boundary,
+    measure_decoded_boundary_trajectory,
+)
 
 LOG = logging.getLogger("h3_continuum_join")
 
@@ -395,6 +398,60 @@ def assemble_decoded_chunks(
 
         sample_start = int(round(frame_cursor / FPS * sample_rate))
         sample_stop = int(round(frame_stop / FPS * sample_rate))
+        if index > 1 and sample_start > 0:
+            try:
+                audio_boundary = measure_decoded_audio_boundary(
+                    audio_buffer[..., :sample_start],
+                    segment_waveform,
+                    sample_rate=sample_rate,
+                )
+                LOG.info(
+                    "H3C-PT213 decoded-audio-boundary receipt "
+                    "stage=pre_seam boundary_global_frame=%d "
+                    "window_samples=%d window_seconds=%.6f sample_rate=%d "
+                    "previous_rms=%.9f current_rms=%.9f "
+                    "current_over_previous_rms_ratio=%.6f current_over_previous_db=%+.4f "
+                    "previous_peak=%.9f current_peak=%.9f "
+                    "previous_spectral_centroid_hz=%.3f current_spectral_centroid_hz=%.3f "
+                    "spectral_centroid_delta_hz=%+.3f high_band_hz=%.1f "
+                    "previous_high_band_fraction=%.9f current_high_band_fraction=%.9f "
+                    "high_band_fraction_delta=%+.9f phase_delta_samples=%+d",
+                    frame_cursor,
+                    int(audio_boundary["window_samples"]),
+                    float(audio_boundary["window_seconds"]),
+                    int(audio_boundary["sample_rate"]),
+                    float(audio_boundary["previous_rms"]),
+                    float(audio_boundary["current_rms"]),
+                    float(audio_boundary["current_over_previous_rms_ratio"]),
+                    float(audio_boundary["current_over_previous_db"]),
+                    float(audio_boundary["previous_peak"]),
+                    float(audio_boundary["current_peak"]),
+                    float(audio_boundary["previous_spectral_centroid_hz"]),
+                    float(audio_boundary["current_spectral_centroid_hz"]),
+                    float(audio_boundary["spectral_centroid_delta_hz"]),
+                    float(audio_boundary["high_band_hz"]),
+                    float(audio_boundary["previous_high_band_fraction"]),
+                    float(audio_boundary["current_high_band_fraction"]),
+                    float(audio_boundary["high_band_fraction_delta"]),
+                    int(phase_report.get("phase_delta_samples", 0)),
+                )
+                if diagnostics_mode == DIAGNOSTICS_FULL:
+                    reports.append(
+                        "decoded audio boundary "
+                        f"{index-1}->{index} pre-seam: "
+                        f"level={audio_boundary['current_over_previous_db']:+.3f} dB, "
+                        f"centroid_delta={audio_boundary['spectral_centroid_delta_hz']:+.1f} Hz, "
+                        f"high_band_delta={audio_boundary['high_band_fraction_delta']:+.6f}"
+                    )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT213 decoded-audio-boundary unavailable "
+                    "stage=pre_seam boundary_global_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    type(exc).__name__,
+                    exc,
+                )
+
         seam_report = None
         if index > 1 and audio_seam == AUDIO_SEAM_AUTO:
             try:
@@ -428,6 +485,60 @@ def assemble_decoded_chunks(
                 )
 
         audio_buffer[..., sample_start:sample_stop].copy_(segment_waveform)
+        if index > 1 and sample_start > 0:
+            try:
+                audio_boundary = measure_decoded_audio_boundary(
+                    audio_buffer[..., :sample_start],
+                    audio_buffer[..., sample_start:sample_stop],
+                    sample_rate=sample_rate,
+                )
+                LOG.info(
+                    "H3C-PT213 decoded-audio-boundary receipt "
+                    "stage=post_seam boundary_global_frame=%d "
+                    "window_samples=%d window_seconds=%.6f sample_rate=%d "
+                    "previous_rms=%.9f current_rms=%.9f "
+                    "current_over_previous_rms_ratio=%.6f current_over_previous_db=%+.4f "
+                    "previous_peak=%.9f current_peak=%.9f "
+                    "previous_spectral_centroid_hz=%.3f current_spectral_centroid_hz=%.3f "
+                    "spectral_centroid_delta_hz=%+.3f high_band_hz=%.1f "
+                    "previous_high_band_fraction=%.9f current_high_band_fraction=%.9f "
+                    "high_band_fraction_delta=%+.9f audio_seam=%s",
+                    frame_cursor,
+                    int(audio_boundary["window_samples"]),
+                    float(audio_boundary["window_seconds"]),
+                    int(audio_boundary["sample_rate"]),
+                    float(audio_boundary["previous_rms"]),
+                    float(audio_boundary["current_rms"]),
+                    float(audio_boundary["current_over_previous_rms_ratio"]),
+                    float(audio_boundary["current_over_previous_db"]),
+                    float(audio_boundary["previous_peak"]),
+                    float(audio_boundary["current_peak"]),
+                    float(audio_boundary["previous_spectral_centroid_hz"]),
+                    float(audio_boundary["current_spectral_centroid_hz"]),
+                    float(audio_boundary["spectral_centroid_delta_hz"]),
+                    float(audio_boundary["high_band_hz"]),
+                    float(audio_boundary["previous_high_band_fraction"]),
+                    float(audio_boundary["current_high_band_fraction"]),
+                    float(audio_boundary["high_band_fraction_delta"]),
+                    audio_seam,
+                )
+                if diagnostics_mode == DIAGNOSTICS_FULL:
+                    reports.append(
+                        "decoded audio boundary "
+                        f"{index-1}->{index} post-seam: "
+                        f"level={audio_boundary['current_over_previous_db']:+.3f} dB, "
+                        f"centroid_delta={audio_boundary['spectral_centroid_delta_hz']:+.1f} Hz, "
+                        f"high_band_delta={audio_boundary['high_band_fraction_delta']:+.6f}"
+                    )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT213 decoded-audio-boundary unavailable "
+                    "stage=post_seam boundary_global_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    type(exc).__name__,
+                    exc,
+                )
+
         if diagnostics_mode != DIAGNOSTICS_OFF:
             reports.append(
                 f"assembled decoded chunk {index}: {net_frames} retained frames, "
