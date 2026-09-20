@@ -63,6 +63,7 @@ from .physical_runtime import (
     build_presentation_contract,
     conditioning_telemetry,
     encode_physical_prompt_conditioning,
+    log_physical_validation_manifest,
 )
 from .physical_sequence import (
     compile_active_metadata,
@@ -914,6 +915,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                 conditioning=prepare_conditioning(keyed_conditioning,video_context=video_context,audio_context=audio_context,audio_grid_offset=grid_offset,context_frames=geometry.context_frames,new_frame_count=geometry.total_frames,first_frame_policy=POLICY_REPLACE,preserve_last_frame=True)
         driving_audio_latent=slice_driving_audio_latent(driving_audio_assets,cumulative_retained_before=retained_frames,total_frames=int(chunk_plan["total_frames"]),trim_frames=int(chunk_plan["trim_frames"]),fps=FPS)
         conditioning=attach_driving_audio(conditioning,driving_audio_latent)
+        log_physical_validation_manifest(physical_meta, conditioning)
         chunk_model=clone_model_for_chunk(model,strict=bool(strict_compatibility),debug=bool(debug),chunk_index=geometry.clip_index,context_frames=geometry.context_frames if geometry.continuation else None)
         sampled=sample_chunk(model=chunk_model,conditioning=conditioning,latent=latent,sampler=sampler,sigmas=sigmas,seed=seed,enable_preview=bool(enable_preview))
         if context_before is not None and video_context is not None: assert_context_unchanged(video_context,audio_context,context_before)
@@ -975,6 +977,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             reason=f"10-second terminal sample with 22-frame Guide context ({selected_reason})"
         driving_audio_latent=slice_driving_audio_latent(driving_audio_assets,cumulative_retained_before=retained_frames,total_frames=physical_frames,trim_frames=physical_context_frames,fps=FPS)
         conditioning=attach_driving_audio(conditioning,driving_audio_latent)
+        log_physical_validation_manifest(physical_meta, conditioning)
         chunk_model=clone_model_for_chunk(model,strict=bool(strict_compatibility),debug=bool(debug),chunk_index=physical_clip_index,context_frames=physical_context_frames if not initial_pair else None)
         sampled=sample_chunk(model=chunk_model,conditioning=conditioning,latent=latent,sampler=sampler,sigmas=sigmas,seed=physical_seed,enable_preview=bool(enable_preview))
         if context_before is not None and video_context is not None: assert_context_unchanged(video_context,audio_context,context_before)

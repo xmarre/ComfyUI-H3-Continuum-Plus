@@ -24,6 +24,7 @@ from .trajectory_diagnostics import (
     measure_decoded_audio_boundary,
     measure_decoded_audio_overlap_context,
     measure_decoded_boundary_trajectory,
+    interpret_decoded_boundary_shot,
 )
 
 LOG = logging.getLogger("h3_continuum_join")
@@ -392,9 +393,16 @@ def assemble_decoded_chunks(
         elif tuple(segment_images.shape[1:]) != tuple(image_buffer.shape[1:]):
             raise ValueError(f"decoded image geometry changed at chunk {index}")
 
+        pt212_recorded = False
         if index > 1 and image_buffer is not None and frame_cursor > 1:
             try:
                 previous_window = image_buffer[max(0, frame_cursor - 8) : frame_cursor]
+                shot = interpret_decoded_boundary_shot(
+                    previous_window,
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_index=index - 1,
+                )
                 trajectory = measure_decoded_boundary_trajectory(
                     previous_window,
                     raw_images[:total_frames],
@@ -414,7 +422,10 @@ def assemble_decoded_chunks(
                         "anchor_final_dx_px=%.4f anchor_final_dy_px=%.4f "
                         "pre_median_dx_px=%.4f pre_median_dy_px=%.4f "
                         "post_first3_median_dx_px=%.4f post_first3_median_dy_px=%.4f "
-                        "response=%s clipped=%s",
+                        "response=%s clipped=%s "
+                        "pt212_interpretation=%s scene_analysis_available=%s "
+                        "scene_analysis_classification=%s scene_cut=%s scene_cut_score=%s "
+                        "production_gate=%s",
                         int(trajectory["boundary_global_frame"]),
                         int(trajectory["current_trim_frame"]),
                         roi_name,
@@ -432,14 +443,22 @@ def assemble_decoded_chunks(
                         fields["post_first3_median_dy_px"],
                         fields["pairwise_response"],
                         fields["pairwise_clipped"],
+                        shot["pt212_interpretation"],
+                        shot["scene_analysis_available"],
+                        shot["scene_analysis_classification"],
+                        shot["scene_cut"],
+                        shot["scene_cut_score"],
+                        shot["production_gate"],
                     )
+                    pt212_recorded = True
                     if diagnostics_mode == DIAGNOSTICS_FULL:
                         reports.append(
                             "decoded trajectory "
                             f"{index-1}->{index} {roi_name}: "
                             f"dy={fields['pairwise_dy_px']}, "
                             f"net={fields['pairwise_net_dy_px']:+.3f}px, "
-                            f"pre_median={fields['pre_median_dy_px']:+.3f}px"
+                            f"pre_median={fields['pre_median_dy_px']:+.3f}px, "
+                            f"shot={shot['pt212_interpretation']}"
                         )
             except Exception as exc:
                 LOG.warning(
@@ -454,12 +473,25 @@ def assemble_decoded_chunks(
         # copy_ supports CPU<->CUDA directly, so do not first materialize a full
         # retained-chunk CUDA temporary with segment_images.to(device=...).
         image_buffer[frame_cursor:frame_stop].copy_(segment_images)
+        video_patch = video_patches.get(index - 1)
         _apply_video_patch(
             image_buffer,
             frame_start=frame_cursor,
             net_frames=net_frames,
-            patch=video_patches.get(index - 1),
+            patch=video_patch,
         )
+        if index > 1:
+            patch_frames = int(video_patch.shape[0]) if torch.is_tensor(video_patch) else 0
+            LOG.info(
+                "H3C-PT216 video-assembly-patch receipt "
+                "boundary_global_frame=%d boundary_index=%d applied=%s patch_frames=%d "
+                "pre_patch_pt212_recorded=%s source=pre_patch_raw_decode",
+                frame_cursor,
+                index - 1,
+                video_patch is not None,
+                patch_frames,
+                pt212_recorded,
+            )
 
         if audio_buffer is None:
             audio_buffer = torch.empty(
