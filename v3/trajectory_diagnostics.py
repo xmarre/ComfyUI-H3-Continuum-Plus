@@ -212,6 +212,120 @@ def _trajectory_for_roi(
     }
 
 
+def _decoded_audio_window_metrics(
+    waveform: torch.Tensor,
+    *,
+    sample_rate: int,
+    high_band_hz: float,
+) -> dict[str, float]:
+    if not torch.is_tensor(waveform) or waveform.ndim < 2 or int(waveform.shape[-1]) < 8:
+        raise ValueError("decoded audio diagnostic requires [...,samples] waveform data")
+    rate = int(sample_rate)
+    if rate <= 0:
+        raise ValueError("decoded audio diagnostic requires positive sample rate")
+    samples = waveform.detach().to(device="cpu", dtype=torch.float32)
+    if not bool(torch.isfinite(samples).all().item()):
+        raise ValueError("decoded audio diagnostic waveform contains NaN or Inf")
+
+    rms = float(torch.sqrt(torch.mean(samples.square())).item())
+    peak = float(samples.abs().amax().item())
+    flat = samples.reshape(-1, int(samples.shape[-1]))
+    centered = flat - flat.mean(dim=-1, keepdim=True)
+    window = torch.hann_window(
+        int(centered.shape[-1]),
+        periodic=False,
+        dtype=centered.dtype,
+        device=centered.device,
+    )
+    spectrum = torch.fft.rfft(centered * window, dim=-1)
+    power = spectrum.abs().square().mean(dim=0)
+    freqs = torch.fft.rfftfreq(
+        int(centered.shape[-1]),
+        d=1.0 / float(rate),
+        device=power.device,
+    )
+    total_power = float(power.sum().item())
+    if total_power <= _EPS:
+        centroid = 0.0
+        high_fraction = 0.0
+    else:
+        centroid = float((power * freqs).sum().item() / total_power)
+        high_fraction = float(power[freqs >= float(high_band_hz)].sum().item() / total_power)
+    return {
+        "rms": rms,
+        "peak": peak,
+        "spectral_centroid_hz": centroid,
+        "high_band_fraction": high_fraction,
+    }
+
+
+def measure_decoded_audio_boundary(
+    previous_waveform: torch.Tensor,
+    current_waveform: torch.Tensor,
+    *,
+    sample_rate: int,
+    window_seconds: float = 0.5,
+    high_band_hz: float = 4000.0,
+) -> dict[str, Any]:
+    """Measure bounded decoded-audio level and spectral change at one chunk boundary."""
+
+    rate = int(sample_rate)
+    window_seconds = float(window_seconds)
+    high_band_hz = float(high_band_hz)
+    if rate <= 0 or not math.isfinite(window_seconds) or window_seconds <= 0.0:
+        raise ValueError("decoded audio diagnostic requires a positive finite window")
+    if not math.isfinite(high_band_hz) or not 0.0 < high_band_hz < rate / 2.0:
+        raise ValueError("decoded audio diagnostic high-band threshold must lie below Nyquist")
+    if not torch.is_tensor(previous_waveform) or not torch.is_tensor(current_waveform):
+        raise ValueError("decoded audio diagnostic requires tensor waveforms")
+    if tuple(previous_waveform.shape[:-1]) != tuple(current_waveform.shape[:-1]):
+        raise ValueError("decoded audio channel structure changed across boundary")
+
+    requested = max(8, int(round(rate * window_seconds)))
+    count = min(
+        requested,
+        int(previous_waveform.shape[-1]),
+        int(current_waveform.shape[-1]),
+    )
+    if count < 8:
+        raise ValueError("decoded audio boundary has insufficient samples for measurement")
+
+    previous = _decoded_audio_window_metrics(
+        previous_waveform[..., -count:],
+        sample_rate=rate,
+        high_band_hz=high_band_hz,
+    )
+    current = _decoded_audio_window_metrics(
+        current_waveform[..., :count],
+        sample_rate=rate,
+        high_band_hz=high_band_hz,
+    )
+    ratio = (current["rms"] + _EPS) / (previous["rms"] + _EPS)
+    return {
+        "audio_boundary_version": 1,
+        "sample_rate": rate,
+        "window_samples": count,
+        "window_seconds": count / float(rate),
+        "high_band_hz": high_band_hz,
+        "previous_rms": previous["rms"],
+        "current_rms": current["rms"],
+        "current_over_previous_rms_ratio": ratio,
+        "current_over_previous_db": 20.0 * math.log10(ratio),
+        "previous_peak": previous["peak"],
+        "current_peak": current["peak"],
+        "previous_spectral_centroid_hz": previous["spectral_centroid_hz"],
+        "current_spectral_centroid_hz": current["spectral_centroid_hz"],
+        "spectral_centroid_delta_hz": (
+            current["spectral_centroid_hz"] - previous["spectral_centroid_hz"]
+        ),
+        "previous_high_band_fraction": previous["high_band_fraction"],
+        "current_high_band_fraction": current["high_band_fraction"],
+        "high_band_fraction_delta": (
+            current["high_band_fraction"] - previous["high_band_fraction"]
+        ),
+    }
+
+
 def measure_decoded_boundary_trajectory(
     previous_images: torch.Tensor,
     current_raw_images: torch.Tensor,
