@@ -1,3 +1,5 @@
+import logging
+
 import torch
 
 from ComfyUI_H3_Continuum_Join.constants import DIAGNOSTICS_OPTIONS
@@ -7,6 +9,7 @@ from ComfyUI_H3_Continuum_Join.v3.assembly import (
     VIDEO_SEAM_ANALYZE,
     VIDEO_SEAM_AUTO,
     VIDEO_SEAM_OFF,
+    assemble_decoded_chunks,
 )
 from ComfyUI_H3_Continuum_Join.v3.nodes import NODE_CLASS_MAPPINGS
 from ComfyUI_H3_Continuum_Join.v3.plan import ASSEMBLY_PLAN_MAGIC
@@ -363,3 +366,28 @@ def test_v34_seam_is_public_and_experimental_seam_is_legacy():
     assert root_nodes.NODE_DISPLAY_NAME_MAPPINGS["H3ContinuumAssembleV3"] == (
         "[Legacy] H3 Continuum Assemble V3.2.4"
     )
+
+
+
+def test_assembly_records_prepatch_pt212_interpretation_and_video_patch_action(caplog):
+    images, audio = _decoded()
+    patch = torch.full((1, 8, 8, 3), 0.25, dtype=torch.float32)
+
+    with caplog.at_level(logging.INFO, logger="h3_continuum_join"):
+        assemble_decoded_chunks(
+            images=images,
+            audio=audio,
+            assembly_plan=_plan(),
+            exact_total_duration=False,
+            audio_seam="Off",
+            diagnostics=DIAGNOSTICS_OPTIONS[0],
+            video_patches={1: patch},
+        )
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "H3C-PT212 decoded-trajectory receipt" in joined
+    assert "pt212_interpretation=continuous_shot_candidate" in joined
+    assert "production_gate=False" in joined
+    assert "H3C-PT216 video-assembly-patch receipt" in joined
+    assert "applied=True patch_frames=1 pre_patch_pt212_recorded=True" in joined
+    assert "source=pre_patch_raw_decode" in joined

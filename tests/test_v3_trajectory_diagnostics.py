@@ -5,6 +5,7 @@ from ComfyUI_H3_Continuum_Join.v3.trajectory_diagnostics import (
     measure_decoded_audio_boundary,
     measure_decoded_audio_overlap_context,
     measure_decoded_boundary_trajectory,
+    interpret_decoded_boundary_shot,
 )
 
 
@@ -242,3 +243,47 @@ def test_decoded_audio_overlap_context_reports_core_normalizer_inactive_proof():
     assert result["current_whole_std"] < 0.1995
     assert result["previous_core_normalizer_provably_inactive"] is True
     assert result["current_core_normalizer_provably_inactive"] is True
+
+
+
+def test_pt212_shot_interpretation_reuses_existing_scene_analysis_without_gating():
+    previous = torch.full((6, 8, 8, 3), 0.4, dtype=torch.float32)
+    current = torch.full((5, 8, 8, 3), 0.4, dtype=torch.float32)
+
+    continuous = interpret_decoded_boundary_shot(
+        previous,
+        current,
+        trim_frames=2,
+        boundary_index=1,
+    )
+    assert continuous["pt212_interpretation"] == "continuous_shot_candidate"
+    assert continuous["scene_analysis_available"] is True
+    assert continuous["scene_cut"] is False
+    assert continuous["production_gate"] is False
+
+    current[2:] = 0.95
+    changed = interpret_decoded_boundary_shot(
+        previous,
+        current,
+        trim_frames=2,
+        boundary_index=1,
+    )
+    assert changed["pt212_interpretation"] == "scene_change_or_unknown"
+    assert changed["scene_analysis_available"] is True
+    assert changed["scene_cut"] is True
+    assert changed["production_gate"] is False
+
+
+def test_pt212_shot_interpretation_is_unknown_when_scene_analysis_is_unavailable():
+    previous = torch.zeros((2, 8, 8, 3), dtype=torch.float32)
+    current = torch.zeros((3, 8, 8, 3), dtype=torch.float32)
+    receipt = interpret_decoded_boundary_shot(
+        previous,
+        current,
+        trim_frames=0,
+        boundary_index=1,
+    )
+    assert receipt["pt212_interpretation"] == "scene_change_or_unknown"
+    assert receipt["scene_analysis_available"] is False
+    assert receipt["scene_analysis_classification"] == "unavailable"
+    assert receipt["production_gate"] is False
