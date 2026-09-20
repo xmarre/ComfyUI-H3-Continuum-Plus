@@ -3,6 +3,7 @@ import torch
 
 from ComfyUI_H3_Continuum_Join.v3.trajectory_diagnostics import (
     measure_decoded_audio_boundary,
+    measure_decoded_audio_overlap_context,
     measure_decoded_boundary_trajectory,
 )
 
@@ -102,3 +103,90 @@ def test_decoded_audio_boundary_uses_only_bounded_tail_and_head_windows():
     assert result["previous_rms"] == pytest.approx(1.0)
     assert result["current_rms"] == pytest.approx(2.0)
     assert result["current_over_previous_db"] == pytest.approx(6.020599913, rel=1e-6)
+
+
+
+def test_decoded_audio_overlap_context_identical_carried_prefix_is_exact():
+    sample_rate = 32000
+    prefix_latents = 65
+    overlap_samples = prefix_latents * (sample_rate // 40)
+    carried = torch.randn(
+        1,
+        2,
+        overlap_samples,
+        generator=torch.Generator().manual_seed(214),
+    )
+    previous = torch.cat((torch.randn(1, 2, 4000), carried), dim=-1)
+    current = torch.cat((carried.clone(), torch.randn(1, 2, 6000)), dim=-1)
+
+    result = measure_decoded_audio_overlap_context(
+        previous,
+        current,
+        sample_rate=sample_rate,
+        prefix_latents=prefix_latents,
+    )
+
+    assert result["audio_overlap_context_version"] == 1
+    assert result["overlap_samples"] == overlap_samples
+    for region in result["regions"].values():
+        assert region["current_over_previous_db"] == pytest.approx(0.0, abs=1e-7)
+        assert region["correlation"] == pytest.approx(1.0, abs=1e-7)
+        assert region["least_squares_gain"] == pytest.approx(1.0, abs=1e-7)
+        assert region["gain_aligned_residual_rms_ratio"] == pytest.approx(0.0, abs=1e-7)
+
+
+def test_decoded_audio_overlap_context_identifies_constant_decode_gain():
+    sample_rate = 32000
+    prefix_latents = 65
+    overlap_samples = prefix_latents * (sample_rate // 40)
+    carried = torch.randn(
+        1,
+        2,
+        overlap_samples,
+        generator=torch.Generator().manual_seed(215),
+    )
+    previous = torch.cat((torch.randn(1, 2, 4000), carried), dim=-1)
+    current = torch.cat((carried * 2.0, torch.randn(1, 2, 6000)), dim=-1)
+
+    result = measure_decoded_audio_overlap_context(
+        previous,
+        current,
+        sample_rate=sample_rate,
+        prefix_latents=prefix_latents,
+    )
+
+    for region in result["regions"].values():
+        assert region["current_over_previous_db"] == pytest.approx(6.020599913, rel=1e-6)
+        assert region["correlation"] == pytest.approx(1.0, abs=1e-6)
+        assert region["least_squares_gain"] == pytest.approx(2.0, rel=1e-6)
+        assert region["gain_aligned_residual_rms_ratio"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_decoded_audio_overlap_context_localizes_edge_context_difference():
+    sample_rate = 32000
+    prefix_latents = 65
+    overlap_samples = prefix_latents * (sample_rate // 40)
+    carried = torch.randn(
+        1,
+        2,
+        overlap_samples,
+        generator=torch.Generator().manual_seed(216),
+    )
+    changed = carried.clone()
+    edge = sample_rate // 4
+    changed[..., :edge] *= 1.8
+    changed[..., -edge:] *= 0.6
+    previous = torch.cat((torch.randn(1, 2, 4000), carried), dim=-1)
+    current = torch.cat((changed, torch.randn(1, 2, 6000)), dim=-1)
+
+    result = measure_decoded_audio_overlap_context(
+        previous,
+        current,
+        sample_rate=sample_rate,
+        prefix_latents=prefix_latents,
+    )
+
+    assert result["regions"]["head"]["current_over_previous_db"] > 4.5
+    assert result["regions"]["tail"]["current_over_previous_db"] < -3.5
+    assert result["regions"]["middle"]["current_over_previous_db"] == pytest.approx(0.0, abs=1e-6)
+    assert result["regions"]["middle"]["correlation"] == pytest.approx(1.0, abs=1e-6)

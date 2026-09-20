@@ -22,6 +22,7 @@ from .audio_phase import phase_align_decoded_audio
 from .plan import FPS, validate_assembly_plan
 from .trajectory_diagnostics import (
     measure_decoded_audio_boundary,
+    measure_decoded_audio_overlap_context,
     measure_decoded_boundary_trajectory,
 )
 
@@ -214,6 +215,7 @@ def assemble_decoded_chunks(
     image_buffer = None
     audio_buffer = None
     audio_rate = None
+    previous_decoded_audio_cpu = None
     frame_cursor = 0
     reports = [
         "H3 Continuum Assemble V3",
@@ -243,12 +245,72 @@ def assemble_decoded_chunks(
             )
 
         waveform, sample_rate = validate_audio(raw_audio)
-        raw_audio_cpu = {
+        decoded_audio_cpu = {
             "waveform": waveform.detach().to("cpu"),
             "sample_rate": int(sample_rate),
         }
+        if index > 1 and previous_decoded_audio_cpu is not None:
+            prefix_latents = chunk.get("audio_phase_prefix_latents")
+            phase_verified = bool(chunk.get("audio_phase_verified", False))
+            if phase_verified and type(prefix_latents) is int and prefix_latents > 0:
+                try:
+                    overlap = measure_decoded_audio_overlap_context(
+                        previous_decoded_audio_cpu["waveform"],
+                        decoded_audio_cpu["waveform"],
+                        sample_rate=int(sample_rate),
+                        prefix_latents=prefix_latents,
+                    )
+                    full = overlap["regions"]["full"]
+                    head = overlap["regions"]["head"]
+                    middle = overlap["regions"]["middle"]
+                    tail = overlap["regions"]["tail"]
+                    LOG.info(
+                        "H3C-PT214 decoded-audio-carried-overlap receipt "
+                        "boundary_global_frame=%d prefix_latents=%d overlap_samples=%d "
+                        "overlap_seconds=%.6f previous_whole_std=%.9f current_whole_std=%.9f "
+                        "full_db=%+.4f full_corr=%.6f full_gain=%+.6f full_gain_db=%+.4f "
+                        "full_residual_ratio=%.6f "
+                        "head_db=%+.4f head_corr=%.6f "
+                        "middle_db=%+.4f middle_corr=%.6f "
+                        "tail_db=%+.4f tail_corr=%.6f",
+                        frame_cursor,
+                        int(overlap["prefix_latents"]),
+                        int(overlap["overlap_samples"]),
+                        float(overlap["overlap_seconds"]),
+                        float(overlap["previous_whole_std"]),
+                        float(overlap["current_whole_std"]),
+                        float(full["current_over_previous_db"]),
+                        float(full["correlation"]),
+                        float(full["least_squares_gain"]),
+                        float(full["least_squares_gain_db"]),
+                        float(full["gain_aligned_residual_rms_ratio"]),
+                        float(head["current_over_previous_db"]),
+                        float(head["correlation"]),
+                        float(middle["current_over_previous_db"]),
+                        float(middle["correlation"]),
+                        float(tail["current_over_previous_db"]),
+                        float(tail["correlation"]),
+                    )
+                    if diagnostics_mode == DIAGNOSTICS_FULL:
+                        reports.append(
+                            "decoded carried-audio overlap "
+                            f"{index-1}->{index}: full={full['current_over_previous_db']:+.3f} dB "
+                            f"corr={full['correlation']:.5f}, "
+                            f"head/middle/tail={head['current_over_previous_db']:+.3f}/"
+                            f"{middle['current_over_previous_db']:+.3f}/"
+                            f"{tail['current_over_previous_db']:+.3f} dB"
+                        )
+                except Exception as exc:
+                    LOG.warning(
+                        "H3C-PT214 decoded-audio-carried-overlap unavailable "
+                        "boundary_global_frame=%d reason=%s: %s",
+                        frame_cursor,
+                        type(exc).__name__,
+                        exc,
+                    )
+        previous_decoded_audio_cpu = decoded_audio_cpu
         raw_audio_cpu, phase_report = phase_align_decoded_audio(
-            raw_audio_cpu,
+            decoded_audio_cpu,
             group=chunk,
             frame_cursor=frame_cursor,
         )
