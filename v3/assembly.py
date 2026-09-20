@@ -262,23 +262,35 @@ def assemble_decoded_chunks(
                     )
                     full = overlap["regions"]["full"]
                     head = overlap["regions"]["head"]
-                    middle = overlap["regions"]["middle"]
+                    interior = overlap["regions"]["interior"]
                     tail = overlap["regions"]["tail"]
                     LOG.info(
                         "H3C-PT214 decoded-audio-carried-overlap receipt "
-                        "boundary_global_frame=%d prefix_latents=%d overlap_samples=%d "
-                        "overlap_seconds=%.6f previous_whole_std=%.9f current_whole_std=%.9f "
+                        "version=%d boundary_global_frame=%d prefix_latents=%d overlap_samples=%d "
+                        "overlap_seconds=%.6f decoder_context_margin_latents=%d "
+                        "interior_latents=%d interior_samples=%d interior_seconds=%.6f "
+                        "previous_whole_std=%.9f current_whole_std=%.9f "
+                        "previous_core_normalizer_provably_inactive=%s "
+                        "current_core_normalizer_provably_inactive=%s "
                         "full_db=%+.4f full_corr=%.6f full_gain=%+.6f full_gain_db=%+.4f "
                         "full_residual_ratio=%.6f "
                         "head_db=%+.4f head_corr=%.6f "
-                        "middle_db=%+.4f middle_corr=%.6f "
+                        "interior_db=%+.4f interior_corr=%.6f interior_gain=%+.6f "
+                        "interior_gain_db=%+.4f interior_residual_ratio=%.6f "
                         "tail_db=%+.4f tail_corr=%.6f",
+                        int(overlap["audio_overlap_context_version"]),
                         frame_cursor,
                         int(overlap["prefix_latents"]),
                         int(overlap["overlap_samples"]),
                         float(overlap["overlap_seconds"]),
+                        int(overlap["decoder_context_margin_latents"]),
+                        int(overlap["interior_latents"]),
+                        int(overlap["interior_samples"]),
+                        float(overlap["interior_seconds"]),
                         float(overlap["previous_whole_std"]),
                         float(overlap["current_whole_std"]),
+                        bool(overlap["previous_core_normalizer_provably_inactive"]),
+                        bool(overlap["current_core_normalizer_provably_inactive"]),
                         float(full["current_over_previous_db"]),
                         float(full["correlation"]),
                         float(full["least_squares_gain"]),
@@ -286,8 +298,11 @@ def assemble_decoded_chunks(
                         float(full["gain_aligned_residual_rms_ratio"]),
                         float(head["current_over_previous_db"]),
                         float(head["correlation"]),
-                        float(middle["current_over_previous_db"]),
-                        float(middle["correlation"]),
+                        float(interior["current_over_previous_db"]),
+                        float(interior["correlation"]),
+                        float(interior["least_squares_gain"]),
+                        float(interior["least_squares_gain_db"]),
+                        float(interior["gain_aligned_residual_rms_ratio"]),
                         float(tail["current_over_previous_db"]),
                         float(tail["correlation"]),
                     )
@@ -296,9 +311,11 @@ def assemble_decoded_chunks(
                             "decoded carried-audio overlap "
                             f"{index-1}->{index}: full={full['current_over_previous_db']:+.3f} dB "
                             f"corr={full['correlation']:.5f}, "
-                            f"head/middle/tail={head['current_over_previous_db']:+.3f}/"
-                            f"{middle['current_over_previous_db']:+.3f}/"
-                            f"{tail['current_over_previous_db']:+.3f} dB"
+                            f"head/interior/tail={head['current_over_previous_db']:+.3f}/"
+                            f"{interior['current_over_previous_db']:+.3f}/"
+                            f"{tail['current_over_previous_db']:+.3f} dB, "
+                            f"interior={overlap['interior_latents']} ticks "
+                            f"({overlap['interior_seconds']:.3f}s)"
                         )
                 except Exception as exc:
                     LOG.warning(
