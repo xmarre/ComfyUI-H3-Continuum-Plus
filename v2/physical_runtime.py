@@ -7,6 +7,7 @@ Qwen conditioning and compact identity/diagnostic metadata.
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import replace
 from fractions import Fraction
 import logging
@@ -525,13 +526,22 @@ def encode_physical_prompt_conditioning(
         compiled,
         timeline_video=timeline_video,
     )
+    validation = physical_validation_manifest(metadata, cache[key])
+    LOG.info(
+        "H3C-PT215 physical-validation manifest=%s",
+        json.dumps(validation, sort_keys=True, separators=(",", ":")),
+    )
     return cache[key], compiled, metadata, key
 
 
 def conditioning_telemetry(conditioning: Any) -> dict[str, Any]:
     """Read compact text/layout telemetry from the actual conditioning object."""
 
-    result: dict[str, Any] = {"token_count": None, "tensor_shapes": []}
+    result: dict[str, Any] = {
+        "token_count": None,
+        "tensor_shapes": [],
+        "tensor_dtypes": [],
+    }
     if not isinstance(conditioning, list):
         return result
     layouts = []
@@ -542,6 +552,7 @@ def conditioning_telemetry(conditioning: Any) -> dict[str, Any]:
         if torch.is_tensor(tensor):
             shape = [int(value) for value in tensor.shape]
             result["tensor_shapes"].append(shape)
+            result["tensor_dtypes"].append(str(tensor.dtype))
             if result["token_count"] is None and len(shape) >= 2:
                 result["token_count"] = int(shape[-2])
         metadata = item[1] if len(item) > 1 and isinstance(item[1], dict) else {}
@@ -561,3 +572,110 @@ def conditioning_telemetry(conditioning: Any) -> dict[str, Any]:
     if layouts:
         result["packed_layout"] = layouts
     return result
+
+
+
+_PHYSICAL_VALIDATION_MANIFEST_SCHEMA = 1
+_PHYSICAL_INTERVAL_RECEIPT_LIMIT = 64
+
+
+def _bounded_interval_receipt(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    exact_names = {
+        "kind",
+        "logical_index",
+        "chunk_index",
+        "global_start_frame",
+        "global_end_frame",
+        "global_start",
+        "global_end",
+        "local_start",
+        "local_end",
+        "source_start",
+        "source_end",
+    }
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        name = str(key)
+        lowered = name.lower()
+        structural = (
+            name in exact_names
+            or lowered.endswith("_index")
+            or lowered.endswith("_frame")
+            or lowered.endswith("_frames")
+            or lowered.endswith("_start")
+            or lowered.endswith("_end")
+        )
+        if not structural:
+            continue
+        if isinstance(item, (str, int, float, bool)) or item is None:
+            result[name] = item
+        elif (
+            isinstance(item, (list, tuple))
+            and len(item) <= 8
+            and all(isinstance(part, (str, int, float, bool)) or part is None for part in item)
+        ):
+            result[name] = list(item)
+    return result
+
+
+def physical_validation_manifest(
+    metadata: dict[str, Any],
+    conditioning: Any,
+) -> dict[str, Any]:
+    """Return bounded physical-timeline and conditioning provenance.
+
+    Prompt text, image data and conditioning tensors are intentionally excluded.
+    Full contributing-interval identity is retained by digest even when the
+    human-readable structural preview is capped.
+    """
+
+    if not isinstance(metadata, dict):
+        raise PhysicalPromptError("physical validation metadata must be a mapping")
+    descriptor = metadata.get("descriptor")
+    compiled = metadata.get("compiled")
+    if not isinstance(descriptor, dict) or not isinstance(compiled, dict):
+        raise PhysicalPromptError("physical validation metadata is incomplete")
+
+    intervals = compiled.get("contributing_intervals")
+    if not isinstance(intervals, list):
+        intervals = []
+    structural_intervals = [
+        _bounded_interval_receipt(item)
+        for item in intervals[:_PHYSICAL_INTERVAL_RECEIPT_LIMIT]
+    ]
+    telemetry = conditioning_telemetry(conditioning)
+    shapes = list(telemetry.get("tensor_shapes") or ())
+    dtypes = list(telemetry.get("tensor_dtypes") or ())
+    if len(shapes) != len(dtypes):
+        raise PhysicalPromptError("conditioning telemetry shape/dtype accounting diverged")
+    tensors = [
+        {"shape": list(shape), "dtype": str(dtype)}
+        for shape, dtype in zip(shapes, dtypes, strict=True)
+    ]
+
+    return {
+        "schema": _PHYSICAL_VALIDATION_MANIFEST_SCHEMA,
+        "descriptor_digest": str(metadata.get("descriptor_digest", "")),
+        "physical_conditioning_hash": str(metadata.get("physical_conditioning_hash", "")),
+        "group": str(descriptor.get("group_id", "?")),
+        "logical_indices": list(descriptor.get("logical_indices") or ()),
+        "global_frame_interval": [
+            int(descriptor.get("global_start_frame", -1)),
+            int(descriptor.get("global_end_frame", -1)),
+        ],
+        "exact_protected_interval": descriptor.get("exact_protected_interval"),
+        "retained_suffix_interval": descriptor.get("retained_suffix_interval"),
+        "compiler_version": str(compiled.get("compiler_version", "")),
+        "text_sha256": str(compiled.get("text_sha256", "")),
+        "interval_count": len(intervals),
+        "intervals_sha256": canonical_sha256(intervals),
+        "intervals": structural_intervals,
+        "intervals_truncated": len(intervals) > _PHYSICAL_INTERVAL_RECEIPT_LIMIT,
+        "conditioning": {
+            "token_count": telemetry.get("token_count"),
+            "tensors": tensors,
+            "packed_layout": telemetry.get("packed_layout", []),
+        },
+    }

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
+import torch
 
+from ComfyUI_H3_Continuum_Join.v2.physical_runtime import physical_validation_manifest
 from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
     PhysicalPromptError,
     canonical_sha256,
@@ -95,3 +98,42 @@ def test_validation_rejects_timeline_video_duplicate_conflict():
 def test_validation_keeps_minimal_legacy_presentation_contract_compatible():
     metadata = _metadata(presentation={"images": [], "audio": [], "video": []})
     assert validate_physical_metadata(metadata) is metadata
+
+
+
+def test_physical_validation_manifest_is_bounded_and_records_full_tensor_shape_dtype():
+    metadata = _metadata(
+        presentation={
+            "include_first": False,
+            "include_last": False,
+            "reference_count": 7,
+        }
+    )
+    metadata["compiled"]["contributing_intervals"][0]["body"] = "must-not-leak"
+    conditioning = [
+        [
+            torch.zeros((1, 17, 4096), dtype=torch.float16),
+            {"packed_layout_offset": [3, 7]},
+        ],
+        [
+            torch.zeros((1, 5, 2048), dtype=torch.bfloat16),
+            {},
+        ],
+    ]
+
+    manifest = physical_validation_manifest(metadata, conditioning)
+
+    assert manifest["schema"] == 1
+    assert manifest["interval_count"] == 1
+    assert len(manifest["intervals_sha256"]) == 64
+    assert manifest["conditioning"]["token_count"] == 17
+    assert manifest["conditioning"]["tensors"] == [
+        {"shape": [1, 17, 4096], "dtype": "torch.float16"},
+        {"shape": [1, 5, 2048], "dtype": "torch.bfloat16"},
+    ]
+    assert manifest["conditioning"]["packed_layout"] == [
+        {"packed_layout_offset": [3, 7]}
+    ]
+    rendered = json.dumps(manifest, sort_keys=True)
+    assert "must-not-leak" not in rendered
+    assert "body" not in manifest["intervals"][0]

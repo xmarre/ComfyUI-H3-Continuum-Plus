@@ -220,6 +220,54 @@ def _trajectory_for_roi(
     }
 
 
+def interpret_decoded_boundary_shot(
+    previous_images: torch.Tensor,
+    current_raw_images: torch.Tensor,
+    *,
+    trim_frames: int,
+    boundary_index: int,
+) -> dict[str, Any]:
+    """Interpret PT212 against the existing read-only Video Seam scene analysis.
+
+    This is evidence annotation only. It introduces no trajectory threshold and
+    never changes assembly behavior or suppresses the raw PT212 displacement data.
+    """
+
+    try:
+        from .video_seam import analyze_video_boundary
+
+        analysis = analyze_video_boundary(
+            previous_images,
+            current_raw_images,
+            trim_frames=int(trim_frames),
+            boundary_index=int(boundary_index),
+        )
+    except Exception as exc:
+        return {
+            "pt212_interpretation": "scene_change_or_unknown",
+            "scene_analysis_available": False,
+            "scene_analysis_classification": "unavailable",
+            "scene_cut": None,
+            "scene_cut_score": None,
+            "scene_analysis_error": type(exc).__name__,
+            "production_gate": False,
+        }
+
+    return {
+        "pt212_interpretation": (
+            "scene_change_or_unknown"
+            if analysis.scene_cut
+            else "continuous_shot_candidate"
+        ),
+        "scene_analysis_available": True,
+        "scene_analysis_classification": str(analysis.classification),
+        "scene_cut": bool(analysis.scene_cut),
+        "scene_cut_score": float(analysis.scene_cut_score),
+        "scene_analysis_error": None,
+        "production_gate": False,
+    }
+
+
 def _decoded_audio_window_metrics(
     waveform: torch.Tensor,
     *,
