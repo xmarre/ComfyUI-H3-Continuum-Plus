@@ -12,6 +12,7 @@ from ComfyUI_H3_Continuum_Join.temporal import audio_latent_t, video_latent_t
 from ComfyUI_H3_Continuum_Join.v2 import sequence
 from ComfyUI_H3_Continuum_Join.v2.h3_builder import IdentityAssets
 from ComfyUI_H3_Continuum_Join.v2.prompts import make_prompt_plan
+from ComfyUI_H3_Continuum_Join.v3.assembly import _terminal_audio_trim_receipt
 from ComfyUI_H3_Continuum_Join.v3.plan import (
     ASSEMBLY_PLAN_MAGIC,
     AssemblyPlanError,
@@ -222,3 +223,26 @@ def test_v3_assembly_plan_rejects_legacy_under_length_sequence():
         match="retains 328 frames for a 336-frame target",
     ):
         validate_assembly_plan(plan)
+
+
+
+def test_terminal_audio_trim_receipt_exposes_00586_natural_tail():
+    sample_rate = 32000
+    natural_frames = 515
+    target_frames = 504
+    natural_samples = round(natural_frames / 24 * sample_rate)
+    waveform = torch.zeros(1, 2, natural_samples)
+    target_samples = round(target_frames / 24 * sample_rate)
+    waveform[..., target_samples:] = 0.25
+
+    receipt = _terminal_audio_trim_receipt(
+        {"waveform": waveform, "sample_rate": sample_rate},
+        natural_frames=natural_frames,
+        target_frames=target_frames,
+    )
+
+    assert receipt["trim_frames"] == 11
+    assert receipt["discarded_samples"] == natural_samples - target_samples
+    assert receipt["discarded_seconds"] == pytest.approx(11 / 24)
+    assert receipt["discarded_rms"] == pytest.approx(0.25)
+    assert receipt["discarded_peak"] == pytest.approx(0.25)

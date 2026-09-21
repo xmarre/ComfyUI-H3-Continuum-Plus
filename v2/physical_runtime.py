@@ -18,6 +18,7 @@ import torch
 from .h3_builder import encode_prompt_conditioning
 from .physical_prompts import (
     PhysicalPromptError,
+    TERMINAL_PADDING_COMPILER_VERSION,
     canonical_sha256,
     compile_legacy_nominal,
     compile_physical_prompt,
@@ -253,9 +254,14 @@ def _with_runtime_compiler_identity(
             "global_end": fraction_string(end),
         },
     )
+    compiler_version = (
+        TERMINAL_PADDING_COMPILER_VERSION
+        if compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION
+        else _RUNTIME_PHYSICAL_COMPILER_VERSION
+    )
     physical_hash = canonical_sha256(
         {
-            "compiler_version": _RUNTIME_PHYSICAL_COMPILER_VERSION,
+            "compiler_version": compiler_version,
             "descriptor": descriptor.semantic_dict(),
             "text": compiled.text,
             "presentation_contract": descriptor.presentation_contract,
@@ -264,7 +270,7 @@ def _with_runtime_compiler_identity(
     )
     return replace(
         compiled,
-        compiler_version=_RUNTIME_PHYSICAL_COMPILER_VERSION,
+        compiler_version=compiler_version,
         diagnostics=diagnostics,
         physical_conditioning_hash=physical_hash,
     )
@@ -688,6 +694,17 @@ def physical_validation_manifest(
     intervals = compiled.get("contributing_intervals")
     if not isinstance(intervals, list):
         intervals = []
+    diagnostics = compiled.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        diagnostics = []
+    terminal_padding_interval = None
+    for item in diagnostics:
+        if isinstance(item, dict) and item.get("code") == "H3C-PT217":
+            terminal_padding_interval = [
+                str(item.get("global_start", "")),
+                str(item.get("global_end", "")),
+            ]
+            break
     structural_intervals = [
         _bounded_interval_receipt(item)
         for item in intervals[:_PHYSICAL_INTERVAL_RECEIPT_LIMIT]
@@ -711,6 +728,7 @@ def physical_validation_manifest(
         ],
         "exact_protected_interval": descriptor.get("exact_protected_interval"),
         "retained_suffix_interval": descriptor.get("retained_suffix_interval"),
+        "terminal_padding_interval": terminal_padding_interval,
         "compiler_version": str(compiled.get("compiler_version", "")),
         "text_sha256": str(compiled.get("text_sha256", "")),
         "interval_count": len(intervals),
