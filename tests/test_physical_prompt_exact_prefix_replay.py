@@ -57,9 +57,9 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v3"
+    assert compiled.compiler_version == "physical_timeline_text_v4"
     codes = {item["code"] for item in compiled.diagnostics}
-    assert {"H3C-PT205", "H3C-PT206", "H3C-PT208"}.issubset(codes)
+    assert {"H3C-PT205", "H3C-PT206", "H3C-PT208", "H3C-PT217"}.issubset(codes)
     assert "H3C-PT207" not in codes
 
     # 00421's physical chunk 2 begins at frame 136, while Native Masked owns
@@ -81,6 +81,8 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
     assert "[2.333333-4.333333s]\niguana" in compiled.text
     assert compiled.text.index("lizard continuation") < compiled.text.index("iguana")
     assert compiled.text.index("iguana") < compiled.text.index("turtle") < compiled.text.index("blue jay")
+    assert "[8.333333-8.708333s]" in compiled.text
+    assert "Terminal latent-grid padding only" in compiled.text
 
     intervals = list(compiled.contributing_intervals)
     assert [(item["global_start"], item["global_end"]) for item in intervals] == [
@@ -88,7 +90,8 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
         ("175/24", "8"),
         ("8", "10"),
         ("10", "12"),
-        ("12", "115/8"),
+        ("12", "14"),
+        ("14", "115/8"),
     ]
 
 
@@ -100,10 +103,11 @@ def test_guided_overlap_is_not_treated_as_exact_protected_context():
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v2"
+    assert compiled.compiler_version == "physical_timeline_text_v4"
     codes = {item["code"] for item in compiled.diagnostics}
     assert "H3C-PT206" not in codes
     assert "H3C-PT208" in codes
+    assert "H3C-PT217" in codes
 
     # The outer [7-14s] header is the chunk-routing signal. Guided overlap may
     # alter physical geometry, but it must not import the [0-7s] chunk body.
@@ -179,3 +183,55 @@ def test_timeline_without_protected_prefix_keeps_v2_identity_and_full_authored_t
     assert "Some endure. Others adapt." in compiled.text
     assert "lizard continuation" not in compiled.text
     assert "iguana" not in compiled.text
+
+
+def test_terminal_native_grid_padding_is_not_authored_speech_in_00586_geometry():
+    plan = make_prompt_plan(
+        mode=PROMPT_MODE_TIMELINE,
+        script=(
+            "[0-7s]\nfirst chunk\n"
+            "[7-14s]\nsecond chunk\n"
+            "[14-21s]\nNarrator finishes the final sentence cleanly before the end."
+        ),
+        chunks=3,
+        chunk_seconds=7.0,
+    )
+    descriptor = make_physical_sample_descriptor(
+        group_id="chunk:3",
+        logical_indices=(2,),
+        retained_before=328,
+        context_frames=39,
+        total_frames=226,
+        target_duration_frames=504,
+        continuation_method=CONTINUATION_NATIVE_MASKED,
+        initial_state_origin="sequence",
+        include_first=False,
+        include_last=False,
+        presentation_contract={"reference_count": 6},
+        exact_protected=True,
+    )
+
+    compiled = compile_invocation_prompt(
+        plan,
+        descriptor,
+        legacy_text="unused",
+        candidate=True,
+    )
+
+    assert descriptor.global_start_frame == 289
+    assert descriptor.global_end_frame == 515
+    assert descriptor.retained_suffix_interval == (328, 515)
+    assert compiled.compiler_version == "physical_timeline_text_v4"
+    codes = {item["code"] for item in compiled.diagnostics}
+    assert {"H3C-PT206", "H3C-PT208", "H3C-PT217"}.issubset(codes)
+    terminal = next(item for item in compiled.diagnostics if item["code"] == "H3C-PT217")
+    assert terminal["global_start"] == "21"
+    assert terminal["global_end"] == "515/24"
+    assert "[8.958333-9.416667s]" in compiled.text
+    assert "Terminal latent-grid padding only" in compiled.text
+
+    intervals = list(compiled.contributing_intervals)
+    assert intervals[-2]["global_start"] == "14"
+    assert intervals[-2]["global_end"] == "21"
+    assert intervals[-1]["global_start"] == "21"
+    assert intervals[-1]["global_end"] == "515/24"

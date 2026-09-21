@@ -18,6 +18,7 @@ from ComfyUI_H3_Continuum_Join.masked_continuation import (
 from ComfyUI_H3_Continuum_Join.v2 import sequence
 from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
     PHYSICAL_COMPILER_VERSION,
+    TERMINAL_PADDING_COMPILER_VERSION,
     compile_physical_prompt,
     make_physical_sample_descriptor,
 )
@@ -300,7 +301,7 @@ def test_terminal_timeline_descriptor_has_one_shared_physical_conditioning_ident
     )
 
     assert descriptor.logical_indices == (0, 1)
-    assert compiled.compiler_version == PHYSICAL_COMPILER_VERSION
+    assert compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION
     assert metadata["physical_conditioning_hash"] == compiled.physical_conditioning_hash
     assert len(metadata["physical_conditioning_hash"]) == 64
     # Runtime stores this same physical metadata object on both logical split
