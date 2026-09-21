@@ -85,6 +85,42 @@ def _tensor_nbytes(shape: tuple[int, ...], dtype: torch.dtype) -> int:
     return elements * torch.empty((), dtype=dtype).element_size()
 
 
+def _terminal_audio_trim_receipt(
+    audio: dict[str, Any],
+    *,
+    natural_frames: int,
+    target_frames: int,
+) -> dict[str, Any]:
+    waveform, sample_rate = validate_audio(audio)
+    natural_frames = int(natural_frames)
+    target_frames = int(target_frames)
+    available_samples = int(waveform.shape[-1])
+    target_samples = int(round(target_frames / FPS * sample_rate))
+    expected_natural_samples = int(round(natural_frames / FPS * sample_rate))
+    discarded_samples = max(0, available_samples - target_samples)
+    discarded = waveform[..., target_samples:] if discarded_samples else None
+    if discarded is not None and discarded.numel():
+        values = discarded.detach().to(torch.float32)
+        discarded_rms = float(torch.sqrt(torch.mean(values.square())).item())
+        discarded_peak = float(torch.amax(torch.abs(values)).item())
+    else:
+        discarded_rms = 0.0
+        discarded_peak = 0.0
+    return {
+        "natural_frames": natural_frames,
+        "target_frames": target_frames,
+        "trim_frames": max(0, natural_frames - target_frames),
+        "sample_rate": int(sample_rate),
+        "available_samples": available_samples,
+        "expected_natural_samples": expected_natural_samples,
+        "target_samples": target_samples,
+        "discarded_samples": discarded_samples,
+        "discarded_seconds": discarded_samples / float(sample_rate),
+        "discarded_rms": discarded_rms,
+        "discarded_peak": discarded_peak,
+    }
+
+
 def _resolve_image_output_device(
     images: list[Any],
     output_shape: tuple[int, int, int, int],
@@ -739,6 +775,28 @@ def finalize_assembled_timeline(
         "waveform": waveform.detach().to("cpu").contiguous(),
         "sample_rate": int(sample_rate),
     }
+    terminal_audio = _terminal_audio_trim_receipt(
+        normalized_audio,
+        natural_frames=natural_frames,
+        target_frames=int(plan["target_frames"]),
+    )
+    LOG.info(
+        "H3C-PT218 terminal-duration audio-trim receipt "
+        "natural_frames=%d target_frames=%d trim_frames=%d sample_rate=%d "
+        "available_samples=%d expected_natural_samples=%d target_samples=%d "
+        "discarded_samples=%d discarded_seconds=%.6f discarded_rms=%.9f discarded_peak=%.9f",
+        terminal_audio["natural_frames"],
+        terminal_audio["target_frames"],
+        terminal_audio["trim_frames"],
+        terminal_audio["sample_rate"],
+        terminal_audio["available_samples"],
+        terminal_audio["expected_natural_samples"],
+        terminal_audio["target_samples"],
+        terminal_audio["discarded_samples"],
+        terminal_audio["discarded_seconds"],
+        terminal_audio["discarded_rms"],
+        terminal_audio["discarded_peak"],
+    )
     result_images, result_audio, duration_report = enforce_total_frames(
         images,
         normalized_audio,
