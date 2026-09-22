@@ -10,6 +10,7 @@ from ComfyUI_H3_Continuum_Join.temporal import context_slots
 from ComfyUI_H3_Continuum_Join.v3.assembly import assemble_decoded_chunks
 from ComfyUI_H3_Continuum_Join.v3.plan import prepare_physical_decode_entries
 from ComfyUI_H3_Continuum_Join.v3.video_decode_overlap import (
+    VIDEO_DECODE_MIN_PREFIX_LATENTS,
     VIDEO_DECODE_OVERLAP_CONTRACT,
     VIDEO_DECODE_REUSE_FRAMES,
     annotate_video_decode_overlaps,
@@ -31,16 +32,29 @@ def _latent_pair(trim_frames: int = 39):
     return entries, groups, prefix_t
 
 
-def test_exact_video_overlap_proof_accepts_native_5_22_39_frame_contexts():
-    for trim_frames in (5, 22, 39):
+def test_exact_video_overlap_proof_accepts_native_22_39_frame_contexts():
+    for trim_frames in (22, 39):
         entries, groups, prefix_t = _latent_pair(trim_frames)
         annotated = annotate_video_decode_overlaps(entries, groups)
         second = annotated[1]
         assert second["video_decode_overlap_contract"] == VIDEO_DECODE_OVERLAP_CONTRACT
         assert second["video_decode_overlap_verified"] is True
         assert second["video_decode_overlap_prefix_latents"] == prefix_t
+        assert prefix_t >= VIDEO_DECODE_MIN_PREFIX_LATENTS
         assert second["video_decode_overlap_reuse_frames"] == VIDEO_DECODE_REUSE_FRAMES
         assert second["video_decode_overlap_reason"] == "exact_carried_prefix"
+
+
+def test_fast_5_frame_context_is_rejected_without_sufficient_left_decode_context():
+    entries, groups, prefix_t = _latent_pair(5)
+
+    second = annotate_video_decode_overlaps(entries, groups)[1]
+
+    assert prefix_t == 2
+    assert prefix_t < VIDEO_DECODE_MIN_PREFIX_LATENTS
+    assert second["video_decode_overlap_verified"] is False
+    assert second["video_decode_overlap_reuse_frames"] == 0
+    assert second["video_decode_overlap_reason"] == "insufficient_left_decode_context"
 
 
 def test_video_overlap_proof_fails_closed_for_changed_prefix():
