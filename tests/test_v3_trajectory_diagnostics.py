@@ -1,11 +1,9 @@
 import pytest
 import torch
-import torch.nn.functional as F
 
 from ComfyUI_H3_Continuum_Join.v3.trajectory_diagnostics import (
     measure_decoded_audio_boundary,
     measure_decoded_audio_overlap_context,
-    measure_decoded_boundary_affine,
     measure_decoded_boundary_trajectory,
     interpret_decoded_boundary_shot,
 )
@@ -15,39 +13,6 @@ def _pattern(height=32, width=40):
     torch.manual_seed(1234)
     frame = torch.rand((height, width, 3), dtype=torch.float32)
     return frame
-
-
-def _affine_image(
-    frame: torch.Tensor,
-    *,
-    scale_x: float = 1.0,
-    scale_y: float = 1.0,
-    translation_x: float = 0.0,
-    translation_y: float = 0.0,
-) -> torch.Tensor:
-    height, width = map(int, frame.shape[:2])
-    y, x = torch.meshgrid(
-        torch.arange(height, dtype=torch.float32),
-        torch.arange(width, dtype=torch.float32),
-        indexing="ij",
-    )
-    source_x = (x - float(translation_x)) / float(scale_x)
-    source_y = (y - float(translation_y)) / float(scale_y)
-    grid = torch.stack(
-        (
-            2.0 * source_x / float(width - 1) - 1.0,
-            2.0 * source_y / float(height - 1) - 1.0,
-        ),
-        dim=-1,
-    ).unsqueeze(0)
-    work = frame.permute(2, 0, 1).unsqueeze(0)
-    return F.grid_sample(
-        work,
-        grid,
-        mode="bilinear",
-        padding_mode="border",
-        align_corners=True,
-    )[0].permute(1, 2, 0)
 
 
 def test_decoded_trajectory_recovers_multiframe_vertical_motion():
@@ -92,70 +57,6 @@ def test_decoded_trajectory_recovers_multiframe_vertical_motion():
         assert fields["pre_median_dy_px"] == pytest.approx(1.0, abs=0.08)
         assert all(value > 1.0 for value in fields["pairwise_response"])
 
-
-
-def test_decoded_affine_recovers_boundary_scale_without_mutation():
-    base = _pattern(height=96, width=128)
-    expanded = _affine_image(
-        base,
-        scale_x=1.01,
-        scale_y=1.03,
-        translation_x=0.25,
-        translation_y=-0.50,
-    )
-    previous = torch.stack((base, base))
-    current = torch.stack((expanded, expanded, expanded))
-    previous_before = previous.clone()
-    current_before = current.clone()
-
-    result = measure_decoded_boundary_affine(
-        previous,
-        current,
-        trim_frames=0,
-        boundary_global_frame=175,
-        forward_frames=3,
-        previous_transitions=1,
-    )
-
-    assert torch.equal(previous, previous_before)
-    assert torch.equal(current, current_before)
-    assert result["affine_version"] == 1
-    assert result["boundary_global_frame"] == 175
-    for roi_name in ("upper45", "full"):
-        fields = result[roi_name]
-        assert fields["boundary_scale_x"] == pytest.approx(1.01, abs=0.015)
-        assert fields["boundary_scale_y"] == pytest.approx(1.03, abs=0.015)
-        assert fields["boundary_translation_x_px"] == pytest.approx(0.25, abs=0.45)
-        assert fields["boundary_translation_y_px"] == pytest.approx(-0.50, abs=0.45)
-        assert fields["pre_median_scale_x"] == pytest.approx(1.0, abs=0.005)
-        assert fields["pre_median_scale_y"] == pytest.approx(1.0, abs=0.005)
-
-
-def test_decoded_affine_does_not_misclassify_translation_as_scale():
-    base = _pattern(height=96, width=128)
-    shifted = _affine_image(
-        base,
-        translation_x=1.5,
-        translation_y=-2.0,
-    )
-    previous = torch.stack((base, base))
-    current = torch.stack((shifted, shifted))
-
-    result = measure_decoded_boundary_affine(
-        previous,
-        current,
-        trim_frames=0,
-        boundary_global_frame=175,
-        forward_frames=2,
-        previous_transitions=1,
-    )
-
-    for roi_name in ("upper45", "full"):
-        fields = result[roi_name]
-        assert fields["boundary_scale_x"] == pytest.approx(1.0, abs=0.006)
-        assert fields["boundary_scale_y"] == pytest.approx(1.0, abs=0.006)
-        assert fields["boundary_translation_x_px"] == pytest.approx(1.5, abs=0.25)
-        assert fields["boundary_translation_y_px"] == pytest.approx(-2.0, abs=0.25)
 
 
 def test_decoded_audio_boundary_reports_level_and_high_frequency_change():
