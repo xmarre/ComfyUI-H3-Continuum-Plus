@@ -18,7 +18,7 @@ from typing import Any, Iterable
 PHYSICAL_DESCRIPTOR_VERSION = 1
 COMPILED_PHYSICAL_PROMPT_VERSION = 1
 PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v2"
-TERMINAL_PADDING_COMPILER_VERSION = "physical_timeline_text_v6"
+TERMINAL_PADDING_COMPILER_VERSION = "physical_timeline_text_v7"
 LEGACY_COMPILER_VERSION = "legacy_nominal_v1"
 PHYSICAL_PROMPT_ENV = "H3_CONTINUUM_PHYSICAL_PROMPTS"
 PHYSICAL_TIMELINE_VIDEO_ENV = "H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO"
@@ -32,6 +32,11 @@ _TERMINAL_PADDING_CONTEXT_BODY = (
     "Terminal latent-grid padding only. The final output ends before this interval and this interval "
     "will be discarded. Do not begin, continue, or delay speech, dialogue, actions, or authored events "
     "into this padding; complete all requested content before this interval begins."
+)
+_EXACT_PREFIX_FRESH_GAP_BODY = (
+    "Continuous transition of the existing shot and ongoing visual action. Preserve the same subject, "
+    "environment, camera, motion, and ambient sound only. Do not restart prior content or introduce "
+    "a new shot, reference image, or the next timed event early."
 )
 # Recovered 00418 production prompts use an outer bracket Timeline section with
 # strict bare range lines (for example ``7-8s:``) inside its body. V1 treated
@@ -825,7 +830,24 @@ def compile_physical_prompt(
                 fallback = True
                 role = "fallback"
                 next_item = _next_authored_candidate(candidates, right)
-                if previous_body is not None:
+                exact_prefix_fresh_gap = bool(
+                    exact_end is not None
+                    and left >= exact_end
+                    and generation_class == "fresh_generation"
+                    and next_item is not None
+                    and previous_body is not None
+                    and previous_origin == "exact_prefix_context"
+                )
+                if exact_prefix_fresh_gap:
+                    body = _EXACT_PREFIX_FRESH_GAP_BODY
+                    sources = []
+                    origin = "exact_prefix_fresh_gap"
+                    fallback_role = "exact_prefix_fresh_gap_bridge"
+                    inherited_origin = previous_origin
+                    inherited_body_sha256 = text_sha256(previous_body)
+                    if fallback_status == "none":
+                        fallback_status = "exact_prefix_fresh_gap_bridge"
+                elif previous_body is not None:
                     body = previous_body
                     sources = list(previous_sources)
                     origin = previous_origin
@@ -846,17 +868,12 @@ def compile_physical_prompt(
                 if next_item is not None:
                     next_authored_start = fraction_string(next_item["_start"])
                     next_authored_body_sha256 = text_sha256(str(next_item.get("body", "")))
-                if (
-                    exact_end is not None
-                    and left >= exact_end
-                    and generation_class == "fresh_generation"
-                    and next_item is not None
-                ):
+                if exact_prefix_fresh_gap:
                     diagnostics.append(
                         {
                             "level": "info",
                             "code": "H3C-PT220",
-                            "message": "fresh post-prefix gap inherited the immediately preceding physical body before the next authored interval",
+                            "message": "fresh post-prefix gap uses a dedicated continuity bridge before the next authored interval",
                             "fresh_gap": True,
                             "global_start": fraction_string(left),
                             "global_end": fraction_string(right),
@@ -866,6 +883,7 @@ def compile_physical_prompt(
                             "fallback_type": str(fallback_role),
                             "inherited_origin": str(inherited_origin),
                             "inherited_body_sha256": str(inherited_body_sha256),
+                            "body_sha256": text_sha256(str(body)),
                             "next_authored_start": next_authored_start,
                             "next_authored_body_sha256": next_authored_body_sha256,
                         }
@@ -917,13 +935,9 @@ def compile_physical_prompt(
     if terminal_audio_guard_start is not None:
         local_guard_start = terminal_audio_guard_start - start
         local_output_end = output_end - start
-        guard_text = (
-            "Terminal audio completion contract: all speech, dialogue, narration, and vocalization "
-            f"must be fully complete before local {_format_seconds(local_guard_start)}s. "
-            "The following timed lead-out is structurally speech-free; visual action may continue "
-            "normally through the exact output endpoint."
-        )
-        preamble = f"{preamble}\n\n{guard_text}" if preamble else guard_text
+        # The speech-free lead-out is already a real timed interval. Do not also
+        # inject globally active natural-language control prose into the preamble:
+        # H3 can vocalize that prose at the beginning of the generated suffix.
         diagnostics.append(
             {
                 "level": "info",

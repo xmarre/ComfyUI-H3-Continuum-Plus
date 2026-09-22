@@ -32,13 +32,10 @@ from .physical_prompts import (
 
 LOG = logging.getLogger("h3_continuum_join")
 
-# V3 keeps V2's strict inner-range parser, but changes the conditioning domain
-# for exact Native Masked continuation. Authored instructions that belong only
-# to the caller-owned protected prefix must not be presented as fresh generation
-# instructions, because H3 timestamps are learned guidance rather than a hard
-# per-frame routing mask. 00421 demonstrated the failure mode directly: the
-# continuation began by replaying the earliest protected-prefix scene/dialogue.
-_RUNTIME_PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v3"
+# V4 keeps V3's exact-prefix suppression and gives any uncovered fresh interval
+# immediately after that prefix a dedicated continuity bridge instead of
+# extending protected-context prose into generated time.
+_RUNTIME_PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v4"
 _EXACT_PREFIX_CONTEXT_BODY = (
     "Immutable carried continuation context. This interval already exists in the protected input "
     "and is not new generation. Do not restage or replay content from this protected interval "
@@ -292,10 +289,11 @@ def compile_invocation_prompt(
     chunk-routing boundaries. Physical overlap may remap timestamps inside the
     selected chunk body, but it must not import adjacent chunk bodies.
 
-    Timeline V3 additionally treats an exact Native Masked prefix as immutable
-    context instead of fresh authored content. This preserves the full physical
-    local clock while preventing protected-prefix scene/dialogue instructions
-    from being replayed at the start of the generated suffix.
+    Timeline V4 treats an exact Native Masked prefix as immutable context and
+    gives an uncovered fresh interval immediately after it a dedicated
+    continuity bridge. This preserves the full physical local clock without
+    extending protected-context prose into generated time or importing an
+    adjacent logical chunk body.
     """
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))

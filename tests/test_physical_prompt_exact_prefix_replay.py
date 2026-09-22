@@ -6,6 +6,7 @@ from ComfyUI_H3_Continuum_Join.masked_continuation import (
     CONTINUATION_NATIVE_MASKED,
 )
 from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
+    _EXACT_PREFIX_FRESH_GAP_BODY,
     make_physical_sample_descriptor,
     physical_metadata,
     text_sha256,
@@ -62,7 +63,7 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v6"
+    assert compiled.compiler_version == "physical_timeline_text_v7"
     codes = {item["code"] for item in compiled.diagnostics}
     assert {"H3C-PT205", "H3C-PT206", "H3C-PT208", "H3C-PT217", "H3C-PT219"}.issubset(codes)
     assert "H3C-PT207" not in codes
@@ -89,7 +90,7 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
     assert "[8.333333-8.708333s]" in compiled.text
     assert "Terminal speech-free lead-out" in compiled.text
     assert "Terminal latent-grid padding only" in compiled.text
-    assert "Terminal audio completion contract" in compiled.text
+    assert "Terminal audio completion contract" not in compiled.text
 
     intervals = list(compiled.contributing_intervals)
     assert [(item["global_start"], item["global_end"]) for item in intervals] == [
@@ -113,7 +114,7 @@ def test_guided_overlap_is_not_treated_as_exact_protected_context():
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v6"
+    assert compiled.compiler_version == "physical_timeline_text_v7"
     codes = {item["code"] for item in compiled.diagnostics}
     assert "H3C-PT206" not in codes
     assert "H3C-PT208" in codes
@@ -232,7 +233,7 @@ def test_terminal_native_grid_padding_is_not_authored_speech_in_00586_geometry()
     assert descriptor.global_start_frame == 289
     assert descriptor.global_end_frame == 515
     assert descriptor.retained_suffix_interval == (328, 515)
-    assert compiled.compiler_version == "physical_timeline_text_v6"
+    assert compiled.compiler_version == "physical_timeline_text_v7"
     codes = {item["code"] for item in compiled.diagnostics}
     assert {"H3C-PT206", "H3C-PT208", "H3C-PT217", "H3C-PT219"}.issubset(codes)
     terminal = next(item for item in compiled.diagnostics if item["code"] == "H3C-PT217")
@@ -254,11 +255,12 @@ def test_terminal_native_grid_padding_is_not_authored_speech_in_00586_geometry()
     assert fresh_gap["local_start"] == "13/8"
     assert fresh_gap["local_end"] == "47/24"
     assert fresh_gap["fresh_start"] == "41/3"
-    assert fresh_gap["fallback_type"] == "gap_hold_previous"
+    assert fresh_gap["fallback_type"] == "exact_prefix_fresh_gap_bridge"
     assert fresh_gap["inherited_origin"] == "exact_prefix_context"
     assert fresh_gap["inherited_body_sha256"] == text_sha256(
         physical_runtime._EXACT_PREFIX_CONTEXT_BODY
     )
+    assert fresh_gap["body_sha256"] == text_sha256(_EXACT_PREFIX_FRESH_GAP_BODY)
     assert fresh_gap["next_authored_start"] == "14"
     assert fresh_gap["next_authored_body_sha256"] == text_sha256(
         "Narrator finishes the final sentence cleanly before the end."
@@ -270,24 +272,36 @@ def test_terminal_native_grid_padding_is_not_authored_speech_in_00586_geometry()
 
     intervals = list(compiled.contributing_intervals)
     assert intervals[0]["global_start"] == "289/24"
-    assert intervals[0]["global_end"] == "14"
-    assert intervals[0]["roles"] == ["exact_prefix_context", "fallback"]
-    assert intervals[0]["generation_classes"] == ["exact_prefix", "fresh_generation"]
-    assert intervals[0]["fallback_roles"] == ["gap_hold_previous"]
-    assert intervals[0]["inherited_origins"] == ["exact_prefix_context"]
-    assert intervals[0]["inherited_body_sha256s"] == [
+    assert intervals[0]["global_end"] == "41/3"
+    assert intervals[0]["roles"] == ["exact_prefix_context"]
+    assert intervals[0]["generation_classes"] == ["exact_prefix"]
+    assert intervals[0]["fallback_roles"] == []
+
+    assert intervals[1]["global_start"] == "41/3"
+    assert intervals[1]["global_end"] == "14"
+    assert intervals[1]["roles"] == ["fallback"]
+    assert intervals[1]["generation_classes"] == ["fresh_generation"]
+    assert intervals[1]["fallback_roles"] == ["exact_prefix_fresh_gap_bridge"]
+    assert intervals[1]["inherited_origins"] == ["exact_prefix_context"]
+    assert intervals[1]["inherited_body_sha256s"] == [
         text_sha256(physical_runtime._EXACT_PREFIX_CONTEXT_BODY)
     ]
-    assert intervals[0]["next_authored_starts"] == ["14"]
+    assert intervals[1]["body_sha256"] == text_sha256(_EXACT_PREFIX_FRESH_GAP_BODY)
+    assert intervals[1]["next_authored_starts"] == ["14"]
 
     metadata = physical_metadata(descriptor, compiled)
     manifest = physical_runtime.physical_validation_manifest(metadata, [])
-    assert manifest["intervals"][0]["body_sha256"] == intervals[0]["body_sha256"]
-    assert manifest["intervals"][0]["source_ordinals"] == []
-    assert manifest["intervals"][0]["fallback"] is True
+    assert manifest["intervals"][1]["body_sha256"] == intervals[1]["body_sha256"]
+    assert manifest["intervals"][1]["source_ordinals"] == []
+    assert manifest["intervals"][1]["fallback"] is True
     assert manifest["fresh_gaps"][0]["global_start"] == "41/3"
     assert manifest["fresh_gaps"][0]["global_end"] == "14"
     assert manifest["fresh_gaps"][0]["inherited_origin"] == "exact_prefix_context"
+    assert manifest["fresh_gaps"][0]["fallback_type"] == "exact_prefix_fresh_gap_bridge"
+    assert manifest["fresh_gaps"][0]["body_sha256"] == text_sha256(
+        _EXACT_PREFIX_FRESH_GAP_BODY
+    )
+    assert "Terminal audio completion contract" not in compiled.text
     assert manifest["prompt_provenance"]["compiled_text_sha256"] == compiled.text_sha256
 
     assert intervals[-3]["global_start"] == "14"
