@@ -500,6 +500,33 @@ def _source_ordinals(items: Iterable[dict[str, Any]]) -> list[int]:
     )
 
 
+def _candidate_origin(item: dict[str, Any] | None) -> str:
+    if not isinstance(item, dict):
+        return "none"
+    runtime_origin = item.get("_runtime_origin")
+    if runtime_origin:
+        return str(runtime_origin)
+    return "authored"
+
+
+def _next_authored_candidate(
+    candidates: list[dict[str, Any]], start: Fraction
+) -> dict[str, Any] | None:
+    usable = [
+        item
+        for item in candidates
+        if item["_start"] >= start and _candidate_origin(item) != "exact_prefix_context"
+    ]
+    usable.sort(
+        key=lambda item: (
+            item["_start"],
+            -_priority(item)[0],
+            int(item.get("ordinal", 0)),
+        )
+    )
+    return usable[0] if usable else None
+
+
 def _earliest_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
     usable = sorted(
         candidates,
@@ -539,6 +566,20 @@ def _join_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             joined[-1]["sources"].extend(segment["sources"])
             joined[-1]["sources"] = sorted(set(joined[-1]["sources"]))
             joined[-1]["fallback"] = bool(joined[-1]["fallback"] or segment["fallback"])
+            for key in (
+                "roles",
+                "generation_classes",
+                "fallback_roles",
+                "inherited_origins",
+                "inherited_body_sha256s",
+                "next_authored_starts",
+                "next_authored_body_sha256s",
+            ):
+                existing = list(joined[-1].get(key) or ())
+                for value in segment.get(key) or ():
+                    if value not in existing:
+                        existing.append(value)
+                joined[-1][key] = existing
             continue
         joined.append(dict(segment))
     return joined
@@ -665,8 +706,17 @@ def compile_physical_prompt(
     first_item = _earliest_candidate(candidates)
     first_body = str(first_item.get("body", "")) if first_item is not None else ""
     first_sources = _source_ordinals([first_item]) if first_item is not None else []
+    first_origin = _candidate_origin(first_item)
     previous_body: str | None = None
     previous_sources: list[int] = []
+    previous_origin = "none"
+    fresh_start = Fraction(int(descriptor.retained_before), 1) / descriptor.fps
+    exact_interval = descriptor.exact_protected_interval
+    exact_start = None
+    exact_end = None
+    if isinstance(exact_interval, (tuple, list)) and len(exact_interval) == 2:
+        exact_start = Fraction(int(exact_interval[0]), 1) / descriptor.fps
+        exact_end = Fraction(int(exact_interval[1]), 1) / descriptor.fps
     # Find the authored body immediately before the requested domain end for
     # physical native-grid overrun. Do not pull future authored sections in.
     before_end = [item for item in candidates if item["_start"] < domain_end]
@@ -711,11 +761,28 @@ def compile_physical_prompt(
             continue
         fallback = False
         sources: list[int] = []
+        role = "authored"
+        origin = "none"
+        fallback_role = None
+        inherited_origin = None
+        inherited_body_sha256 = None
+        next_authored_start = None
+        next_authored_body_sha256 = None
+        if exact_start is not None and exact_end is not None and left >= exact_start and right <= exact_end:
+            generation_class = "exact_prefix"
+        elif left >= fresh_start:
+            generation_class = "fresh_generation"
+        else:
+            generation_class = "context"
+
         if right <= 0:
             body = first_body
             sources = list(first_sources)
             fallback = True
             fallback_status = "unknown_prior_state"
+            role = "fallback"
+            origin = first_origin
+            fallback_role = "unknown_prior_state"
             diagnostics.append(
                 {
                     "level": "warning",
@@ -727,6 +794,9 @@ def compile_physical_prompt(
             body = _TERMINAL_PADDING_CONTEXT_BODY
             sources = []
             fallback = True
+            role = "terminal_padding"
+            origin = "terminal_padding"
+            fallback_role = "terminal_padding"
             if fallback_status == "none":
                 fallback_status = "terminal_padding"
         elif terminal_audio_guard_start is not None and left >= terminal_audio_guard_start:
@@ -736,10 +806,15 @@ def compile_physical_prompt(
             body = _TERMINAL_AUDIO_LEADOUT_BODY
             sources = []
             fallback = False
+            role = "terminal_audio_leadout"
+            origin = "terminal_audio_leadout"
         elif left >= domain_end:
             body = overrun_body
             sources = list(overrun_sources)
             fallback = True
+            role = "fallback"
+            origin = _candidate_origin(overrun_item)
+            fallback_role = "physical_overrun_hold"
             if fallback_status == "none":
                 fallback_status = "physical_overrun_hold"
         else:
@@ -748,16 +823,53 @@ def compile_physical_prompt(
             sources = _source_ordinals(active)
             if body is None:
                 fallback = True
+                role = "fallback"
+                next_item = _next_authored_candidate(candidates, right)
                 if previous_body is not None:
                     body = previous_body
                     sources = list(previous_sources)
+                    origin = previous_origin
+                    fallback_role = "gap_hold_previous"
+                    inherited_origin = previous_origin
+                    inherited_body_sha256 = text_sha256(previous_body)
                     if fallback_status == "none":
                         fallback_status = "gap_hold_previous"
                 else:
                     body = first_body
                     sources = list(first_sources)
+                    origin = first_origin
+                    fallback_role = "leading_gap_earliest"
+                    inherited_origin = first_origin
+                    inherited_body_sha256 = text_sha256(first_body)
                     if fallback_status == "none":
                         fallback_status = "leading_gap_earliest"
+                if next_item is not None:
+                    next_authored_start = fraction_string(next_item["_start"])
+                    next_authored_body_sha256 = text_sha256(str(next_item.get("body", "")))
+                if (
+                    exact_end is not None
+                    and left >= exact_end
+                    and generation_class == "fresh_generation"
+                    and next_item is not None
+                ):
+                    diagnostics.append(
+                        {
+                            "level": "info",
+                            "code": "H3C-PT220",
+                            "message": "fresh post-prefix gap inherited the immediately preceding physical body before the next authored interval",
+                            "fresh_gap": True,
+                            "global_start": fraction_string(left),
+                            "global_end": fraction_string(right),
+                            "local_start": fraction_string(left - start),
+                            "local_end": fraction_string(right - start),
+                            "fresh_start": fraction_string(fresh_start),
+                            "fallback_type": str(fallback_role),
+                            "inherited_origin": str(inherited_origin),
+                            "inherited_body_sha256": str(inherited_body_sha256),
+                            "next_authored_start": next_authored_start,
+                            "next_authored_body_sha256": next_authored_body_sha256,
+                        }
+                    )
                 diagnostics.append(
                     {
                         "level": "warning",
@@ -767,8 +879,16 @@ def compile_physical_prompt(
                         "global_end": fraction_string(right),
                     }
                 )
+            else:
+                origin = _candidate_origin(active[0] if active else None)
+                role = (
+                    "exact_prefix_context"
+                    if origin == "exact_prefix_context"
+                    else "authored"
+                )
         previous_body = str(body)
         previous_sources = list(sources)
+        previous_origin = str(origin)
         segments.append(
             {
                 "start": left,
@@ -776,6 +896,19 @@ def compile_physical_prompt(
                 "body": str(body),
                 "sources": sources,
                 "fallback": fallback,
+                "roles": [role],
+                "generation_classes": [generation_class],
+                "fallback_roles": [fallback_role] if fallback_role else [],
+                "inherited_origins": [inherited_origin] if inherited_origin else [],
+                "inherited_body_sha256s": (
+                    [inherited_body_sha256] if inherited_body_sha256 else []
+                ),
+                "next_authored_starts": (
+                    [next_authored_start] if next_authored_start else []
+                ),
+                "next_authored_body_sha256s": (
+                    [next_authored_body_sha256] if next_authored_body_sha256 else []
+                ),
             }
         )
 
@@ -836,6 +969,17 @@ def compile_physical_prompt(
                 "fallback": bool(segment["fallback"]),
                 "terminal_role": terminal_role,
                 "body_sha256": text_sha256(segment["body"]),
+                "roles": list(segment.get("roles") or ()),
+                "generation_classes": list(segment.get("generation_classes") or ()),
+                "fallback_roles": list(segment.get("fallback_roles") or ()),
+                "inherited_origins": list(segment.get("inherited_origins") or ()),
+                "inherited_body_sha256s": list(
+                    segment.get("inherited_body_sha256s") or ()
+                ),
+                "next_authored_starts": list(segment.get("next_authored_starts") or ()),
+                "next_authored_body_sha256s": list(
+                    segment.get("next_authored_body_sha256s") or ()
+                ),
             }
         )
     if duration <= 0:

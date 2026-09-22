@@ -27,6 +27,7 @@ from .physical_prompts import (
     physical_metadata,
     physical_prompt_compiler_enabled,
     presentation_digest,
+    text_sha256,
 )
 
 LOG = logging.getLogger("h3_continuum_join")
@@ -225,6 +226,7 @@ def _timeline_plan_with_exact_prefix_context(
         "body": _EXACT_PREFIX_CONTEXT_BODY,
         "ordinal": -1_000_000_000,
         "header": "<exact-protected-prefix>",
+        "_runtime_origin": "exact_prefix_context",
     }
     rewritten_source["sections"] = [protected_context, *sections]
     rewritten["source"] = rewritten_source
@@ -302,6 +304,8 @@ def compile_invocation_prompt(
         runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(
             scoped_plan, descriptor
         )
+        scoped_source_sha256 = canonical_sha256(scoped_plan.get("source") or {})
+        runtime_source_sha256 = canonical_sha256(runtime_plan.get("source") or {})
         compiled = compile_physical_prompt(
             runtime_plan,
             descriptor,
@@ -312,7 +316,19 @@ def compile_invocation_prompt(
             descriptor,
             protected_interval=protected_interval,
         )
-        return _with_logical_signal_diagnostic(compiled, logical_scope)
+        compiled = _with_logical_signal_diagnostic(compiled, logical_scope)
+        diagnostics = tuple(compiled.diagnostics) + (
+            {
+                "level": "info",
+                "code": "H3C-PT221",
+                "message": "recorded bounded prompt-source provenance through physical compilation",
+                "input_source_digest": str((plan.get("source") or {}).get("source_digest", "")),
+                "scoped_source_sha256": scoped_source_sha256,
+                "runtime_source_sha256": runtime_source_sha256,
+                "compiled_text_sha256": compiled.text_sha256,
+            },
+        )
+        return replace(compiled, diagnostics=diagnostics)
     return compile_legacy_nominal(plan, descriptor, text=legacy_text)
 
 def _validate_physical_timeline_video_assets(
@@ -467,6 +483,15 @@ def encode_physical_prompt_conditioning(
             presentation_digest(descriptor.presentation_contract),
         )
     cache_hit = key in cache
+    encoder_text_sha256 = text_sha256(compiled.text)
+    LOG.info(
+        "H3C-PT222 encoder-text receipt group=%s compiled_text_sha256=%s "
+        "qwen_input_sha256=%s cache_hit=%s",
+        str(getattr(descriptor, "group_id", "?")),
+        compiled.text_sha256,
+        encoder_text_sha256,
+        cache_hit,
+    )
     presentation_receipt = _physical_presentation_receipt(
         descriptor=descriptor,
         assets=assets,
@@ -652,6 +677,24 @@ def _bounded_interval_receipt(value: Any) -> dict[str, Any]:
         "source_start",
         "source_end",
         "terminal_role",
+        "body_sha256",
+        "source_ordinals",
+        "fallback",
+        "roles",
+        "generation_classes",
+        "fallback_roles",
+        "inherited_origins",
+        "inherited_body_sha256s",
+        "next_authored_starts",
+        "next_authored_body_sha256s",
+        "fresh_gap",
+        "fallback_type",
+        "inherited_origin",
+        "fresh_start",
+        "input_source_digest",
+        "scoped_source_sha256",
+        "runtime_source_sha256",
+        "compiled_text_sha256",
     }
     result: dict[str, Any] = {}
     for key, item in value.items():
@@ -664,6 +707,7 @@ def _bounded_interval_receipt(value: Any) -> dict[str, Any]:
             or lowered.endswith("_frames")
             or lowered.endswith("_start")
             or lowered.endswith("_end")
+            or lowered.endswith("_sha256")
         )
         if not structural:
             continue
@@ -705,6 +749,8 @@ def physical_validation_manifest(
     terminal_padding_interval = None
     terminal_audio_guard_interval = None
     terminal_audio_guard_structural = False
+    fresh_gaps: list[dict[str, Any]] = []
+    prompt_provenance = None
     for item in diagnostics:
         if not isinstance(item, dict):
             continue
@@ -719,6 +765,10 @@ def physical_validation_manifest(
                 str(item.get("global_end", "")),
             ]
             terminal_audio_guard_structural = bool(item.get("structural", False))
+        elif item.get("code") == "H3C-PT220":
+            fresh_gaps.append(_bounded_interval_receipt(item))
+        elif item.get("code") == "H3C-PT221":
+            prompt_provenance = _bounded_interval_receipt(item)
     structural_intervals = [
         _bounded_interval_receipt(item)
         for item in intervals[:_PHYSICAL_INTERVAL_RECEIPT_LIMIT]
@@ -751,6 +801,9 @@ def physical_validation_manifest(
         "intervals_sha256": canonical_sha256(intervals),
         "intervals": structural_intervals,
         "intervals_truncated": len(intervals) > _PHYSICAL_INTERVAL_RECEIPT_LIMIT,
+        "fresh_gaps": fresh_gaps[:_PHYSICAL_INTERVAL_RECEIPT_LIMIT],
+        "fresh_gaps_truncated": len(fresh_gaps) > _PHYSICAL_INTERVAL_RECEIPT_LIMIT,
+        "prompt_provenance": prompt_provenance,
         "conditioning": {
             "token_count": telemetry.get("token_count"),
             "tensors": tensors,

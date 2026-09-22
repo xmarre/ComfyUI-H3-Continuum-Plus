@@ -5,7 +5,12 @@ from ComfyUI_H3_Continuum_Join.masked_continuation import (
     CONTINUATION_GUIDE,
     CONTINUATION_NATIVE_MASKED,
 )
-from ComfyUI_H3_Continuum_Join.v2.physical_prompts import make_physical_sample_descriptor
+from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
+    make_physical_sample_descriptor,
+    physical_metadata,
+    text_sha256,
+)
+from ComfyUI_H3_Continuum_Join.v2 import physical_runtime
 from ComfyUI_H3_Continuum_Join.v2.physical_runtime import compile_invocation_prompt
 from ComfyUI_H3_Continuum_Join.v2.prompts import make_prompt_plan
 
@@ -241,11 +246,50 @@ def test_terminal_native_grid_padding_is_not_authored_speech_in_00586_geometry()
     assert audio_guard["guard_duration"] == "11/24"
     assert audio_guard["structural"] is True
     assert audio_guard["authored_body_suppressed"] is True
+
+    fresh_gap = next(item for item in compiled.diagnostics if item["code"] == "H3C-PT220")
+    assert fresh_gap["fresh_gap"] is True
+    assert fresh_gap["global_start"] == "41/3"
+    assert fresh_gap["global_end"] == "14"
+    assert fresh_gap["local_start"] == "13/8"
+    assert fresh_gap["local_end"] == "47/24"
+    assert fresh_gap["fresh_start"] == "41/3"
+    assert fresh_gap["fallback_type"] == "gap_hold_previous"
+    assert fresh_gap["inherited_origin"] == "exact_prefix_context"
+    assert fresh_gap["inherited_body_sha256"] == text_sha256(
+        physical_runtime._EXACT_PREFIX_CONTEXT_BODY
+    )
+    assert fresh_gap["next_authored_start"] == "14"
+    assert fresh_gap["next_authored_body_sha256"] == text_sha256(
+        "Narrator finishes the final sentence cleanly before the end."
+    )
+
     assert "[8.5-8.958333s]\nTerminal speech-free lead-out" in compiled.text
     assert "[8.958333-9.416667s]" in compiled.text
     assert "Terminal latent-grid padding only" in compiled.text
 
     intervals = list(compiled.contributing_intervals)
+    assert intervals[0]["global_start"] == "289/24"
+    assert intervals[0]["global_end"] == "14"
+    assert intervals[0]["roles"] == ["exact_prefix_context", "fallback"]
+    assert intervals[0]["generation_classes"] == ["exact_prefix", "fresh_generation"]
+    assert intervals[0]["fallback_roles"] == ["gap_hold_previous"]
+    assert intervals[0]["inherited_origins"] == ["exact_prefix_context"]
+    assert intervals[0]["inherited_body_sha256s"] == [
+        text_sha256(physical_runtime._EXACT_PREFIX_CONTEXT_BODY)
+    ]
+    assert intervals[0]["next_authored_starts"] == ["14"]
+
+    metadata = physical_metadata(descriptor, compiled)
+    manifest = physical_runtime.physical_validation_manifest(metadata, [])
+    assert manifest["intervals"][0]["body_sha256"] == intervals[0]["body_sha256"]
+    assert manifest["intervals"][0]["source_ordinals"] == []
+    assert manifest["intervals"][0]["fallback"] is True
+    assert manifest["fresh_gaps"][0]["global_start"] == "41/3"
+    assert manifest["fresh_gaps"][0]["global_end"] == "14"
+    assert manifest["fresh_gaps"][0]["inherited_origin"] == "exact_prefix_context"
+    assert manifest["prompt_provenance"]["compiled_text_sha256"] == compiled.text_sha256
+
     assert intervals[-3]["global_start"] == "14"
     assert intervals[-3]["global_end"] == "493/24"
     assert intervals[-3]["terminal_role"] is None
