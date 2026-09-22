@@ -448,17 +448,8 @@ def assemble_decoded_chunks(
                     forward_frames=6,
                     previous_transitions=4,
                 )
-                affine = measure_decoded_boundary_affine(
-                    previous_window,
-                    raw_images[:total_frames],
-                    trim_frames=trim_frames,
-                    boundary_global_frame=frame_cursor,
-                    forward_frames=3,
-                    previous_transitions=3,
-                )
                 for roi_name in ("upper45", "full"):
                     fields = trajectory[roi_name]
-                    affine_fields = affine[roi_name]
                     LOG.info(
                         "H3C-PT212 decoded-trajectory receipt "
                         "boundary_global_frame=%d trim_frame=%d roi=%s "
@@ -496,6 +487,37 @@ def assemble_decoded_chunks(
                         shot["scene_cut_score"],
                         shot["production_gate"],
                     )
+                    pt212_recorded = True
+                    if diagnostics_mode == DIAGNOSTICS_FULL:
+                        reports.append(
+                            "decoded trajectory "
+                            f"{index-1}->{index} {roi_name}: "
+                            f"dy={fields['pairwise_dy_px']}, "
+                            f"net={fields['pairwise_net_dy_px']:+.3f}px, "
+                            f"pre_median={fields['pre_median_dy_px']:+.3f}px, "
+                            f"shot={shot['pt212_interpretation']}"
+                        )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT212 decoded-trajectory unavailable boundary_global_frame=%d "
+                    "trim_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    trim_frames,
+                    type(exc).__name__,
+                    exc,
+                )
+
+            try:
+                affine = measure_decoded_boundary_affine(
+                    previous_window,
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_global_frame=frame_cursor,
+                    forward_frames=3,
+                    previous_transitions=3,
+                )
+                for roi_name in ("upper45", "full"):
+                    affine_fields = affine[roi_name]
                     LOG.info(
                         "H3C-PT224 decoded-affine receipt "
                         "boundary_global_frame=%d trim_frame=%d roi=%s "
@@ -533,16 +555,11 @@ def assemble_decoded_chunks(
                         affine_fields["pairwise_translation_x_px"],
                         affine_fields["pairwise_translation_y_px"],
                     )
-                    pt212_recorded = True
                     if diagnostics_mode == DIAGNOSTICS_FULL:
                         reports.append(
-                            "decoded trajectory "
+                            "decoded affine "
                             f"{index-1}->{index} {roi_name}: "
-                            f"dy={fields['pairwise_dy_px']}, "
-                            f"net={fields['pairwise_net_dy_px']:+.3f}px, "
-                            f"pre_median={fields['pre_median_dy_px']:+.3f}px, "
-                            f"shot={shot['pt212_interpretation']}; "
-                            f"affine scale="
+                            f"scale="
                             f"({affine_fields['boundary_scale_x']:.6f},"
                             f"{affine_fields['boundary_scale_y']:.6f}), "
                             f"translation="
@@ -551,8 +568,8 @@ def assemble_decoded_chunks(
                         )
             except Exception as exc:
                 LOG.warning(
-                    "H3C-PT212 decoded-trajectory unavailable boundary_global_frame=%d "
-                    "trim_frame=%d reason=%s: %s",
+                    "H3C-PT224 decoded-affine unavailable "
+                    "boundary_global_frame=%d trim_frame=%d reason=%s: %s",
                     frame_cursor,
                     trim_frames,
                     type(exc).__name__,
