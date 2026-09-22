@@ -32,13 +32,10 @@ from .physical_prompts import (
 
 LOG = logging.getLogger("h3_continuum_join")
 
-# V3 keeps V2's strict inner-range parser, but changes the conditioning domain
-# for exact Native Masked continuation. Authored instructions that belong only
-# to the caller-owned protected prefix must not be presented as fresh generation
-# instructions, because H3 timestamps are learned guidance rather than a hard
-# per-frame routing mask. 00421 demonstrated the failure mode directly: the
-# continuation began by replaying the earliest protected-prefix scene/dialogue.
+# V3 remains the exact-prefix suppression identity. V4 is used only when the
+# compiler actually emits the new post-prefix fresh-gap continuity bridge.
 _RUNTIME_PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v3"
+_RUNTIME_FRESH_GAP_COMPILER_VERSION = "physical_timeline_text_v4"
 _EXACT_PREFIX_CONTEXT_BODY = (
     "Immutable carried continuation context. This interval already exists in the protected input "
     "and is not new generation. Do not restage or replay content from this protected interval "
@@ -256,11 +253,18 @@ def _with_runtime_compiler_identity(
             "global_end": fraction_string(end),
         },
     )
-    compiler_version = (
-        TERMINAL_PADDING_COMPILER_VERSION
-        if compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION
-        else _RUNTIME_PHYSICAL_COMPILER_VERSION
+    fresh_gap_bridge = any(
+        item.get("code") == "H3C-PT220"
+        and item.get("fallback_type") == "exact_prefix_fresh_gap_bridge"
+        for item in diagnostics
+        if isinstance(item, dict)
     )
+    if compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION:
+        compiler_version = TERMINAL_PADDING_COMPILER_VERSION
+    elif fresh_gap_bridge:
+        compiler_version = _RUNTIME_FRESH_GAP_COMPILER_VERSION
+    else:
+        compiler_version = _RUNTIME_PHYSICAL_COMPILER_VERSION
     physical_hash = canonical_sha256(
         {
             "compiler_version": compiler_version,
@@ -292,10 +296,11 @@ def compile_invocation_prompt(
     chunk-routing boundaries. Physical overlap may remap timestamps inside the
     selected chunk body, but it must not import adjacent chunk bodies.
 
-    Timeline V3 additionally treats an exact Native Masked prefix as immutable
-    context instead of fresh authored content. This preserves the full physical
-    local clock while preventing protected-prefix scene/dialogue instructions
-    from being replayed at the start of the generated suffix.
+    Timeline V4 treats an exact Native Masked prefix as immutable context and
+    gives an uncovered fresh interval immediately after it a dedicated
+    continuity bridge. This preserves the full physical local clock without
+    extending protected-context prose into generated time or importing an
+    adjacent logical chunk body.
     """
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
