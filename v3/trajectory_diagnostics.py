@@ -283,6 +283,15 @@ def _weighted_axis_affine_fit(
             / max(translation_only_residual, 0.05),
         ),
     )
+    values = (
+        1.0 + slope,
+        translation,
+        residual,
+        translation_only_residual,
+        scale_confidence,
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise RuntimeError("decoded affine fit produced a non-finite value")
     return {
         "scale": 1.0 + slope,
         "translation": translation,
@@ -402,14 +411,14 @@ def _decoded_affine_for_roi(
 
     def collect(pairs: list[tuple[int, int]]) -> dict[str, list[float]]:
         result = {name: [] for name in field_names}
-        sequence = torch.cat((previous, current), dim=0)
         previous_count = int(previous.shape[0])
-        for left_index, right_index in pairs:
-            def frame(index: int) -> torch.Tensor:
-                if index < previous_count:
-                    return previous[index]
-                return current[index - previous_count]
 
+        def frame(index: int) -> torch.Tensor:
+            if index < previous_count:
+                return previous[index]
+            return current[index - previous_count]
+
+        for left_index, right_index in pairs:
             fit = _decoded_local_affine_fit(
                 frame(left_index),
                 frame(right_index),
@@ -420,7 +429,6 @@ def _decoded_affine_for_roi(
             )
             for name in field_names:
                 result[name].append(float(fit[name]))
-        del sequence
         return result
 
     previous_count = int(previous.shape[0])
