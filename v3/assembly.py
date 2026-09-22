@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from typing import Any
@@ -17,7 +18,16 @@ from ..constants import (
     normalize_diagnostics_mode,
 )
 from ..v2.seam_guard import correct_audio_seam
+from .audio_phase import phase_align_decoded_audio
 from .plan import FPS, validate_assembly_plan
+from .trajectory_diagnostics import (
+    measure_decoded_audio_boundary,
+    measure_decoded_audio_overlap_context,
+    measure_decoded_boundary_trajectory,
+    interpret_decoded_boundary_shot,
+)
+
+LOG = logging.getLogger("h3_continuum_join")
 
 AUDIO_SEAM_OFF = "Off"
 AUDIO_SEAM_AUTO = "Auto"
@@ -73,6 +83,42 @@ def _tensor_nbytes(shape: tuple[int, ...], dtype: torch.dtype) -> int:
     for dimension in shape:
         elements *= int(dimension)
     return elements * torch.empty((), dtype=dtype).element_size()
+
+
+def _terminal_audio_trim_receipt(
+    audio: dict[str, Any],
+    *,
+    natural_frames: int,
+    target_frames: int,
+) -> dict[str, Any]:
+    waveform, sample_rate = validate_audio(audio)
+    natural_frames = int(natural_frames)
+    target_frames = int(target_frames)
+    available_samples = int(waveform.shape[-1])
+    target_samples = int(round(target_frames / FPS * sample_rate))
+    expected_natural_samples = int(round(natural_frames / FPS * sample_rate))
+    discarded_samples = max(0, available_samples - target_samples)
+    discarded = waveform[..., target_samples:] if discarded_samples else None
+    if discarded is not None and discarded.numel():
+        values = discarded.detach().to(torch.float32)
+        discarded_rms = float(torch.sqrt(torch.mean(values.square())).item())
+        discarded_peak = float(torch.amax(torch.abs(values)).item())
+    else:
+        discarded_rms = 0.0
+        discarded_peak = 0.0
+    return {
+        "natural_frames": natural_frames,
+        "target_frames": target_frames,
+        "trim_frames": max(0, natural_frames - target_frames),
+        "sample_rate": int(sample_rate),
+        "available_samples": available_samples,
+        "expected_natural_samples": expected_natural_samples,
+        "target_samples": target_samples,
+        "discarded_samples": discarded_samples,
+        "discarded_seconds": discarded_samples / float(sample_rate),
+        "discarded_rms": discarded_rms,
+        "discarded_peak": discarded_peak,
+    }
 
 
 def _resolve_image_output_device(
@@ -206,6 +252,7 @@ def assemble_decoded_chunks(
     image_buffer = None
     audio_buffer = None
     audio_rate = None
+    previous_decoded_audio_cpu = None
     frame_cursor = 0
     reports = [
         "H3 Continuum Assemble V3",
@@ -235,14 +282,109 @@ def assemble_decoded_chunks(
             )
 
         waveform, sample_rate = validate_audio(raw_audio)
-        waveform = waveform.detach().to("cpu")
-        sample_rate = int(sample_rate)
-        raw_audio_cpu = {"waveform": waveform, "sample_rate": sample_rate}
+        decoded_audio_cpu = {
+            "waveform": waveform.detach().to("cpu"),
+            "sample_rate": int(sample_rate),
+        }
+        if index > 1 and previous_decoded_audio_cpu is not None:
+            prefix_latents = chunk.get("audio_phase_prefix_latents")
+            phase_verified = bool(chunk.get("audio_phase_verified", False))
+            if phase_verified and type(prefix_latents) is int and prefix_latents > 0:
+                try:
+                    overlap = measure_decoded_audio_overlap_context(
+                        previous_decoded_audio_cpu["waveform"],
+                        decoded_audio_cpu["waveform"],
+                        sample_rate=int(sample_rate),
+                        prefix_latents=prefix_latents,
+                    )
+                    full = overlap["regions"]["full"]
+                    head = overlap["regions"]["head"]
+                    interior = overlap["regions"]["interior"]
+                    tail = overlap["regions"]["tail"]
+                    LOG.info(
+                        "H3C-PT214 decoded-audio-carried-overlap receipt "
+                        "version=%d boundary_global_frame=%d prefix_latents=%d overlap_samples=%d "
+                        "overlap_seconds=%.6f decoder_context_margin_latents=%d "
+                        "interior_latents=%d interior_samples=%d interior_seconds=%.6f "
+                        "previous_whole_std=%.9f current_whole_std=%.9f "
+                        "previous_core_normalizer_provably_inactive=%s "
+                        "current_core_normalizer_provably_inactive=%s "
+                        "full_db=%+.4f full_corr=%.6f full_gain=%+.6f full_gain_db=%+.4f "
+                        "full_residual_ratio=%.6f "
+                        "head_db=%+.4f head_corr=%.6f "
+                        "interior_db=%+.4f interior_corr=%.6f interior_gain=%+.6f "
+                        "interior_gain_db=%+.4f interior_residual_ratio=%.6f "
+                        "tail_db=%+.4f tail_corr=%.6f",
+                        int(overlap["audio_overlap_context_version"]),
+                        frame_cursor,
+                        int(overlap["prefix_latents"]),
+                        int(overlap["overlap_samples"]),
+                        float(overlap["overlap_seconds"]),
+                        int(overlap["decoder_context_margin_latents"]),
+                        int(overlap["interior_latents"]),
+                        int(overlap["interior_samples"]),
+                        float(overlap["interior_seconds"]),
+                        float(overlap["previous_whole_std"]),
+                        float(overlap["current_whole_std"]),
+                        bool(overlap["previous_core_normalizer_provably_inactive"]),
+                        bool(overlap["current_core_normalizer_provably_inactive"]),
+                        float(full["current_over_previous_db"]),
+                        float(full["correlation"]),
+                        float(full["least_squares_gain"]),
+                        float(full["least_squares_gain_db"]),
+                        float(full["gain_aligned_residual_rms_ratio"]),
+                        float(head["current_over_previous_db"]),
+                        float(head["correlation"]),
+                        float(interior["current_over_previous_db"]),
+                        float(interior["correlation"]),
+                        float(interior["least_squares_gain"]),
+                        float(interior["least_squares_gain_db"]),
+                        float(interior["gain_aligned_residual_rms_ratio"]),
+                        float(tail["current_over_previous_db"]),
+                        float(tail["correlation"]),
+                    )
+                    if diagnostics_mode == DIAGNOSTICS_FULL:
+                        reports.append(
+                            "decoded carried-audio overlap "
+                            f"{index-1}->{index}: full={full['current_over_previous_db']:+.3f} dB "
+                            f"corr={full['correlation']:.5f}, "
+                            f"head/interior/tail={head['current_over_previous_db']:+.3f}/"
+                            f"{interior['current_over_previous_db']:+.3f}/"
+                            f"{tail['current_over_previous_db']:+.3f} dB, "
+                            f"interior={overlap['interior_latents']} ticks "
+                            f"({overlap['interior_seconds']:.3f}s)"
+                        )
+                except Exception as exc:
+                    LOG.warning(
+                        "H3C-PT214 decoded-audio-carried-overlap unavailable "
+                        "boundary_global_frame=%d reason=%s: %s",
+                        frame_cursor,
+                        type(exc).__name__,
+                        exc,
+                    )
+        previous_decoded_audio_cpu = decoded_audio_cpu
+        raw_audio_cpu, phase_report = phase_align_decoded_audio(
+            decoded_audio_cpu,
+            group=chunk,
+            frame_cursor=frame_cursor,
+        )
+        waveform = raw_audio_cpu["waveform"]
+        sample_rate = int(raw_audio_cpu["sample_rate"])
         if audio_rate is None:
             audio_rate = sample_rate
         elif sample_rate != audio_rate:
             raise ValueError(
                 f"audio sample rate changed between chunks: {audio_rate} -> {sample_rate}"
+            )
+
+        if phase_report["applied"] or diagnostics_mode == DIAGNOSTICS_FULL:
+            reports.append(
+                f"audio phase group {index}: verified={phase_report['verified']}, "
+                f"origin_latent={phase_report['origin_latent']}, "
+                f"native_trim={phase_report['native_trim_samples']}, "
+                f"phase_trim={phase_report['phase_trim_samples']}, "
+                f"delta={int(phase_report['phase_delta_samples']):+d} samples, "
+                f"reason={phase_report['reason']}"
             )
 
         frame_stop = frame_cursor + net_frames
@@ -287,15 +429,105 @@ def assemble_decoded_chunks(
         elif tuple(segment_images.shape[1:]) != tuple(image_buffer.shape[1:]):
             raise ValueError(f"decoded image geometry changed at chunk {index}")
 
+        pt212_recorded = False
+        if index > 1 and image_buffer is not None and frame_cursor > 1:
+            try:
+                previous_window = image_buffer[max(0, frame_cursor - 8) : frame_cursor]
+                shot = interpret_decoded_boundary_shot(
+                    previous_window,
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_index=index - 1,
+                )
+                trajectory = measure_decoded_boundary_trajectory(
+                    previous_window,
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_global_frame=frame_cursor,
+                    forward_frames=6,
+                    previous_transitions=4,
+                )
+                for roi_name in ("upper45", "full"):
+                    fields = trajectory[roi_name]
+                    LOG.info(
+                        "H3C-PT212 decoded-trajectory receipt "
+                        "boundary_global_frame=%d trim_frame=%d roi=%s "
+                        "pairwise_dx_px=%s pairwise_dy_px=%s "
+                        "pairwise_net_dx_px=%.4f pairwise_net_dy_px=%.4f "
+                        "anchor_dx_px=%s anchor_dy_px=%s "
+                        "anchor_final_dx_px=%.4f anchor_final_dy_px=%.4f "
+                        "pre_median_dx_px=%.4f pre_median_dy_px=%.4f "
+                        "post_first3_median_dx_px=%.4f post_first3_median_dy_px=%.4f "
+                        "response=%s clipped=%s "
+                        "pt212_interpretation=%s scene_analysis_available=%s "
+                        "scene_analysis_classification=%s scene_cut=%s scene_cut_score=%s "
+                        "production_gate=%s",
+                        int(trajectory["boundary_global_frame"]),
+                        int(trajectory["current_trim_frame"]),
+                        roi_name,
+                        fields["pairwise_dx_px"],
+                        fields["pairwise_dy_px"],
+                        fields["pairwise_net_dx_px"],
+                        fields["pairwise_net_dy_px"],
+                        fields["anchor_dx_px"],
+                        fields["anchor_dy_px"],
+                        fields["anchor_final_dx_px"],
+                        fields["anchor_final_dy_px"],
+                        fields["pre_median_dx_px"],
+                        fields["pre_median_dy_px"],
+                        fields["post_first3_median_dx_px"],
+                        fields["post_first3_median_dy_px"],
+                        fields["pairwise_response"],
+                        fields["pairwise_clipped"],
+                        shot["pt212_interpretation"],
+                        shot["scene_analysis_available"],
+                        shot["scene_analysis_classification"],
+                        shot["scene_cut"],
+                        shot["scene_cut_score"],
+                        shot["production_gate"],
+                    )
+                    pt212_recorded = True
+                    if diagnostics_mode == DIAGNOSTICS_FULL:
+                        reports.append(
+                            "decoded trajectory "
+                            f"{index-1}->{index} {roi_name}: "
+                            f"dy={fields['pairwise_dy_px']}, "
+                            f"net={fields['pairwise_net_dy_px']:+.3f}px, "
+                            f"pre_median={fields['pre_median_dy_px']:+.3f}px, "
+                            f"shot={shot['pt212_interpretation']}"
+                        )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT212 decoded-trajectory unavailable boundary_global_frame=%d "
+                    "trim_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    trim_frames,
+                    type(exc).__name__,
+                    exc,
+                )
+
         # copy_ supports CPU<->CUDA directly, so do not first materialize a full
         # retained-chunk CUDA temporary with segment_images.to(device=...).
         image_buffer[frame_cursor:frame_stop].copy_(segment_images)
+        video_patch = video_patches.get(index - 1)
         _apply_video_patch(
             image_buffer,
             frame_start=frame_cursor,
             net_frames=net_frames,
-            patch=video_patches.get(index - 1),
+            patch=video_patch,
         )
+        if index > 1:
+            patch_frames = int(video_patch.shape[0]) if torch.is_tensor(video_patch) else 0
+            LOG.info(
+                "H3C-PT216 video-assembly-patch receipt "
+                "boundary_global_frame=%d boundary_index=%d applied=%s patch_frames=%d "
+                "pre_patch_pt212_recorded=%s source=pre_patch_raw_decode",
+                frame_cursor,
+                index - 1,
+                video_patch is not None,
+                patch_frames,
+                pt212_recorded,
+            )
 
         if audio_buffer is None:
             audio_buffer = torch.empty(
@@ -313,6 +545,60 @@ def assemble_decoded_chunks(
 
         sample_start = int(round(frame_cursor / FPS * sample_rate))
         sample_stop = int(round(frame_stop / FPS * sample_rate))
+        if index > 1 and sample_start > 0:
+            try:
+                audio_boundary = measure_decoded_audio_boundary(
+                    audio_buffer[..., :sample_start],
+                    segment_waveform,
+                    sample_rate=sample_rate,
+                )
+                LOG.info(
+                    "H3C-PT213 decoded-audio-boundary receipt "
+                    "stage=pre_seam boundary_global_frame=%d "
+                    "window_samples=%d window_seconds=%.6f sample_rate=%d "
+                    "previous_rms=%.9f current_rms=%.9f "
+                    "current_over_previous_rms_ratio=%.6f current_over_previous_db=%+.4f "
+                    "previous_peak=%.9f current_peak=%.9f "
+                    "previous_spectral_centroid_hz=%.3f current_spectral_centroid_hz=%.3f "
+                    "spectral_centroid_delta_hz=%+.3f high_band_hz=%.1f "
+                    "previous_high_band_fraction=%.9f current_high_band_fraction=%.9f "
+                    "high_band_fraction_delta=%+.9f phase_delta_samples=%+d",
+                    frame_cursor,
+                    int(audio_boundary["window_samples"]),
+                    float(audio_boundary["window_seconds"]),
+                    int(audio_boundary["sample_rate"]),
+                    float(audio_boundary["previous_rms"]),
+                    float(audio_boundary["current_rms"]),
+                    float(audio_boundary["current_over_previous_rms_ratio"]),
+                    float(audio_boundary["current_over_previous_db"]),
+                    float(audio_boundary["previous_peak"]),
+                    float(audio_boundary["current_peak"]),
+                    float(audio_boundary["previous_spectral_centroid_hz"]),
+                    float(audio_boundary["current_spectral_centroid_hz"]),
+                    float(audio_boundary["spectral_centroid_delta_hz"]),
+                    float(audio_boundary["high_band_hz"]),
+                    float(audio_boundary["previous_high_band_fraction"]),
+                    float(audio_boundary["current_high_band_fraction"]),
+                    float(audio_boundary["high_band_fraction_delta"]),
+                    int(phase_report.get("phase_delta_samples", 0)),
+                )
+                if diagnostics_mode == DIAGNOSTICS_FULL:
+                    reports.append(
+                        "decoded audio boundary "
+                        f"{index-1}->{index} pre-seam: "
+                        f"level={audio_boundary['current_over_previous_db']:+.3f} dB, "
+                        f"centroid_delta={audio_boundary['spectral_centroid_delta_hz']:+.1f} Hz, "
+                        f"high_band_delta={audio_boundary['high_band_fraction_delta']:+.6f}"
+                    )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT213 decoded-audio-boundary unavailable "
+                    "stage=pre_seam boundary_global_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    type(exc).__name__,
+                    exc,
+                )
+
         seam_report = None
         if index > 1 and audio_seam == AUDIO_SEAM_AUTO:
             try:
@@ -346,6 +632,60 @@ def assemble_decoded_chunks(
                 )
 
         audio_buffer[..., sample_start:sample_stop].copy_(segment_waveform)
+        if index > 1 and sample_start > 0:
+            try:
+                audio_boundary = measure_decoded_audio_boundary(
+                    audio_buffer[..., :sample_start],
+                    audio_buffer[..., sample_start:sample_stop],
+                    sample_rate=sample_rate,
+                )
+                LOG.info(
+                    "H3C-PT213 decoded-audio-boundary receipt "
+                    "stage=post_seam boundary_global_frame=%d "
+                    "window_samples=%d window_seconds=%.6f sample_rate=%d "
+                    "previous_rms=%.9f current_rms=%.9f "
+                    "current_over_previous_rms_ratio=%.6f current_over_previous_db=%+.4f "
+                    "previous_peak=%.9f current_peak=%.9f "
+                    "previous_spectral_centroid_hz=%.3f current_spectral_centroid_hz=%.3f "
+                    "spectral_centroid_delta_hz=%+.3f high_band_hz=%.1f "
+                    "previous_high_band_fraction=%.9f current_high_band_fraction=%.9f "
+                    "high_band_fraction_delta=%+.9f audio_seam=%s",
+                    frame_cursor,
+                    int(audio_boundary["window_samples"]),
+                    float(audio_boundary["window_seconds"]),
+                    int(audio_boundary["sample_rate"]),
+                    float(audio_boundary["previous_rms"]),
+                    float(audio_boundary["current_rms"]),
+                    float(audio_boundary["current_over_previous_rms_ratio"]),
+                    float(audio_boundary["current_over_previous_db"]),
+                    float(audio_boundary["previous_peak"]),
+                    float(audio_boundary["current_peak"]),
+                    float(audio_boundary["previous_spectral_centroid_hz"]),
+                    float(audio_boundary["current_spectral_centroid_hz"]),
+                    float(audio_boundary["spectral_centroid_delta_hz"]),
+                    float(audio_boundary["high_band_hz"]),
+                    float(audio_boundary["previous_high_band_fraction"]),
+                    float(audio_boundary["current_high_band_fraction"]),
+                    float(audio_boundary["high_band_fraction_delta"]),
+                    audio_seam,
+                )
+                if diagnostics_mode == DIAGNOSTICS_FULL:
+                    reports.append(
+                        "decoded audio boundary "
+                        f"{index-1}->{index} post-seam: "
+                        f"level={audio_boundary['current_over_previous_db']:+.3f} dB, "
+                        f"centroid_delta={audio_boundary['spectral_centroid_delta_hz']:+.1f} Hz, "
+                        f"high_band_delta={audio_boundary['high_band_fraction_delta']:+.6f}"
+                    )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT213 decoded-audio-boundary unavailable "
+                    "stage=post_seam boundary_global_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    type(exc).__name__,
+                    exc,
+                )
+
         if diagnostics_mode != DIAGNOSTICS_OFF:
             reports.append(
                 f"assembled decoded chunk {index}: {net_frames} retained frames, "
@@ -435,6 +775,28 @@ def finalize_assembled_timeline(
         "waveform": waveform.detach().to("cpu").contiguous(),
         "sample_rate": int(sample_rate),
     }
+    terminal_audio = _terminal_audio_trim_receipt(
+        normalized_audio,
+        natural_frames=natural_frames,
+        target_frames=int(plan["target_frames"]),
+    )
+    LOG.info(
+        "H3C-PT218 terminal-duration audio-trim receipt "
+        "natural_frames=%d target_frames=%d trim_frames=%d sample_rate=%d "
+        "available_samples=%d expected_natural_samples=%d target_samples=%d "
+        "discarded_samples=%d discarded_seconds=%.6f discarded_rms=%.9f discarded_peak=%.9f",
+        terminal_audio["natural_frames"],
+        terminal_audio["target_frames"],
+        terminal_audio["trim_frames"],
+        terminal_audio["sample_rate"],
+        terminal_audio["available_samples"],
+        terminal_audio["expected_natural_samples"],
+        terminal_audio["target_samples"],
+        terminal_audio["discarded_samples"],
+        terminal_audio["discarded_seconds"],
+        terminal_audio["discarded_rms"],
+        terminal_audio["discarded_peak"],
+    )
     result_images, result_audio, duration_report = enforce_total_frames(
         images,
         normalized_audio,
@@ -452,7 +814,8 @@ def finalize_assembled_timeline(
 class H3ContinuumAssembleV3:
     DESCRIPTION = (
         "Assemble full AV chunks decoded by ComfyUI Core. Trims decoded context, "
-        "aligns audio on cumulative frame boundaries, and optionally applies Audio Seam Auto."
+        "aligns proven exact-continuation audio to the physical 24-fps/40-Hz timeline, "
+        "and optionally applies Audio Seam Auto."
     )
     SEARCH_ALIASES = ["H3 latent assemble", "H3 external VAE decode"]
 

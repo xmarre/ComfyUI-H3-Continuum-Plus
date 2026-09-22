@@ -7,6 +7,7 @@ Qwen conditioning and compact identity/diagnostic metadata.
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import replace
 from fractions import Fraction
 import logging
@@ -17,6 +18,7 @@ import torch
 from .h3_builder import encode_prompt_conditioning
 from .physical_prompts import (
     PhysicalPromptError,
+    TERMINAL_PADDING_COMPILER_VERSION,
     canonical_sha256,
     compile_legacy_nominal,
     compile_physical_prompt,
@@ -25,17 +27,15 @@ from .physical_prompts import (
     physical_metadata,
     physical_prompt_compiler_enabled,
     presentation_digest,
+    text_sha256,
 )
 
 LOG = logging.getLogger("h3_continuum_join")
 
-# V3 keeps V2's strict inner-range parser, but changes the conditioning domain
-# for exact Native Masked continuation. Authored instructions that belong only
-# to the caller-owned protected prefix must not be presented as fresh generation
-# instructions, because H3 timestamps are learned guidance rather than a hard
-# per-frame routing mask. 00421 demonstrated the failure mode directly: the
-# continuation began by replaying the earliest protected-prefix scene/dialogue.
+# V3 remains the exact-prefix suppression identity. V4 is used only when the
+# compiler actually emits the new post-prefix fresh-gap continuity bridge.
 _RUNTIME_PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v3"
+_RUNTIME_FRESH_GAP_COMPILER_VERSION = "physical_timeline_text_v4"
 _EXACT_PREFIX_CONTEXT_BODY = (
     "Immutable carried continuation context. This interval already exists in the protected input "
     "and is not new generation. Do not restage or replay content from this protected interval "
@@ -223,6 +223,7 @@ def _timeline_plan_with_exact_prefix_context(
         "body": _EXACT_PREFIX_CONTEXT_BODY,
         "ordinal": -1_000_000_000,
         "header": "<exact-protected-prefix>",
+        "_runtime_origin": "exact_prefix_context",
     }
     rewritten_source["sections"] = [protected_context, *sections]
     rewritten["source"] = rewritten_source
@@ -252,9 +253,21 @@ def _with_runtime_compiler_identity(
             "global_end": fraction_string(end),
         },
     )
+    fresh_gap_bridge = any(
+        item.get("code") == "H3C-PT220"
+        and item.get("fallback_type") == "exact_prefix_fresh_gap_bridge"
+        for item in diagnostics
+        if isinstance(item, dict)
+    )
+    if compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION:
+        compiler_version = TERMINAL_PADDING_COMPILER_VERSION
+    elif fresh_gap_bridge:
+        compiler_version = _RUNTIME_FRESH_GAP_COMPILER_VERSION
+    else:
+        compiler_version = _RUNTIME_PHYSICAL_COMPILER_VERSION
     physical_hash = canonical_sha256(
         {
-            "compiler_version": _RUNTIME_PHYSICAL_COMPILER_VERSION,
+            "compiler_version": compiler_version,
             "descriptor": descriptor.semantic_dict(),
             "text": compiled.text,
             "presentation_contract": descriptor.presentation_contract,
@@ -263,7 +276,7 @@ def _with_runtime_compiler_identity(
     )
     return replace(
         compiled,
-        compiler_version=_RUNTIME_PHYSICAL_COMPILER_VERSION,
+        compiler_version=compiler_version,
         diagnostics=diagnostics,
         physical_conditioning_hash=physical_hash,
     )
@@ -283,10 +296,11 @@ def compile_invocation_prompt(
     chunk-routing boundaries. Physical overlap may remap timestamps inside the
     selected chunk body, but it must not import adjacent chunk bodies.
 
-    Timeline V3 additionally treats an exact Native Masked prefix as immutable
-    context instead of fresh authored content. This preserves the full physical
-    local clock while preventing protected-prefix scene/dialogue instructions
-    from being replayed at the start of the generated suffix.
+    Timeline V4 treats an exact Native Masked prefix as immutable context and
+    gives an uncovered fresh interval immediately after it a dedicated
+    continuity bridge. This preserves the full physical local clock without
+    extending protected-context prose into generated time or importing an
+    adjacent logical chunk body.
     """
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
@@ -295,13 +309,31 @@ def compile_invocation_prompt(
         runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(
             scoped_plan, descriptor
         )
-        compiled = compile_physical_prompt(runtime_plan, descriptor)
+        scoped_source_sha256 = canonical_sha256(scoped_plan.get("source") or {})
+        runtime_source_sha256 = canonical_sha256(runtime_plan.get("source") or {})
+        compiled = compile_physical_prompt(
+            runtime_plan,
+            descriptor,
+            neutral_terminal_padding=True,
+        )
         compiled = _with_runtime_compiler_identity(
             compiled,
             descriptor,
             protected_interval=protected_interval,
         )
-        return _with_logical_signal_diagnostic(compiled, logical_scope)
+        compiled = _with_logical_signal_diagnostic(compiled, logical_scope)
+        diagnostics = tuple(compiled.diagnostics) + (
+            {
+                "level": "info",
+                "code": "H3C-PT221",
+                "message": "recorded bounded prompt-source provenance through physical compilation",
+                "input_source_digest": str((plan.get("source") or {}).get("source_digest", "")),
+                "scoped_source_sha256": scoped_source_sha256,
+                "runtime_source_sha256": runtime_source_sha256,
+                "compiled_text_sha256": compiled.text_sha256,
+            },
+        )
+        return replace(compiled, diagnostics=diagnostics)
     return compile_legacy_nominal(plan, descriptor, text=legacy_text)
 
 def _validate_physical_timeline_video_assets(
@@ -456,6 +488,15 @@ def encode_physical_prompt_conditioning(
             presentation_digest(descriptor.presentation_contract),
         )
     cache_hit = key in cache
+    encoder_text_sha256 = text_sha256(compiled.text)
+    LOG.info(
+        "H3C-PT222 encoder-text receipt group=%s compiled_text_sha256=%s "
+        "qwen_input_sha256=%s cache_hit=%s",
+        str(getattr(descriptor, "group_id", "?")),
+        compiled.text_sha256,
+        encoder_text_sha256,
+        cache_hit,
+    )
     presentation_receipt = _physical_presentation_receipt(
         descriptor=descriptor,
         assets=assets,
@@ -528,10 +569,66 @@ def encode_physical_prompt_conditioning(
     return cache[key], compiled, metadata, key
 
 
+_SAFE_CONDITIONING_PATH_KEYS = {
+    "audio_latent",
+    "cross_attn",
+    "latent",
+    "minimax_keyframes",
+    "minimax_refs",
+    "minimax_token_tags",
+    "model_conds",
+}
+
+
+def _conditioning_path_key(key: Any, index: int) -> str:
+    name = str(key)
+    if name in _SAFE_CONDITIONING_PATH_KEYS:
+        return name
+    return f"field[{index}]"
+
+
+def _conditioning_tensor_descriptors(value: Any, *, path: str = "conditioning") -> list[dict[str, Any]]:
+    if torch.is_tensor(value):
+        return [
+            {
+                "path": path,
+                "shape": [int(part) for part in value.shape],
+                "dtype": str(value.dtype),
+            }
+        ]
+    if isinstance(value, dict):
+        descriptors: list[dict[str, Any]] = []
+        keys = sorted(value, key=lambda item: str(item))
+        for index, key in enumerate(keys):
+            descriptors.extend(
+                _conditioning_tensor_descriptors(
+                    value[key],
+                    path=f"{path}.{_conditioning_path_key(key, index)}",
+                )
+            )
+        return descriptors
+    if isinstance(value, (list, tuple)):
+        descriptors = []
+        for index, item in enumerate(value):
+            descriptors.extend(
+                _conditioning_tensor_descriptors(
+                    item,
+                    path=f"{path}[{index}]",
+                )
+            )
+        return descriptors
+    return []
+
+
 def conditioning_telemetry(conditioning: Any) -> dict[str, Any]:
     """Read compact text/layout telemetry from the actual conditioning object."""
 
-    result: dict[str, Any] = {"token_count": None, "tensor_shapes": []}
+    result: dict[str, Any] = {
+        "token_count": None,
+        "tensor_shapes": [],
+        "tensor_dtypes": [],
+        "all_tensors": _conditioning_tensor_descriptors(conditioning),
+    }
     if not isinstance(conditioning, list):
         return result
     layouts = []
@@ -542,6 +639,7 @@ def conditioning_telemetry(conditioning: Any) -> dict[str, Any]:
         if torch.is_tensor(tensor):
             shape = [int(value) for value in tensor.shape]
             result["tensor_shapes"].append(shape)
+            result["tensor_dtypes"].append(str(tensor.dtype))
             if result["token_count"] is None and len(shape) >= 2:
                 result["token_count"] = int(shape[-2])
         metadata = item[1] if len(item) > 1 and isinstance(item[1], dict) else {}
@@ -561,3 +659,174 @@ def conditioning_telemetry(conditioning: Any) -> dict[str, Any]:
     if layouts:
         result["packed_layout"] = layouts
     return result
+
+
+
+_PHYSICAL_VALIDATION_MANIFEST_SCHEMA = 1
+_PHYSICAL_INTERVAL_RECEIPT_LIMIT = 64
+
+
+def _bounded_interval_receipt(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    exact_names = {
+        "kind",
+        "logical_index",
+        "chunk_index",
+        "global_start_frame",
+        "global_end_frame",
+        "global_start",
+        "global_end",
+        "local_start",
+        "local_end",
+        "source_start",
+        "source_end",
+        "terminal_role",
+        "body_sha256",
+        "source_ordinals",
+        "fallback",
+        "roles",
+        "generation_classes",
+        "fallback_roles",
+        "inherited_origins",
+        "inherited_body_sha256s",
+        "next_authored_starts",
+        "next_authored_body_sha256s",
+        "fresh_gap",
+        "fallback_type",
+        "inherited_origin",
+        "fresh_start",
+        "input_source_digest",
+        "scoped_source_sha256",
+        "runtime_source_sha256",
+        "compiled_text_sha256",
+    }
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        name = str(key)
+        lowered = name.lower()
+        structural = (
+            name in exact_names
+            or lowered.endswith("_index")
+            or lowered.endswith("_frame")
+            or lowered.endswith("_frames")
+            or lowered.endswith("_start")
+            or lowered.endswith("_end")
+            or lowered.endswith("_sha256")
+        )
+        if not structural:
+            continue
+        if isinstance(item, (str, int, float, bool)) or item is None:
+            result[name] = item
+        elif (
+            isinstance(item, (list, tuple))
+            and len(item) <= 8
+            and all(isinstance(part, (str, int, float, bool)) or part is None for part in item)
+        ):
+            result[name] = list(item)
+    return result
+
+
+def physical_validation_manifest(
+    metadata: dict[str, Any],
+    conditioning: Any,
+) -> dict[str, Any]:
+    """Return bounded physical-timeline and conditioning provenance.
+
+    Prompt text, image data and conditioning tensors are intentionally excluded.
+    Full contributing-interval identity is retained by digest even when the
+    human-readable structural preview is capped.
+    """
+
+    if not isinstance(metadata, dict):
+        raise PhysicalPromptError("physical validation metadata must be a mapping")
+    descriptor = metadata.get("descriptor")
+    compiled = metadata.get("compiled")
+    if not isinstance(descriptor, dict) or not isinstance(compiled, dict):
+        raise PhysicalPromptError("physical validation metadata is incomplete")
+
+    intervals = compiled.get("contributing_intervals")
+    if not isinstance(intervals, list):
+        intervals = []
+    diagnostics = compiled.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        diagnostics = []
+    terminal_padding_interval = None
+    terminal_audio_guard_interval = None
+    terminal_audio_guard_structural = False
+    fresh_gaps: list[dict[str, Any]] = []
+    prompt_provenance = None
+    for item in diagnostics:
+        if not isinstance(item, dict):
+            continue
+        if item.get("code") == "H3C-PT217":
+            terminal_padding_interval = [
+                str(item.get("global_start", "")),
+                str(item.get("global_end", "")),
+            ]
+        elif item.get("code") == "H3C-PT219":
+            terminal_audio_guard_interval = [
+                str(item.get("global_start", "")),
+                str(item.get("global_end", "")),
+            ]
+            terminal_audio_guard_structural = bool(item.get("structural", False))
+        elif item.get("code") == "H3C-PT220":
+            fresh_gaps.append(_bounded_interval_receipt(item))
+        elif item.get("code") == "H3C-PT221":
+            prompt_provenance = _bounded_interval_receipt(item)
+    structural_intervals = [
+        _bounded_interval_receipt(item)
+        for item in intervals[:_PHYSICAL_INTERVAL_RECEIPT_LIMIT]
+    ]
+    telemetry = conditioning_telemetry(conditioning)
+    shapes = list(telemetry.get("tensor_shapes") or ())
+    dtypes = list(telemetry.get("tensor_dtypes") or ())
+    if len(shapes) != len(dtypes):
+        raise PhysicalPromptError("conditioning telemetry shape/dtype accounting diverged")
+    tensors = list(telemetry.get("all_tensors") or ())
+
+    return {
+        "schema": _PHYSICAL_VALIDATION_MANIFEST_SCHEMA,
+        "descriptor_digest": str(metadata.get("descriptor_digest", "")),
+        "physical_conditioning_hash": str(metadata.get("physical_conditioning_hash", "")),
+        "group": str(descriptor.get("group_id", "?")),
+        "logical_indices": list(descriptor.get("logical_indices") or ()),
+        "global_frame_interval": [
+            int(descriptor.get("global_start_frame", -1)),
+            int(descriptor.get("global_end_frame", -1)),
+        ],
+        "exact_protected_interval": descriptor.get("exact_protected_interval"),
+        "retained_suffix_interval": descriptor.get("retained_suffix_interval"),
+        "terminal_padding_interval": terminal_padding_interval,
+        "terminal_audio_guard_interval": terminal_audio_guard_interval,
+        "terminal_audio_guard_structural": terminal_audio_guard_structural,
+        "compiler_version": str(compiled.get("compiler_version", "")),
+        "text_sha256": str(compiled.get("text_sha256", "")),
+        "interval_count": len(intervals),
+        "intervals_sha256": canonical_sha256(intervals),
+        "intervals": structural_intervals,
+        "intervals_truncated": len(intervals) > _PHYSICAL_INTERVAL_RECEIPT_LIMIT,
+        "fresh_gaps": fresh_gaps[:_PHYSICAL_INTERVAL_RECEIPT_LIMIT],
+        "fresh_gaps_truncated": len(fresh_gaps) > _PHYSICAL_INTERVAL_RECEIPT_LIMIT,
+        "prompt_provenance": prompt_provenance,
+        "conditioning": {
+            "token_count": telemetry.get("token_count"),
+            "tensors": tensors,
+            "packed_layout": telemetry.get("packed_layout", []),
+        },
+    }
+
+
+
+def log_physical_validation_manifest(
+    metadata: dict[str, Any],
+    conditioning: Any,
+) -> dict[str, Any]:
+    """Log one bounded manifest for the final conditioning passed to sampling."""
+
+    manifest = physical_validation_manifest(metadata, conditioning)
+    LOG.info(
+        "H3C-PT215 physical-validation manifest=%s",
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+    )
+    return manifest
