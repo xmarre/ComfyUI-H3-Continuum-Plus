@@ -26,6 +26,7 @@ from .trajectory_diagnostics import (
     measure_decoded_boundary_trajectory,
     interpret_decoded_boundary_shot,
 )
+from .video_decode_overlap import reuse_exact_video_decode_overlap
 
 LOG = logging.getLogger("h3_continuum_join")
 
@@ -429,6 +430,44 @@ def assemble_decoded_chunks(
         elif tuple(segment_images.shape[1:]) != tuple(image_buffer.shape[1:]):
             raise ValueError(f"decoded image geometry changed at chunk {index}")
 
+        video_decode_overlap_receipt = {
+            "applied": False,
+            "reuse_frames": 0,
+            "extra_h3_nfe": 0,
+            "extra_sampler_lifetimes": 0,
+            "extra_vae_windows": 0,
+            "reason": "initial_group",
+        }
+        if index > 1 and image_buffer is not None:
+            video_decode_overlap_receipt = reuse_exact_video_decode_overlap(
+                image_buffer,
+                raw_images[:total_frames],
+                group=chunk,
+                frame_cursor=frame_cursor,
+            )
+            LOG.info(
+                "H3C-PT223 exact-video-decode-overlap receipt "
+                "boundary_global_frame=%d boundary_index=%d verified=%s applied=%s "
+                "reuse_frames=%d prefix_latents=%d reason=%s "
+                "extra_h3_nfe=%d extra_sampler_lifetimes=%d extra_vae_windows=%d",
+                frame_cursor,
+                index - 1,
+                bool(video_decode_overlap_receipt.get("verified", False)),
+                bool(video_decode_overlap_receipt["applied"]),
+                int(video_decode_overlap_receipt["reuse_frames"]),
+                int(video_decode_overlap_receipt.get("prefix_latents", 0)),
+                str(video_decode_overlap_receipt["reason"]),
+                int(video_decode_overlap_receipt["extra_h3_nfe"]),
+                int(video_decode_overlap_receipt["extra_sampler_lifetimes"]),
+                int(video_decode_overlap_receipt["extra_vae_windows"]),
+            )
+            if diagnostics_mode == DIAGNOSTICS_FULL and video_decode_overlap_receipt["applied"]:
+                reports.append(
+                    "exact video decode overlap "
+                    f"{index-1}->{index}: reused {video_decode_overlap_receipt['reuse_frames']} "
+                    "already-decoded protected-prefix frames; no extra VAE window"
+                )
+
         pt212_recorded = False
         if index > 1 and image_buffer is not None and frame_cursor > 1:
             try:
@@ -521,12 +560,18 @@ def assemble_decoded_chunks(
             LOG.info(
                 "H3C-PT216 video-assembly-patch receipt "
                 "boundary_global_frame=%d boundary_index=%d applied=%s patch_frames=%d "
-                "pre_patch_pt212_recorded=%s source=pre_patch_raw_decode",
+                "pre_patch_pt212_recorded=%s exact_decode_overlap_reuse_applied=%s source=%s",
                 frame_cursor,
                 index - 1,
                 video_patch is not None,
                 patch_frames,
                 pt212_recorded,
+                bool(video_decode_overlap_receipt["applied"]),
+                (
+                    "pre_patch_exact_decode_overlap_reuse"
+                    if video_decode_overlap_receipt["applied"]
+                    else "pre_patch_raw_decode"
+                ),
             )
 
         if audio_buffer is None:
