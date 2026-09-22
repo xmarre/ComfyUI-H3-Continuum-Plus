@@ -21,6 +21,11 @@ from ..temporal import context_slots
 
 VIDEO_DECODE_OVERLAP_CONTRACT = "h3_continuum_exact_video_decode_overlap_v1"
 VIDEO_DECODE_REUSE_FRAMES = 5
+# Native H3 temporal decode uses a 5-token stride with 2 future-overlap
+# tokens. Reusing frames decoded by the current group is exact only when its
+# protected prefix contains at least one complete 7-token decode window before
+# the boundary. A 5-frame / 2-latent Fast prefix lacks that left context.
+VIDEO_DECODE_MIN_PREFIX_LATENTS = 7
 
 
 def annotate_video_decode_overlaps(
@@ -75,7 +80,9 @@ def annotate_video_decode_overlaps(
             continue
 
         group["video_decode_overlap_prefix_latents"] = prefix_latents
-        if previous_video is None or not torch.is_tensor(previous_video) or previous_video.ndim != 5:
+        if prefix_latents < VIDEO_DECODE_MIN_PREFIX_LATENTS:
+            group["video_decode_overlap_reason"] = "insufficient_left_decode_context"
+        elif previous_video is None or not torch.is_tensor(previous_video) or previous_video.ndim != 5:
             group["video_decode_overlap_reason"] = "previous_video_latent_unavailable"
         elif (
             tuple(previous_video.shape[:2]) != tuple(video.shape[:2])
