@@ -282,8 +282,12 @@ def _transport_metadata(
     sequence_verified: bool, geometry_match: bool | None, skeleton_match: bool | None,
     fallback_reason: str | None = None, conflict: str | None = None,
     parse_error: str | None = None, legacy_separator_normalized: bool = False,
+    normalized_original_text: str | None = None,
+    normalized_expanded_text: str | None = None,
 ) -> dict[str, Any]:
     document = (payload or {}).get("prompt_document") or {}
+    sidecar_raw_sha256 = (payload or {}).get("raw_text_sha256")
+    sequence_prompt_sha256 = _sha256(expanded_text)
     return {
         "transport_version": MANAGED_PROMPT_TRANSPORT_VERSION,
         "status": str(status),
@@ -291,8 +295,20 @@ def _transport_metadata(
         "declared_routing": document.get("routing"),
         "document_origin": (payload or {}).get("prompt_document_origin"),
         "legacy_separator_normalized": bool(legacy_separator_normalized),
-        "original_text_sha256": (payload or {}).get("raw_text_sha256"),
-        "expanded_text_sha256": _sha256(expanded_text),
+        "original_text_sha256": sidecar_raw_sha256,
+        "expanded_text_sha256": sequence_prompt_sha256,
+        "managed_sidecar_raw_sha256": sidecar_raw_sha256,
+        "sequence_prompt_sha256": sequence_prompt_sha256,
+        "normalized_original_text_sha256": (
+            _sha256(normalized_original_text)
+            if isinstance(normalized_original_text, str)
+            else None
+        ),
+        "normalized_expanded_text_sha256": (
+            _sha256(normalized_expanded_text)
+            if isinstance(normalized_expanded_text, str)
+            else None
+        ),
         "geometry_match": geometry_match,
         "skeleton_match": skeleton_match,
         "sequence_verified": bool(sequence_verified),
@@ -388,6 +404,8 @@ def resolve_managed_prompt_plan(
                                     geometry_match=True,
                                     skeleton_match=True,
                                     legacy_separator_normalized=normalized,
+                                    normalized_original_text=original_legacy,
+                                    normalized_expanded_text=expanded_legacy,
                                 ),
                             )
                     elif not geometry_match:

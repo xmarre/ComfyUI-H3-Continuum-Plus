@@ -121,6 +121,11 @@ def test_legacy_state_manager_inline_chunk_separators_are_recovered_without_manu
     assert receipt["status"] == "verified_legacy_sequence"
     assert receipt["document_origin"] == "legacy_absent"
     assert receipt["legacy_separator_normalized"] is True
+    assert receipt["normalized_original_text_sha256"] is not None
+    assert receipt["normalized_expanded_text_sha256"] is not None
+    assert receipt["sequence_prompt_sha256"] == hashlib.sha256(
+        text.encode("utf-8")
+    ).hexdigest()
     assert receipt["geometry_match"] is True
     assert receipt["skeleton_match"] is True
     assert receipt["sequence_verified"] is True
@@ -295,7 +300,15 @@ def test_impact_body_expansion_can_change_prose_without_changing_structure():
     plan = _plan(expanded=expanded)
     assert plan["mode"] == PROMPT_MODE_TIMELINE
     assert "ONE_RED_CUBE_EXPANDED" in plan["prompts"][0]
-    assert plan["managed_prompt_transport"]["skeleton_match"] is True
+    receipt = plan["managed_prompt_transport"]
+    assert receipt["skeleton_match"] is True
+    assert receipt["managed_sidecar_raw_sha256"] == hashlib.sha256(
+        CANONICAL.encode("utf-8")
+    ).hexdigest()
+    assert receipt["sequence_prompt_sha256"] == hashlib.sha256(
+        expanded.encode("utf-8")
+    ).hexdigest()
+    assert receipt["managed_sidecar_raw_sha256"] != receipt["sequence_prompt_sha256"]
 
 
 def test_impact_header_injection_falls_back_instead_of_activating_schedule():

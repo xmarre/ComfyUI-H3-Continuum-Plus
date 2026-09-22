@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+## 3.4.4
+
+Coordinated production release with [ComfyUI-Sol-H3 v0.1.6](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.6), [ComfyUI-VDN-H3-Plus v1.5.6](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.6), and [MiniMax H3 Flow-Aligned Regenerate v0.3.6](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.6). [Spectrum MiniMax H3 v0.2.28](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.28) remains unchanged.
+
+Production consolidation PRs: [Continuum #34](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/34), [Sol-H3 #32](https://github.com/xmarre/ComfyUI-Sol-H3/pull/32), [VDN-H3-Plus #32](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/32), and [Flow #73](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/73). Continuum #34 consolidates the validated Continuum #33 source line without merging its intermediate diagnostic PRs.
+
+### Physical carried-audio phase
+
+- Adds phase-aware external audio assembly using exact carried H3 audio prefixes as the proof of the global 40 Hz latent origin.
+- Applies only mathematically proven phase corrections; unanchored, broken or insufficient-tail cases fail closed to the existing native assembly path.
+- Preserves raw audio latents, avoids resampling, and leaves legacy plans byte-for-byte on their established path when no phase proof exists.
+
+### Structural terminal duration
+
+- Makes the end-of-sequence speech-free lead-out a real timed physical interval rather than relying on authored speech extending into native-grid padding.
+- Replaces discarded native-grid overrun with neutral terminal padding and records the exact terminal trim.
+- Removes the globally active natural-language "Terminal audio completion contract" preamble after hardware evidence showed that H3 could literally vocalize that control prose at the beginning of the final chunk.
+
+### Fresh post-prefix ownership
+
+- Keeps the exact Native Masked prefix immutable and separate from newly generated time.
+- Gives an uncovered fresh interval immediately after the protected prefix its own continuity bridge instead of extending protected-context prose into generated time.
+- The bridge preserves the existing shot/action/ambient context without importing the previous logical chunk body, restaging a Reference Image, or beginning the next timed event early.
+- Adds bounded prompt-source/compiler/Qwen receipts so the authoritative State Manager prompt, compiled physical text and actual Qwen input can be distinguished without logging user prompt contents.
+
+### Hardware validation
+
+Two production confirmation renders, 00603 and 00604, were both reported clean:
+
+- no Reference Image / `<Picture 1>` restage at the chunk-2 → chunk-3 boundary;
+- no chunk-2 speech or gibberish repeated into chunk 3;
+- no vocalized terminal-control prose;
+- exact carried-audio interior correlation remained approximately `0.999997`;
+- frame 328 remained a continuous-shot candidate with `scene_cut=False`;
+- the terminal finalizer trimmed the expected 11-frame native-grid overrun from 515 to 504 frames.
+
+The two runs used different authoritative chunk-3 prompt bodies and both remained clean, which closes the prompt-boundary behavioral gate for the Continuum fix.
+
+Validation-scope note: these later Continuum confirmation runs also had a separate Flow diagnostic overlay enabled. That Flow diagnostic remains unreleased. The evidence here establishes the Continuum prompt/audio-boundary behavior; the coordinated Flow v0.3.6 release is independently based on Flow #70 / run 00575.
+
+### Release scope
+
+Keyless research, decoded-boundary diagnostic PRs and prompt-provenance diagnostic PRs are not merged as independent production PRs. Their evidence informed the final implementation, but v3.4.4 ships the consolidated production tree only.
+
 ## 3.4.3
 
 - Scope First Frame Qwen visual presentation to the initial physical sample only. Continuation chunks now use carried/generated context plus persistent Reference Images, and conditioning cache identity distinguishes initial First-Frame-bearing embeddings from continuation embeddings.
