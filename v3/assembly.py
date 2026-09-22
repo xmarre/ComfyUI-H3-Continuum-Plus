@@ -23,6 +23,7 @@ from .plan import FPS, validate_assembly_plan
 from .trajectory_diagnostics import (
     measure_decoded_audio_boundary,
     measure_decoded_audio_overlap_context,
+    measure_decoded_boundary_affine,
     measure_decoded_boundary_trajectory,
     interpret_decoded_boundary_shot,
 )
@@ -447,8 +448,17 @@ def assemble_decoded_chunks(
                     forward_frames=6,
                     previous_transitions=4,
                 )
+                affine = measure_decoded_boundary_affine(
+                    previous_window,
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_global_frame=frame_cursor,
+                    forward_frames=3,
+                    previous_transitions=3,
+                )
                 for roi_name in ("upper45", "full"):
                     fields = trajectory[roi_name]
+                    affine_fields = affine[roi_name]
                     LOG.info(
                         "H3C-PT212 decoded-trajectory receipt "
                         "boundary_global_frame=%d trim_frame=%d roi=%s "
@@ -486,6 +496,43 @@ def assemble_decoded_chunks(
                         shot["scene_cut_score"],
                         shot["production_gate"],
                     )
+                    LOG.info(
+                        "H3C-PT224 decoded-affine receipt "
+                        "boundary_global_frame=%d trim_frame=%d roi=%s "
+                        "boundary_scale_x=%.8f boundary_scale_y=%.8f "
+                        "boundary_translation_x_px=%+.4f "
+                        "boundary_translation_y_px=%+.4f "
+                        "boundary_fit_residual_x_px=%.6f "
+                        "boundary_fit_residual_y_px=%.6f "
+                        "boundary_scale_confidence_x=%.6f "
+                        "boundary_scale_confidence_y=%.6f "
+                        "pre_median_scale_x=%.8f pre_median_scale_y=%.8f "
+                        "post_first3_median_scale_x=%.8f "
+                        "post_first3_median_scale_y=%.8f "
+                        "pairwise_scale_x=%s pairwise_scale_y=%s "
+                        "pairwise_translation_x_px=%s "
+                        "pairwise_translation_y_px=%s "
+                        "production_gate=false",
+                        int(affine["boundary_global_frame"]),
+                        int(affine["current_trim_frame"]),
+                        roi_name,
+                        affine_fields["boundary_scale_x"],
+                        affine_fields["boundary_scale_y"],
+                        affine_fields["boundary_translation_x_px"],
+                        affine_fields["boundary_translation_y_px"],
+                        affine_fields["boundary_fit_residual_x_px"],
+                        affine_fields["boundary_fit_residual_y_px"],
+                        affine_fields["boundary_scale_confidence_x"],
+                        affine_fields["boundary_scale_confidence_y"],
+                        affine_fields["pre_median_scale_x"],
+                        affine_fields["pre_median_scale_y"],
+                        affine_fields["post_first3_median_scale_x"],
+                        affine_fields["post_first3_median_scale_y"],
+                        affine_fields["pairwise_scale_x"],
+                        affine_fields["pairwise_scale_y"],
+                        affine_fields["pairwise_translation_x_px"],
+                        affine_fields["pairwise_translation_y_px"],
+                    )
                     pt212_recorded = True
                     if diagnostics_mode == DIAGNOSTICS_FULL:
                         reports.append(
@@ -494,7 +541,13 @@ def assemble_decoded_chunks(
                             f"dy={fields['pairwise_dy_px']}, "
                             f"net={fields['pairwise_net_dy_px']:+.3f}px, "
                             f"pre_median={fields['pre_median_dy_px']:+.3f}px, "
-                            f"shot={shot['pt212_interpretation']}"
+                            f"shot={shot['pt212_interpretation']}; "
+                            f"affine scale="
+                            f"({affine_fields['boundary_scale_x']:.6f},"
+                            f"{affine_fields['boundary_scale_y']:.6f}), "
+                            f"translation="
+                            f"({affine_fields['boundary_translation_x_px']:+.3f},"
+                            f"{affine_fields['boundary_translation_y_px']:+.3f})px"
                         )
             except Exception as exc:
                 LOG.warning(
