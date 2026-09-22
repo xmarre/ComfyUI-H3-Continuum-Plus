@@ -220,6 +220,345 @@ def _trajectory_for_roi(
     }
 
 
+
+def _weighted_axis_affine_fit(
+    positions: list[float],
+    displacements: list[float],
+    responses: list[float],
+) -> dict[str, float]:
+    if (
+        not positions
+        or len(positions) != len(displacements)
+        or len(positions) != len(responses)
+    ):
+        raise ValueError("decoded affine fit requires matching non-empty samples")
+
+    weights = [max(1.0, min(50.0, float(value))) for value in responses]
+    weight_sum = sum(weights)
+    mean_position = sum(
+        weight * value for weight, value in zip(weights, positions)
+    ) / weight_sum
+    mean_displacement = sum(
+        weight * value for weight, value in zip(weights, displacements)
+    ) / weight_sum
+    position_energy = sum(
+        weight * (value - mean_position) ** 2
+        for weight, value in zip(weights, positions)
+    )
+    slope = (
+        sum(
+            weight
+            * (position - mean_position)
+            * (displacement - mean_displacement)
+            for weight, position, displacement in zip(
+                weights, positions, displacements
+            )
+        )
+        / position_energy
+        if position_energy > _EPS
+        else 0.0
+    )
+    translation = mean_displacement - slope * mean_position
+    residual = math.sqrt(
+        sum(
+            weight * (displacement - (slope * position + translation)) ** 2
+            for weight, position, displacement in zip(
+                weights, positions, displacements
+            )
+        )
+        / weight_sum
+    )
+    translation_only_residual = math.sqrt(
+        sum(
+            weight * (displacement - mean_displacement) ** 2
+            for weight, displacement in zip(weights, displacements)
+        )
+        / weight_sum
+    )
+    scale_confidence = max(
+        0.0,
+        min(
+            1.0,
+            (translation_only_residual - residual)
+            / max(translation_only_residual, 0.05),
+        ),
+    )
+    return {
+        "scale": 1.0 + slope,
+        "translation": translation,
+        "residual": residual,
+        "translation_only_residual": translation_only_residual,
+        "scale_confidence": scale_confidence,
+    }
+
+
+def _decoded_local_affine_fit(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    *,
+    roi_fraction: float,
+    max_shift: int,
+    scale_x: float,
+    scale_y: float,
+) -> dict[str, float | int]:
+    """Fit separable affine geometry from local decoded-frame translations."""
+    if left.shape != right.shape or left.ndim != 3:
+        raise ValueError(
+            "decoded affine diagnostics require matching CxHxW frames"
+        )
+    roi_fraction = float(roi_fraction)
+    if not math.isfinite(roi_fraction) or not 0.0 < roi_fraction <= 1.0:
+        raise ValueError("decoded affine roi_fraction must be in (0, 1]")
+    if scale_x <= 0.0 or scale_y <= 0.0:
+        raise ValueError("decoded affine comparison scales must be positive")
+
+    height, width = map(int, left.shape[-2:])
+    roi_height = max(8, min(height, int(round(height * roi_fraction))))
+    patch_height = max(8, min(roi_height, int(round(roi_height * 0.50))))
+    patch_width = max(8, min(width, int(round(width * 0.45))))
+
+    def starts(extent: int, patch: int) -> list[int]:
+        if patch >= extent:
+            return [0]
+        return sorted({0, (extent - patch) // 2, extent - patch})
+
+    sample_x: list[float] = []
+    sample_y: list[float] = []
+    sample_dx: list[float] = []
+    sample_dy: list[float] = []
+    sample_response: list[float] = []
+    clipped_count = 0
+
+    for y0 in starts(roi_height, patch_height):
+        for x0 in starts(width, patch_width):
+            shift = _phase_correlation_shift(
+                left[..., y0 : y0 + patch_height, x0 : x0 + patch_width],
+                right[..., y0 : y0 + patch_height, x0 : x0 + patch_width],
+                roi_fraction=1.0,
+                max_shift_x=max_shift,
+                max_shift_y=max_shift,
+            )
+            sample_x.append(float(x0) + (patch_width - 1) / 2.0)
+            sample_y.append(float(y0) + (patch_height - 1) / 2.0)
+            sample_dx.append(float(shift["dx"]))
+            sample_dy.append(float(shift["dy"]))
+            sample_response.append(float(shift["response"]))
+            clipped_count += int(bool(shift["clipped"]))
+
+    x_fit = _weighted_axis_affine_fit(sample_x, sample_dx, sample_response)
+    y_fit = _weighted_axis_affine_fit(sample_y, sample_dy, sample_response)
+    median_response = float(
+        torch.tensor(sample_response, dtype=torch.float32).median().item()
+    )
+    return {
+        "scale_x": float(x_fit["scale"]),
+        "scale_y": float(y_fit["scale"]),
+        "translation_x_px": float(x_fit["translation"]) / scale_x,
+        "translation_y_px": float(y_fit["translation"]) / scale_y,
+        "fit_residual_x_px": float(x_fit["residual"]) / scale_x,
+        "fit_residual_y_px": float(y_fit["residual"]) / scale_y,
+        "translation_only_residual_x_px": float(
+            x_fit["translation_only_residual"]
+        )
+        / scale_x,
+        "translation_only_residual_y_px": float(
+            y_fit["translation_only_residual"]
+        )
+        / scale_y,
+        "scale_confidence_x": float(x_fit["scale_confidence"]),
+        "scale_confidence_y": float(y_fit["scale_confidence"]),
+        "median_patch_response": median_response,
+        "clipped_patch_fraction": float(clipped_count)
+        / float(len(sample_response)),
+        "patch_count": len(sample_response),
+    }
+
+
+def _decoded_affine_for_roi(
+    previous: torch.Tensor,
+    current: torch.Tensor,
+    *,
+    roi_fraction: float,
+    scale_x: float,
+    scale_y: float,
+    forward_frames: int,
+    previous_transitions: int,
+) -> dict[str, Any]:
+    max_pair_shift = max(4, int(round(COMPARE_LONG_SIDE * 0.02)))
+    field_names = (
+        "scale_x",
+        "scale_y",
+        "translation_x_px",
+        "translation_y_px",
+        "fit_residual_x_px",
+        "fit_residual_y_px",
+        "translation_only_residual_x_px",
+        "translation_only_residual_y_px",
+        "scale_confidence_x",
+        "scale_confidence_y",
+        "median_patch_response",
+        "clipped_patch_fraction",
+    )
+
+    def collect(pairs: list[tuple[int, int]]) -> dict[str, list[float]]:
+        result = {name: [] for name in field_names}
+        sequence = torch.cat((previous, current), dim=0)
+        previous_count = int(previous.shape[0])
+        for left_index, right_index in pairs:
+            def frame(index: int) -> torch.Tensor:
+                if index < previous_count:
+                    return previous[index]
+                return current[index - previous_count]
+
+            fit = _decoded_local_affine_fit(
+                frame(left_index),
+                frame(right_index),
+                roi_fraction=roi_fraction,
+                max_shift=max_pair_shift,
+                scale_x=scale_x,
+                scale_y=scale_y,
+            )
+            for name in field_names:
+                result[name].append(float(fit[name]))
+        del sequence
+        return result
+
+    previous_count = int(previous.shape[0])
+    pre_start = max(0, previous_count - int(previous_transitions) - 1)
+    pre_pairs = [
+        (index - 1, index)
+        for index in range(max(1, pre_start + 1), previous_count)
+    ]
+    pairwise_count = min(int(forward_frames), int(current.shape[0]))
+    pairwise_pairs: list[tuple[int, int]] = []
+    if pairwise_count:
+        pairwise_pairs.append((previous_count - 1, previous_count))
+        for offset in range(1, pairwise_count):
+            pairwise_pairs.append(
+                (previous_count + offset - 1, previous_count + offset)
+            )
+
+    pre = collect(pre_pairs)
+    pairwise = collect(pairwise_pairs)
+
+    def median_or(values: list[float], default: float) -> float:
+        if not values:
+            return default
+        return float(
+            torch.tensor(values, dtype=torch.float32).median().item()
+        )
+
+    return {
+        "pre_pairwise_scale_x": pre["scale_x"],
+        "pre_pairwise_scale_y": pre["scale_y"],
+        "pre_pairwise_translation_x_px": pre["translation_x_px"],
+        "pre_pairwise_translation_y_px": pre["translation_y_px"],
+        "pairwise_scale_x": pairwise["scale_x"],
+        "pairwise_scale_y": pairwise["scale_y"],
+        "pairwise_translation_x_px": pairwise["translation_x_px"],
+        "pairwise_translation_y_px": pairwise["translation_y_px"],
+        "pairwise_fit_residual_x_px": pairwise["fit_residual_x_px"],
+        "pairwise_fit_residual_y_px": pairwise["fit_residual_y_px"],
+        "pairwise_scale_confidence_x": pairwise["scale_confidence_x"],
+        "pairwise_scale_confidence_y": pairwise["scale_confidence_y"],
+        "pairwise_median_patch_response": pairwise["median_patch_response"],
+        "pairwise_clipped_patch_fraction": pairwise[
+            "clipped_patch_fraction"
+        ],
+        "pre_median_scale_x": median_or(pre["scale_x"], 1.0),
+        "pre_median_scale_y": median_or(pre["scale_y"], 1.0),
+        "post_first3_median_scale_x": median_or(
+            pairwise["scale_x"][:3], 1.0
+        ),
+        "post_first3_median_scale_y": median_or(
+            pairwise["scale_y"][:3], 1.0
+        ),
+        "boundary_scale_x": float(pairwise["scale_x"][0]),
+        "boundary_scale_y": float(pairwise["scale_y"][0]),
+        "boundary_translation_x_px": float(
+            pairwise["translation_x_px"][0]
+        ),
+        "boundary_translation_y_px": float(
+            pairwise["translation_y_px"][0]
+        ),
+        "boundary_fit_residual_x_px": float(
+            pairwise["fit_residual_x_px"][0]
+        ),
+        "boundary_fit_residual_y_px": float(
+            pairwise["fit_residual_y_px"][0]
+        ),
+        "boundary_scale_confidence_x": float(
+            pairwise["scale_confidence_x"][0]
+        ),
+        "boundary_scale_confidence_y": float(
+            pairwise["scale_confidence_y"][0]
+        ),
+    }
+
+
+def measure_decoded_boundary_affine(
+    previous_images: torch.Tensor,
+    current_raw_images: torch.Tensor,
+    *,
+    trim_frames: int,
+    boundary_global_frame: int,
+    forward_frames: int = 3,
+    previous_transitions: int = 3,
+) -> dict[str, Any]:
+    """Measure decoded boundary scale/affine geometry without altering assembly."""
+    _validate_images(previous_images, "previous decoded affine frames")
+    _validate_images(current_raw_images, "current decoded affine frames")
+    trim_frames = int(trim_frames)
+    if int(previous_images.shape[0]) < 2:
+        raise ValueError("decoded affine diagnostic requires previous frames")
+    if trim_frames < 0 or trim_frames >= int(current_raw_images.shape[0]):
+        raise ValueError("decoded affine trim position is outside current frames")
+
+    available = int(current_raw_images.shape[0]) - trim_frames
+    forward_frames = min(max(1, int(forward_frames)), available)
+    previous_start = max(
+        0,
+        int(previous_images.shape[0]) - max(2, int(previous_transitions) + 1),
+    )
+    previous_rgb, scale_x, scale_y = _prepare_rgb(
+        previous_images[previous_start:]
+    )
+    current_rgb, current_scale_x, current_scale_y = _prepare_rgb(
+        current_raw_images[trim_frames : trim_frames + forward_frames]
+    )
+    if not math.isclose(
+        scale_x, current_scale_x, rel_tol=0.0, abs_tol=1.0e-9
+    ) or not math.isclose(
+        scale_y, current_scale_y, rel_tol=0.0, abs_tol=1.0e-9
+    ):
+        raise ValueError("decoded affine geometry changed across boundary")
+
+    return {
+        "affine_version": 1,
+        "boundary_global_frame": int(boundary_global_frame),
+        "current_trim_frame": trim_frames,
+        "forward_frames": forward_frames,
+        "comparison_long_side": COMPARE_LONG_SIDE,
+        "upper45": _decoded_affine_for_roi(
+            previous_rgb,
+            current_rgb,
+            roi_fraction=0.45,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            forward_frames=forward_frames,
+            previous_transitions=previous_transitions,
+        ),
+        "full": _decoded_affine_for_roi(
+            previous_rgb,
+            current_rgb,
+            roi_fraction=1.0,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            forward_frames=forward_frames,
+            previous_transitions=previous_transitions,
+        ),
+    }
+
 def interpret_decoded_boundary_shot(
     previous_images: torch.Tensor,
     current_raw_images: torch.Tensor,
