@@ -18,10 +18,26 @@ from typing import Any, Iterable
 PHYSICAL_DESCRIPTOR_VERSION = 1
 COMPILED_PHYSICAL_PROMPT_VERSION = 1
 PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v2"
+TERMINAL_PADDING_COMPILER_VERSION = "physical_timeline_text_v7"
 LEGACY_COMPILER_VERSION = "legacy_nominal_v1"
 PHYSICAL_PROMPT_ENV = "H3_CONTINUUM_PHYSICAL_PROMPTS"
 PHYSICAL_TIMELINE_VIDEO_ENV = "H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO"
 _RENDER_QUANTUM = Decimal("0.000001")
+_TERMINAL_AUDIO_LEADOUT_BODY = (
+    "Terminal speech-free lead-out. All speech, dialogue, narration, and vocalization are already "
+    "complete before this interval. Do not begin or continue any speech here. Continue the immediately "
+    "preceding visual action and non-speech ambience naturally through the exact output endpoint."
+)
+_TERMINAL_PADDING_CONTEXT_BODY = (
+    "Terminal latent-grid padding only. The final output ends before this interval and this interval "
+    "will be discarded. Do not begin, continue, or delay speech, dialogue, actions, or authored events "
+    "into this padding; complete all requested content before this interval begins."
+)
+_EXACT_PREFIX_FRESH_GAP_BODY = (
+    "Continuous transition of the existing shot and ongoing visual action. Preserve the same subject, "
+    "environment, camera, motion, and ambient sound only. Do not restart prior content, introduce "
+    "a new shot, or begin the next timed event early."
+)
 # Recovered 00418 production prompts use an outer bracket Timeline section with
 # strict bare range lines (for example ``7-8s:``) inside its body. V1 treated
 # those lines as opaque prose. V2 recognizes only this deliberately narrow,
@@ -489,6 +505,33 @@ def _source_ordinals(items: Iterable[dict[str, Any]]) -> list[int]:
     )
 
 
+def _candidate_origin(item: dict[str, Any] | None) -> str:
+    if not isinstance(item, dict):
+        return "none"
+    runtime_origin = item.get("_runtime_origin")
+    if runtime_origin:
+        return str(runtime_origin)
+    return "authored"
+
+
+def _next_authored_candidate(
+    candidates: list[dict[str, Any]], start: Fraction
+) -> dict[str, Any] | None:
+    usable = [
+        item
+        for item in candidates
+        if item["_start"] >= start and _candidate_origin(item) != "exact_prefix_context"
+    ]
+    usable.sort(
+        key=lambda item: (
+            item["_start"],
+            -_priority(item)[0],
+            int(item.get("ordinal", 0)),
+        )
+    )
+    return usable[0] if usable else None
+
+
 def _earliest_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
     usable = sorted(
         candidates,
@@ -528,6 +571,20 @@ def _join_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
             joined[-1]["sources"].extend(segment["sources"])
             joined[-1]["sources"] = sorted(set(joined[-1]["sources"]))
             joined[-1]["fallback"] = bool(joined[-1]["fallback"] or segment["fallback"])
+            for key in (
+                "roles",
+                "generation_classes",
+                "fallback_roles",
+                "inherited_origins",
+                "inherited_body_sha256s",
+                "next_authored_starts",
+                "next_authored_body_sha256s",
+            ):
+                existing = list(joined[-1].get(key) or ())
+                for value in segment.get(key) or ():
+                    if value not in existing:
+                        existing.append(value)
+                joined[-1][key] = existing
             continue
         joined.append(dict(segment))
     return joined
@@ -600,6 +657,8 @@ def _render_segments(
 def compile_physical_prompt(
     plan: dict[str, Any],
     descriptor: PhysicalSampleDescriptor,
+    *,
+    neutral_terminal_padding: bool = False,
 ) -> CompiledPhysicalPrompt:
     """Compile one physical-local Qwen text sequence from schema-2 source.
 
@@ -619,11 +678,27 @@ def compile_physical_prompt(
     domain_end = Fraction(chunks, 1) * chunk_seconds
     start = descriptor.global_start_seconds
     end = descriptor.global_end_seconds
+    output_end = Fraction(int(descriptor.target_duration_frames), 1) / descriptor.fps
+    if output_end <= 0:
+        raise PhysicalPromptError("physical prompt output horizon is invalid")
     candidates = _resolved_candidates(source, chunk_seconds)
     if not candidates:
         return compile_legacy_nominal(plan, descriptor)
 
+    terminal_padding = bool(neutral_terminal_padding and end > output_end)
+    terminal_audio_guard_start: Fraction | None = None
+    if terminal_padding:
+        padding_duration = end - output_end
+        fresh_start = Fraction(int(descriptor.retained_before), 1) / descriptor.fps
+        candidate_guard_start = max(start, fresh_start, output_end - padding_duration)
+        if candidate_guard_start < output_end:
+            terminal_audio_guard_start = candidate_guard_start
+
     boundaries = {start, end, Fraction(0, 1), domain_end}
+    if terminal_padding:
+        boundaries.add(output_end)
+    if terminal_audio_guard_start is not None:
+        boundaries.add(terminal_audio_guard_start)
     for item in candidates:
         boundaries.add(item["_start"])
         boundaries.add(item["_end"])
@@ -636,8 +711,17 @@ def compile_physical_prompt(
     first_item = _earliest_candidate(candidates)
     first_body = str(first_item.get("body", "")) if first_item is not None else ""
     first_sources = _source_ordinals([first_item]) if first_item is not None else []
+    first_origin = _candidate_origin(first_item)
     previous_body: str | None = None
     previous_sources: list[int] = []
+    previous_origin = "none"
+    fresh_start = Fraction(int(descriptor.retained_before), 1) / descriptor.fps
+    exact_interval = descriptor.exact_protected_interval
+    exact_start = None
+    exact_end = None
+    if isinstance(exact_interval, (tuple, list)) and len(exact_interval) == 2:
+        exact_start = Fraction(int(exact_interval[0]), 1) / descriptor.fps
+        exact_end = Fraction(int(exact_interval[1]), 1) / descriptor.fps
     # Find the authored body immediately before the requested domain end for
     # physical native-grid overrun. Do not pull future authored sections in.
     before_end = [item for item in candidates if item["_start"] < domain_end]
@@ -646,6 +730,19 @@ def compile_physical_prompt(
     overrun_body = str(overrun_item.get("body", first_body)) if overrun_item is not None else first_body
     overrun_sources = _source_ordinals([overrun_item]) if overrun_item is not None else first_sources
     diagnostics: list[dict[str, Any]] = []
+    if terminal_padding:
+        diagnostics.append(
+            {
+                "level": "info",
+                "code": "H3C-PT217",
+                "message": (
+                    "replaced native-grid overrun beyond the exact output horizon with neutral "
+                    "terminal padding so authored speech and events finish before duration trim"
+                ),
+                "global_start": fraction_string(output_end),
+                "global_end": fraction_string(end),
+            }
+        )
     refined_outer = sorted(
         {
             str(item.get("outer_header"))
@@ -669,11 +766,28 @@ def compile_physical_prompt(
             continue
         fallback = False
         sources: list[int] = []
+        role = "authored"
+        origin = "none"
+        fallback_role = None
+        inherited_origin = None
+        inherited_body_sha256 = None
+        next_authored_start = None
+        next_authored_body_sha256 = None
+        if exact_start is not None and exact_end is not None and left >= exact_start and right <= exact_end:
+            generation_class = "exact_prefix"
+        elif left >= fresh_start:
+            generation_class = "fresh_generation"
+        else:
+            generation_class = "context"
+
         if right <= 0:
             body = first_body
             sources = list(first_sources)
             fallback = True
             fallback_status = "unknown_prior_state"
+            role = "fallback"
+            origin = first_origin
+            fallback_role = "unknown_prior_state"
             diagnostics.append(
                 {
                     "level": "warning",
@@ -681,10 +795,31 @@ def compile_physical_prompt(
                     "message": "physical window precedes the new sequence origin; extended the earliest resolved body as textual lead-in",
                 }
             )
+        elif terminal_padding and left >= output_end:
+            body = _TERMINAL_PADDING_CONTEXT_BODY
+            sources = []
+            fallback = True
+            role = "terminal_padding"
+            origin = "terminal_padding"
+            fallback_role = "terminal_padding"
+            if fallback_status == "none":
+                fallback_status = "terminal_padding"
+        elif terminal_audio_guard_start is not None and left >= terminal_audio_guard_start:
+            # This is a real physical prompt interval, not a global advisory. The
+            # authored body is intentionally absent here so speech instructions
+            # cannot remain active through the exact-duration cut.
+            body = _TERMINAL_AUDIO_LEADOUT_BODY
+            sources = []
+            fallback = False
+            role = "terminal_audio_leadout"
+            origin = "terminal_audio_leadout"
         elif left >= domain_end:
             body = overrun_body
             sources = list(overrun_sources)
             fallback = True
+            role = "fallback"
+            origin = _candidate_origin(overrun_item)
+            fallback_role = "physical_overrun_hold"
             if fallback_status == "none":
                 fallback_status = "physical_overrun_hold"
         else:
@@ -693,16 +828,66 @@ def compile_physical_prompt(
             sources = _source_ordinals(active)
             if body is None:
                 fallback = True
-                if previous_body is not None:
+                role = "fallback"
+                next_item = _next_authored_candidate(candidates, right)
+                exact_prefix_fresh_gap = bool(
+                    exact_end is not None
+                    and left >= exact_end
+                    and generation_class == "fresh_generation"
+                    and next_item is not None
+                    and previous_body is not None
+                    and previous_origin == "exact_prefix_context"
+                )
+                if exact_prefix_fresh_gap:
+                    body = _EXACT_PREFIX_FRESH_GAP_BODY
+                    sources = []
+                    origin = "exact_prefix_fresh_gap"
+                    fallback_role = "exact_prefix_fresh_gap_bridge"
+                    inherited_origin = previous_origin
+                    inherited_body_sha256 = text_sha256(previous_body)
+                    if fallback_status == "none":
+                        fallback_status = "exact_prefix_fresh_gap_bridge"
+                elif previous_body is not None:
                     body = previous_body
                     sources = list(previous_sources)
+                    origin = previous_origin
+                    fallback_role = "gap_hold_previous"
+                    inherited_origin = previous_origin
+                    inherited_body_sha256 = text_sha256(previous_body)
                     if fallback_status == "none":
                         fallback_status = "gap_hold_previous"
                 else:
                     body = first_body
                     sources = list(first_sources)
+                    origin = first_origin
+                    fallback_role = "leading_gap_earliest"
+                    inherited_origin = first_origin
+                    inherited_body_sha256 = text_sha256(first_body)
                     if fallback_status == "none":
                         fallback_status = "leading_gap_earliest"
+                if next_item is not None:
+                    next_authored_start = fraction_string(next_item["_start"])
+                    next_authored_body_sha256 = text_sha256(str(next_item.get("body", "")))
+                if exact_prefix_fresh_gap:
+                    diagnostics.append(
+                        {
+                            "level": "info",
+                            "code": "H3C-PT220",
+                            "message": "fresh post-prefix gap uses a dedicated continuity bridge before the next authored interval",
+                            "fresh_gap": True,
+                            "global_start": fraction_string(left),
+                            "global_end": fraction_string(right),
+                            "local_start": fraction_string(left - start),
+                            "local_end": fraction_string(right - start),
+                            "fresh_start": fraction_string(fresh_start),
+                            "fallback_type": str(fallback_role),
+                            "inherited_origin": str(inherited_origin),
+                            "inherited_body_sha256": str(inherited_body_sha256),
+                            "body_sha256": text_sha256(str(body)),
+                            "next_authored_start": next_authored_start,
+                            "next_authored_body_sha256": next_authored_body_sha256,
+                        }
+                    )
                 diagnostics.append(
                     {
                         "level": "warning",
@@ -712,8 +897,16 @@ def compile_physical_prompt(
                         "global_end": fraction_string(right),
                     }
                 )
+            else:
+                origin = _candidate_origin(active[0] if active else None)
+                role = (
+                    "exact_prefix_context"
+                    if origin == "exact_prefix_context"
+                    else "authored"
+                )
         previous_body = str(body)
         previous_sources = list(sources)
+        previous_origin = str(origin)
         segments.append(
             {
                 "start": left,
@@ -721,11 +914,47 @@ def compile_physical_prompt(
                 "body": str(body),
                 "sources": sources,
                 "fallback": fallback,
+                "roles": [role],
+                "generation_classes": [generation_class],
+                "fallback_roles": [fallback_role] if fallback_role else [],
+                "inherited_origins": [inherited_origin] if inherited_origin else [],
+                "inherited_body_sha256s": (
+                    [inherited_body_sha256] if inherited_body_sha256 else []
+                ),
+                "next_authored_starts": (
+                    [next_authored_start] if next_authored_start else []
+                ),
+                "next_authored_body_sha256s": (
+                    [next_authored_body_sha256] if next_authored_body_sha256 else []
+                ),
             }
         )
 
     segments = _join_segments(segments)
     preamble = str(source.get("preamble", "")).strip()
+    if terminal_audio_guard_start is not None:
+        local_guard_start = terminal_audio_guard_start - start
+        local_output_end = output_end - start
+        # The speech-free lead-out is already a real timed interval. Do not also
+        # inject globally active natural-language control prose into the preamble:
+        # H3 can vocalize that prose at the beginning of the generated suffix.
+        diagnostics.append(
+            {
+                "level": "info",
+                "code": "H3C-PT219",
+                "message": (
+                    "replaced the final authored interval with a structural speech-free lead-out "
+                    "for one native-grid-overrun duration before the exact output endpoint"
+                ),
+                "global_start": fraction_string(terminal_audio_guard_start),
+                "global_end": fraction_string(output_end),
+                "local_start": fraction_string(local_guard_start),
+                "local_end": fraction_string(local_output_end),
+                "guard_duration": fraction_string(output_end - terminal_audio_guard_start),
+                "structural": True,
+                "authored_body_suppressed": True,
+            }
+        )
     duration = end - start
     if len(segments) == 1 and segments[0]["start"] == start and segments[0]["end"] == end:
         body = segments[0]["body"].strip()
@@ -738,6 +967,12 @@ def compile_physical_prompt(
     for segment in segments:
         local_start = segment["start"] - start
         local_end = segment["end"] - start
+        if segment["body"] == _TERMINAL_AUDIO_LEADOUT_BODY:
+            terminal_role = "speech_free_leadout"
+        elif segment["body"] == _TERMINAL_PADDING_CONTEXT_BODY:
+            terminal_role = "discarded_padding"
+        else:
+            terminal_role = None
         interval_metadata.append(
             {
                 "global_start": fraction_string(segment["start"]),
@@ -746,13 +981,27 @@ def compile_physical_prompt(
                 "local_end": fraction_string(local_end),
                 "source_ordinals": list(segment["sources"]),
                 "fallback": bool(segment["fallback"]),
+                "terminal_role": terminal_role,
                 "body_sha256": text_sha256(segment["body"]),
+                "roles": list(segment.get("roles") or ()),
+                "generation_classes": list(segment.get("generation_classes") or ()),
+                "fallback_roles": list(segment.get("fallback_roles") or ()),
+                "inherited_origins": list(segment.get("inherited_origins") or ()),
+                "inherited_body_sha256s": list(
+                    segment.get("inherited_body_sha256s") or ()
+                ),
+                "next_authored_starts": list(segment.get("next_authored_starts") or ()),
+                "next_authored_body_sha256s": list(
+                    segment.get("next_authored_body_sha256s") or ()
+                ),
             }
         )
     if duration <= 0:
         raise PhysicalPromptError("physical prompt window is empty")
     return _compile_result(
-        compiler_version=PHYSICAL_COMPILER_VERSION,
+        compiler_version=(
+            TERMINAL_PADDING_COMPILER_VERSION if terminal_padding else PHYSICAL_COMPILER_VERSION
+        ),
         text=emitted,
         intervals=interval_metadata,
         diagnostics=diagnostics,
