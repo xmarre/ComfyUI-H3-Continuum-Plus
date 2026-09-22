@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import torch
 
+from ComfyUI_H3_Continuum_Join.constants import DIAGNOSTICS_FULL
+from ComfyUI_H3_Continuum_Join.state import make_plan
 from ComfyUI_H3_Continuum_Join.temporal import context_slots
+from ComfyUI_H3_Continuum_Join.v3.assembly import assemble_decoded_chunks
+from ComfyUI_H3_Continuum_Join.v3.plan import prepare_physical_decode_entries
 from ComfyUI_H3_Continuum_Join.v3.video_decode_overlap import (
     VIDEO_DECODE_OVERLAP_CONTRACT,
     VIDEO_DECODE_REUSE_FRAMES,
@@ -102,3 +108,89 @@ def test_unverified_video_overlap_is_bit_exact_noop():
 
     assert receipt["applied"] is False
     assert torch.equal(image_buffer, before)
+
+
+def test_prepared_exact_overlap_is_reused_end_to_end_without_extra_compute(caplog):
+    generator = torch.Generator().manual_seed(226)
+    prefix_t = context_slots(39)
+    left_video = torch.randn(1, 24, 52, 2, 3, generator=generator)
+    right_future = torch.randn(1, 24, 45, 2, 3, generator=generator)
+    right_video = torch.cat((left_video[:, :, -prefix_t:].clone(), right_future), dim=2)
+
+    left_audio = torch.zeros(1, 32, 2, 292)
+    right_audio = torch.zeros(1, 32, 2, 320)
+    entries = [
+        {
+            "plan": make_plan(
+                continuation=False,
+                clip_index=1,
+                total_frames=175,
+                trim_frames=0,
+                width=48,
+                height=32,
+                context_frames=0,
+                state_capacity_frames=39,
+                requested_extend_seconds=6.5,
+                debug=False,
+            ),
+            "video": left_video,
+            "audio": left_audio,
+        },
+        {
+            "plan": make_plan(
+                continuation=True,
+                clip_index=2,
+                total_frames=192,
+                trim_frames=39,
+                width=48,
+                height=32,
+                context_frames=39,
+                state_capacity_frames=39,
+                requested_extend_seconds=6.5,
+                debug=False,
+            ),
+            "video": right_video,
+            "audio": right_audio,
+        },
+    ]
+    decode_entries, plan = prepare_physical_decode_entries(
+        entries,
+        chunk_seconds=6.5,
+        preserve_final_frame=False,
+        terminal_merged=False,
+    )
+    assert decode_entries == entries
+    assert plan["chunks"][1]["video_decode_overlap_verified"] is True
+    assert plan["chunks"][1]["video_decode_overlap_reuse_frames"] == 5
+
+    first = torch.zeros((175, 2, 3, 3), dtype=torch.float32)
+    second = torch.full((192, 2, 3, 3), 20.0, dtype=torch.float32)
+    replacement = (
+        torch.arange(5, dtype=torch.float32).reshape(5, 1, 1, 1) + 100.0
+    ).expand(5, 2, 3, 3)
+    second[34:39] = replacement
+    audio = [
+        {"waveform": torch.zeros((1, 2, 300000)), "sample_rate": 32000},
+        {"waveform": torch.zeros((1, 2, 300000)), "sample_rate": 32000},
+    ]
+
+    with caplog.at_level(logging.INFO, logger="h3_continuum_join"):
+        result_images, _result_audio, _report = assemble_decoded_chunks(
+            images=[first, second],
+            audio=audio,
+            assembly_plan=plan,
+            exact_total_duration=False,
+            audio_seam="Off",
+            diagnostics=DIAGNOSTICS_FULL,
+        )
+
+    assert torch.equal(result_images[:170], first[:170])
+    assert torch.equal(result_images[170:175], replacement)
+    assert torch.equal(result_images[175:], second[39:])
+
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "H3C-PT223 exact-video-decode-overlap" in joined
+    assert "verified=True applied=True reuse_frames=5" in joined
+    assert "extra_h3_nfe=0" in joined
+    assert "extra_sampler_lifetimes=0" in joined
+    assert "extra_vae_windows=0" in joined
