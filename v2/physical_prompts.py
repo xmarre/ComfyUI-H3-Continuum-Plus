@@ -18,10 +18,21 @@ from typing import Any, Iterable
 PHYSICAL_DESCRIPTOR_VERSION = 1
 COMPILED_PHYSICAL_PROMPT_VERSION = 1
 PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v2"
+TERMINAL_PADDING_COMPILER_VERSION = "physical_timeline_text_v6"
 LEGACY_COMPILER_VERSION = "legacy_nominal_v1"
 PHYSICAL_PROMPT_ENV = "H3_CONTINUUM_PHYSICAL_PROMPTS"
 PHYSICAL_TIMELINE_VIDEO_ENV = "H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO"
 _RENDER_QUANTUM = Decimal("0.000001")
+_TERMINAL_AUDIO_LEADOUT_BODY = (
+    "Terminal speech-free lead-out. All speech, dialogue, narration, and vocalization are already "
+    "complete before this interval. Do not begin or continue any speech here. Continue the immediately "
+    "preceding visual action and non-speech ambience naturally through the exact output endpoint."
+)
+_TERMINAL_PADDING_CONTEXT_BODY = (
+    "Terminal latent-grid padding only. The final output ends before this interval and this interval "
+    "will be discarded. Do not begin, continue, or delay speech, dialogue, actions, or authored events "
+    "into this padding; complete all requested content before this interval begins."
+)
 # Recovered 00418 production prompts use an outer bracket Timeline section with
 # strict bare range lines (for example ``7-8s:``) inside its body. V1 treated
 # those lines as opaque prose. V2 recognizes only this deliberately narrow,
@@ -600,6 +611,8 @@ def _render_segments(
 def compile_physical_prompt(
     plan: dict[str, Any],
     descriptor: PhysicalSampleDescriptor,
+    *,
+    neutral_terminal_padding: bool = False,
 ) -> CompiledPhysicalPrompt:
     """Compile one physical-local Qwen text sequence from schema-2 source.
 
@@ -619,11 +632,27 @@ def compile_physical_prompt(
     domain_end = Fraction(chunks, 1) * chunk_seconds
     start = descriptor.global_start_seconds
     end = descriptor.global_end_seconds
+    output_end = Fraction(int(descriptor.target_duration_frames), 1) / descriptor.fps
+    if output_end <= 0:
+        raise PhysicalPromptError("physical prompt output horizon is invalid")
     candidates = _resolved_candidates(source, chunk_seconds)
     if not candidates:
         return compile_legacy_nominal(plan, descriptor)
 
+    terminal_padding = bool(neutral_terminal_padding and end > output_end)
+    terminal_audio_guard_start: Fraction | None = None
+    if terminal_padding:
+        padding_duration = end - output_end
+        fresh_start = Fraction(int(descriptor.retained_before), 1) / descriptor.fps
+        candidate_guard_start = max(start, fresh_start, output_end - padding_duration)
+        if candidate_guard_start < output_end:
+            terminal_audio_guard_start = candidate_guard_start
+
     boundaries = {start, end, Fraction(0, 1), domain_end}
+    if terminal_padding:
+        boundaries.add(output_end)
+    if terminal_audio_guard_start is not None:
+        boundaries.add(terminal_audio_guard_start)
     for item in candidates:
         boundaries.add(item["_start"])
         boundaries.add(item["_end"])
@@ -646,6 +675,19 @@ def compile_physical_prompt(
     overrun_body = str(overrun_item.get("body", first_body)) if overrun_item is not None else first_body
     overrun_sources = _source_ordinals([overrun_item]) if overrun_item is not None else first_sources
     diagnostics: list[dict[str, Any]] = []
+    if terminal_padding:
+        diagnostics.append(
+            {
+                "level": "info",
+                "code": "H3C-PT217",
+                "message": (
+                    "replaced native-grid overrun beyond the exact output horizon with neutral "
+                    "terminal padding so authored speech and events finish before duration trim"
+                ),
+                "global_start": fraction_string(output_end),
+                "global_end": fraction_string(end),
+            }
+        )
     refined_outer = sorted(
         {
             str(item.get("outer_header"))
@@ -681,6 +723,19 @@ def compile_physical_prompt(
                     "message": "physical window precedes the new sequence origin; extended the earliest resolved body as textual lead-in",
                 }
             )
+        elif terminal_padding and left >= output_end:
+            body = _TERMINAL_PADDING_CONTEXT_BODY
+            sources = []
+            fallback = True
+            if fallback_status == "none":
+                fallback_status = "terminal_padding"
+        elif terminal_audio_guard_start is not None and left >= terminal_audio_guard_start:
+            # This is a real physical prompt interval, not a global advisory. The
+            # authored body is intentionally absent here so speech instructions
+            # cannot remain active through the exact-duration cut.
+            body = _TERMINAL_AUDIO_LEADOUT_BODY
+            sources = []
+            fallback = False
         elif left >= domain_end:
             body = overrun_body
             sources = list(overrun_sources)
@@ -726,6 +781,33 @@ def compile_physical_prompt(
 
     segments = _join_segments(segments)
     preamble = str(source.get("preamble", "")).strip()
+    if terminal_audio_guard_start is not None:
+        local_guard_start = terminal_audio_guard_start - start
+        local_output_end = output_end - start
+        guard_text = (
+            "Terminal audio completion contract: all speech, dialogue, narration, and vocalization "
+            f"must be fully complete before local {_format_seconds(local_guard_start)}s. "
+            "The following timed lead-out is structurally speech-free; visual action may continue "
+            "normally through the exact output endpoint."
+        )
+        preamble = f"{preamble}\n\n{guard_text}" if preamble else guard_text
+        diagnostics.append(
+            {
+                "level": "info",
+                "code": "H3C-PT219",
+                "message": (
+                    "replaced the final authored interval with a structural speech-free lead-out "
+                    "for one native-grid-overrun duration before the exact output endpoint"
+                ),
+                "global_start": fraction_string(terminal_audio_guard_start),
+                "global_end": fraction_string(output_end),
+                "local_start": fraction_string(local_guard_start),
+                "local_end": fraction_string(local_output_end),
+                "guard_duration": fraction_string(output_end - terminal_audio_guard_start),
+                "structural": True,
+                "authored_body_suppressed": True,
+            }
+        )
     duration = end - start
     if len(segments) == 1 and segments[0]["start"] == start and segments[0]["end"] == end:
         body = segments[0]["body"].strip()
@@ -738,6 +820,12 @@ def compile_physical_prompt(
     for segment in segments:
         local_start = segment["start"] - start
         local_end = segment["end"] - start
+        if segment["body"] == _TERMINAL_AUDIO_LEADOUT_BODY:
+            terminal_role = "speech_free_leadout"
+        elif segment["body"] == _TERMINAL_PADDING_CONTEXT_BODY:
+            terminal_role = "discarded_padding"
+        else:
+            terminal_role = None
         interval_metadata.append(
             {
                 "global_start": fraction_string(segment["start"]),
@@ -746,13 +834,16 @@ def compile_physical_prompt(
                 "local_end": fraction_string(local_end),
                 "source_ordinals": list(segment["sources"]),
                 "fallback": bool(segment["fallback"]),
+                "terminal_role": terminal_role,
                 "body_sha256": text_sha256(segment["body"]),
             }
         )
     if duration <= 0:
         raise PhysicalPromptError("physical prompt window is empty")
     return _compile_result(
-        compiler_version=PHYSICAL_COMPILER_VERSION,
+        compiler_version=(
+            TERMINAL_PADDING_COMPILER_VERSION if terminal_padding else PHYSICAL_COMPILER_VERSION
+        ),
         text=emitted,
         intervals=interval_metadata,
         diagnostics=diagnostics,

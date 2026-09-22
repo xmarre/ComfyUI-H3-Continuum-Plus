@@ -18,6 +18,7 @@ import torch
 from .h3_builder import encode_prompt_conditioning
 from .physical_prompts import (
     PhysicalPromptError,
+    TERMINAL_PADDING_COMPILER_VERSION,
     canonical_sha256,
     compile_legacy_nominal,
     compile_physical_prompt,
@@ -253,9 +254,14 @@ def _with_runtime_compiler_identity(
             "global_end": fraction_string(end),
         },
     )
+    compiler_version = (
+        TERMINAL_PADDING_COMPILER_VERSION
+        if compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION
+        else _RUNTIME_PHYSICAL_COMPILER_VERSION
+    )
     physical_hash = canonical_sha256(
         {
-            "compiler_version": _RUNTIME_PHYSICAL_COMPILER_VERSION,
+            "compiler_version": compiler_version,
             "descriptor": descriptor.semantic_dict(),
             "text": compiled.text,
             "presentation_contract": descriptor.presentation_contract,
@@ -264,7 +270,7 @@ def _with_runtime_compiler_identity(
     )
     return replace(
         compiled,
-        compiler_version=_RUNTIME_PHYSICAL_COMPILER_VERSION,
+        compiler_version=compiler_version,
         diagnostics=diagnostics,
         physical_conditioning_hash=physical_hash,
     )
@@ -296,7 +302,11 @@ def compile_invocation_prompt(
         runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(
             scoped_plan, descriptor
         )
-        compiled = compile_physical_prompt(runtime_plan, descriptor)
+        compiled = compile_physical_prompt(
+            runtime_plan,
+            descriptor,
+            neutral_terminal_padding=True,
+        )
         compiled = _with_runtime_compiler_identity(
             compiled,
             descriptor,
@@ -641,6 +651,7 @@ def _bounded_interval_receipt(value: Any) -> dict[str, Any]:
         "local_end",
         "source_start",
         "source_end",
+        "terminal_role",
     }
     result: dict[str, Any] = {}
     for key, item in value.items():
@@ -688,6 +699,26 @@ def physical_validation_manifest(
     intervals = compiled.get("contributing_intervals")
     if not isinstance(intervals, list):
         intervals = []
+    diagnostics = compiled.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        diagnostics = []
+    terminal_padding_interval = None
+    terminal_audio_guard_interval = None
+    terminal_audio_guard_structural = False
+    for item in diagnostics:
+        if not isinstance(item, dict):
+            continue
+        if item.get("code") == "H3C-PT217":
+            terminal_padding_interval = [
+                str(item.get("global_start", "")),
+                str(item.get("global_end", "")),
+            ]
+        elif item.get("code") == "H3C-PT219":
+            terminal_audio_guard_interval = [
+                str(item.get("global_start", "")),
+                str(item.get("global_end", "")),
+            ]
+            terminal_audio_guard_structural = bool(item.get("structural", False))
     structural_intervals = [
         _bounded_interval_receipt(item)
         for item in intervals[:_PHYSICAL_INTERVAL_RECEIPT_LIMIT]
@@ -711,6 +742,9 @@ def physical_validation_manifest(
         ],
         "exact_protected_interval": descriptor.get("exact_protected_interval"),
         "retained_suffix_interval": descriptor.get("retained_suffix_interval"),
+        "terminal_padding_interval": terminal_padding_interval,
+        "terminal_audio_guard_interval": terminal_audio_guard_interval,
+        "terminal_audio_guard_structural": terminal_audio_guard_structural,
         "compiler_version": str(compiled.get("compiler_version", "")),
         "text_sha256": str(compiled.get("text_sha256", "")),
         "interval_count": len(intervals),
