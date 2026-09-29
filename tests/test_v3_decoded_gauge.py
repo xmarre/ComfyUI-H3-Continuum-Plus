@@ -220,3 +220,55 @@ def test_decoded_rigid_gauge_rejects_coherent_strong_scale_event():
     )
     assert plan["eligible"] is False
     assert plan["reason"] == "coherent_scale_event_requires_nonrigid_model"
+
+
+def test_00716_decoded_receipts_arm_the_rigid_chunk_gauge():
+    trajectory = {
+        "upper45": {
+            "pairwise_dx_px": [-6.0537686384, -0.0911279024, 0.0040899540, -0.1148625006],
+            "pairwise_dy_px": [4.0979930556, 4.3472672438, 0.1739019289, 0.2878627684],
+            "pairwise_response": [15.4349988992, 8.9293509844, 13.4047562986, 13.9199461079],
+            "pairwise_clipped": [False, False, False, False],
+            "pre_median_dx_px": -0.0430,
+            "pre_median_dy_px": 0.0078,
+        },
+        "full": {
+            "pairwise_dx_px": [-6.5779786049, -0.0579128237, -0.0248370880, -0.1422202054],
+            "pairwise_dy_px": [4.3891757281, 0.0572290120, 0.0902066583, -0.0079092522],
+            "pairwise_response": [11.6390969296, 15.0328453819, 16.7649368087, 13.3637027095],
+            "pairwise_clipped": [False, False, False, False],
+            "pre_median_dx_px": -0.0262,
+            "pre_median_dy_px": -0.0435,
+        },
+    }
+    affine = {
+        "upper45": {
+            "boundary_scale_x": 0.99143921,
+            "boundary_scale_y": 1.01012172,
+            "pre_median_scale_x": 0.99293739,
+            "pre_median_scale_y": 1.00390017,
+            "boundary_scale_confidence_x": 0.161401,
+            "boundary_scale_confidence_y": 0.106296,
+        },
+        "full": {
+            "boundary_scale_x": 0.99073521,
+            "boundary_scale_y": 0.99358166,
+            "pre_median_scale_x": 0.99694657,
+            "pre_median_scale_y": 0.99811333,
+            "boundary_scale_confidence_x": 0.134133,
+            "boundary_scale_confidence_y": 0.200954,
+        },
+    }
+
+    plan = plan_decoded_rigid_gauge(
+        trajectory,
+        affine=affine,
+        scene=_continuous_scene(),
+    )
+
+    assert plan["eligible"] is True
+    assert plan["reason"] == "coherent_decoded_rigid_boundary_impulse"
+    assert plan["consensus_excess_dx_px"] == pytest.approx(-6.2813, abs=0.02)
+    assert plan["consensus_excess_dy_px"] == pytest.approx(4.2614, abs=0.02)
+    assert plan["proposed_correction_dx_px"] == pytest.approx(6.2813, abs=0.02)
+    assert plan["proposed_correction_dy_px"] == pytest.approx(-4.2614, abs=0.02)
