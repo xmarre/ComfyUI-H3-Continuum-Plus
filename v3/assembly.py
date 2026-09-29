@@ -1181,20 +1181,23 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                 _singleton(image_output_device, "image_output_device")
             ),
             video_patches=video_patches,
-            video_geometry_correction=mode in (VIDEO_SEAM_AUTO, VIDEO_SEAM_AUTO_2),
+            # Hardware 00717 falsified the decoded whole-chunk rigid-gauge
+            # acceptance metric: the candidate applied and reduced its own
+            # phase-correlation boundary score, while the reported top-expansion
+            # / frame-shift artifact remained. Keep the implementation as
+            # historical diagnostic code, but production seam modes must not
+            # mutate decoded geometry through this actuator.
+            video_geometry_correction=False,
             video_actions=actions,
         )
         if mode == VIDEO_SEAM_ANALYZE:
             status = "Video Seam: Analyze Only; decoded frames and audio are unchanged."
         elif mode == VIDEO_SEAM_AUTO:
-            status = (
-                "Video Seam: Auto; guarded transient, micro-flash, and decoded "
-                "rigid-gauge correction enabled."
-            )
+            status = "Video Seam: Auto; guarded transient and micro-flash correction enabled."
         else:
             status = (
                 "Video Seam: Auto 2 (Experimental); guarded transient, micro-flash, "
-                "exposure-ramp, and decoded rigid-gauge correction enabled."
+                "and exposure-ramp correction enabled."
             )
         report = report.replace("Video seam correction is disabled.", status, 1)
         if analysis_error is None:
