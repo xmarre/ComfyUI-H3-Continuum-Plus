@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 import torch
 
@@ -94,7 +96,26 @@ def test_uncorrelated_audio_keeps_the_native_boundary():
     assert (fade, gain, dc) == (0, 1.0, 0.0)
 
 
-def test_auto_audio_assembly_preserves_a_continuous_waveform_and_fresh_suffix():
+@pytest.mark.parametrize("frequency,fade_ms", [(2, 60), (40, 40), (90, 20), (200, 10)])
+def test_matching_overlap_remains_exact_for_every_transient_fade(frequency, fade_ms):
+    sample_rate = 1000
+    time = torch.arange(800, dtype=torch.float32) / sample_rate
+    current = (0.01 * torch.cos(2.0 * torch.pi * frequency * time)).reshape(1, 1, -1)
+    previous = current[..., :500].clone()
+    patch, metrics, fade, gain, dc = correct_audio_seam(
+        previous, current, sample_rate=sample_rate, cut_sample=500
+    )
+
+    assert patch is not None and fade == fade_ms
+    assert metrics.offset_samples == 0 and gain == 1.0 and dc == 0.0
+    assert torch.equal(patch, previous[..., -fade:])
+    assert metrics.boundary_jump_after == metrics.boundary_jump_before
+
+
+@pytest.mark.parametrize("audio_seam", ["Auto", "Off"])
+def test_audio_assembly_preserves_a_continuous_waveform_and_fresh_suffix(
+    audio_seam, caplog
+):
     plan = enrich_assembly_plan(
         {
             "magic": ASSEMBLY_PLAN_MAGIC,
@@ -141,19 +162,25 @@ def test_auto_audio_assembly_preserves_a_continuous_waveform_and_fresh_suffix():
     ]
     images = [torch.full((frames, 8, 8, 3), 0.25) for frames in (124, 141)]
 
+    caplog.set_level(logging.INFO, logger="h3_continuum_join")
     output_images, output_audio, report = assemble_decoded_chunks(
         images=images,
         audio=audio,
         assembly_plan=plan,
         exact_total_duration=False,
-        audio_seam="Auto",
+        audio_seam=audio_seam,
         diagnostics=DIAGNOSTICS_FULL,
         image_output_device="CPU",
     )
 
     assert output_images.shape[0] == 243
     assert output_audio["sample_rate"] == rate
-    assert "audio seam 1->2" in report and "fallback to native boundary" not in report
+    if audio_seam == "Auto":
+        assert "audio seam 1->2" in report and "fallback to native boundary" not in report
+        assert "policy=convex_native_endpoints_v1 applied=True" in caplog.text
+        assert "left_endpoint_exact=True right_endpoint_exact=True" in caplog.text
+    else:
+        assert "H3C-PT226" not in caplog.text
     result = output_audio["waveform"]
     assert torch.equal(result, waveform[..., : result.shape[-1]])
     assert torch.equal(result[..., cut:], waveform[..., cut : result.shape[-1]])
