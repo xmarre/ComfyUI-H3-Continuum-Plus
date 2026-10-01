@@ -613,7 +613,26 @@ def assemble_decoded_chunks(
                     patch_start = sample_start - int(patch.shape[-1])
                     if patch_start < 0:
                         raise ValueError("audio seam patch starts before the output")
+                    left_endpoint_exact = torch.equal(
+                        patch[..., 0], audio_buffer[..., patch_start]
+                    )
+                    right_endpoint_exact = torch.equal(
+                        patch[..., -1], waveform[..., cut_sample - 1]
+                    )
                     audio_buffer[..., patch_start:sample_start].copy_(patch)
+                    LOG.info(
+                        "H3C-PT226 decoded-audio-seam receipt "
+                        "policy=convex_native_endpoints_v1 applied=True "
+                        "boundary_global_frame=%d fade_samples=%d "
+                        "left_endpoint_exact=%s right_endpoint_exact=%s "
+                        "jump_before=%.9f jump_after=%.9f",
+                        frame_cursor,
+                        int(patch.shape[-1]),
+                        left_endpoint_exact,
+                        right_endpoint_exact,
+                        metrics.boundary_jump_before,
+                        metrics.boundary_jump_after,
+                    )
                 seam_report = (
                     f"audio seam {index-1}->{index}: "
                     f"corr={metrics.correlation_before:.4f}->{metrics.correlation_after:.4f}, "
