@@ -143,9 +143,16 @@ def apply_audio_seam(previous_waveform,next_raw_waveform,metrics,*,sample_rate,c
     fade_ms=_audio_crossfade_ms(previous_waveform,next_raw_waveform,cut_sample=cut_sample,sample_rate=sample_rate); fade_samples=min(int(round(sample_rate*fade_ms/1000.0)),int(previous_waveform.shape[-1]),int(cut_sample))
     if fade_samples<2:return None,metrics,0,1.0,0.0
     progress=torch.linspace(0.0,1.0,fade_samples,dtype=torch.float32,device="cpu"); base_indices=torch.arange(cut_sample-fade_samples,cut_sample,dtype=torch.long); offsets=torch.round(float(metrics.offset_samples)*(1.0-progress)).to(dtype=torch.long); indices=(base_indices+offsets).clamp(0,int(next_raw_waveform.shape[-1])-1)
-    current=next_raw_waveform.detach().to("cpu").index_select(-1,indices); previous=previous_waveform[...,-fade_samples:].detach().to("cpu"); previous_rms=torch.sqrt(torch.mean(previous.float().square())).clamp_min(1e-6); current_rms=torch.sqrt(torch.mean(current.float().square())).clamp_min(1e-6); requested_db=20.0*math.log10(float((previous_rms/current_rms).item())); level_db=max(-1.5,min(1.5,requested_db)) if abs(requested_db)<=6.0 else 0.0; level_gain=10.0**(level_db/20.0); requested_dc=float((previous.float().mean()-current.float().mean()).item()); dc_bias=max(-0.02,min(0.02,requested_dc)) if abs(requested_dc)<=0.10 else 0.0; current=current*level_gain+dc_bias
-    shape=[1]*(previous.ndim-1)+[fade_samples]; fade_in=torch.sin(progress*(math.pi/2.0)).reshape(shape); fade_out=torch.cos(progress*(math.pi/2.0)).reshape(shape); patch=previous*fade_out+current.to(dtype=previous.dtype)*fade_in; input_peak=max(float(previous.abs().max().item()),float(current.abs().max().item()),1e-6); patch_peak=float(patch.abs().max().item())
-    if patch_peak>input_peak*1.05: patch=patch*((input_peak*1.05)/patch_peak)
+    current=next_raw_waveform.detach().to("cpu").index_select(-1,indices); previous=previous_waveform[...,-fade_samples:].detach().to("cpu"); previous_rms=torch.sqrt(torch.mean(previous.float().square())).clamp_min(1e-6); current_rms=torch.sqrt(torch.mean(current.float().square())).clamp_min(1e-6); requested_db=20.0*math.log10(float((previous_rms/current_rms).item())); level_db=max(-1.5,min(1.5,requested_db)) if abs(requested_db)<=6.0 else 0.0; level_gain=10.0**(level_db/20.0); requested_dc=float((previous.float().mean()-current.float().mean()).item()); dc_bias=max(-0.02,min(0.02,requested_dc)) if abs(requested_dc)<=0.10 else 0.0
+    shape = [1] * (previous.ndim - 1) + [fade_samples]
+    weight = progress.reshape(shape)
+    # This is correlated carried overlap, not independent sources: a convex
+    # blend preserves matching PCM without an equal-power amplitude hump.
+    # The assembler copies the fresh suffix unchanged, so level/DC correction
+    # must reach identity at the last patch sample. Global peak scaling would
+    # change both native endpoints and create a discontinuity at either splice.
+    current = current + (current * (level_gain - 1.0) + dc_bias) * (1.0 - weight)
+    patch = torch.lerp(previous, current.to(dtype=previous.dtype), weight.to(dtype=previous.dtype))
     after_jump=float(torch.mean(torch.abs(patch[...,-1]-next_raw_waveform[...,cut_sample])).item()); updated=AudioSeamMetrics(metrics.correlation_before,metrics.correlation_after,metrics.boundary_jump_before,after_jump,metrics.offset_samples); return patch.contiguous(),updated,fade_samples,level_gain,dc_bias
 def correct_audio_seam(previous_waveform,next_raw_waveform,*,sample_rate,cut_sample):
     metrics=analyze_audio_seam(previous_waveform,next_raw_waveform,sample_rate=sample_rate,cut_sample=cut_sample); return apply_audio_seam(previous_waveform,next_raw_waveform,metrics,sample_rate=sample_rate,cut_sample=cut_sample)
