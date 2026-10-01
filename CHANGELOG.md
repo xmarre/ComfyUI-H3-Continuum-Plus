@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve native PCM endpoints in aligned audio seam patches. Use a convex
+  overlap blend and taper bounded level/DC corrections to identity before the
+  unmodified suffix, avoiding equal-power amplification and global peak scaling
+  that could introduce a click even when carried overlap matches exactly.
+
 ## 3.4.4
 
 Coordinated production release with [ComfyUI-Sol-H3 v0.1.6](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.6), [ComfyUI-VDN-H3-Plus v1.5.6](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.6), and [MiniMax H3 Flow-Aligned Regenerate v0.3.6](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.6). [Spectrum MiniMax H3 v0.2.28](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.28) remains unchanged.
