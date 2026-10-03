@@ -1,0 +1,13 @@
+# Decoded video tone measurements
+
+Continuum assembly records `H3C-PT227` at each physical decoded-video join, before applying that join's video patch. The measurement uses existing decoded images and adds no decoder or transformer calls. It does not change images, audio, the assembly plan, or seam decisions.
+
+The receipt contains per-frame RGB mean and population standard deviation, luma mean and population standard deviation, and luma fifth/ninety-fifth percentiles. It examines eight preceding retained frames and up to 24 following retained frames. These statistics expose contrast changes that preserve mean luma and therefore escape a detector based on a brightness pulse. Motion, composition, and lighting also change these statistics; they are not a quality score or an instruction to normalize generated content.
+
+A separate plan-aligned comparison examines at most 22 duplicate overlap frames. It reports sampled RGB difference and per-channel affine gain, with undefined gain reported as `null` for constant reference channels. Native H3's first five frames at a decode origin and last five frames without matching right context can differ. The receipt separates the overlap's context interior and final five-frame tail. A decoder attribution requires independently verified identical carried latents and the native temporal window phase. Guide-mode or independently refined overlap cannot supply that premise.
+
+Photometric measurements operate on an aspect-preserving bilinear sample with a maximum long side of 192 pixels. Equality of these samples is not a byte-exact claim about full-resolution images. Conversion workspace processes four frames at a time; no full decoded chunk is cloned. Unavailable measurements are logged without blocking assembly.
+
+`H3C-PT228` records the actual Video Seam mode and each available guard decision, including luma shift, reversal, global support, correction width, and action. The existing transient/micro-flash and optional exposure-ramp guards remain unchanged. A `clean_boundary` classification belongs to that detector's feature set; it does not certify contrast continuity or perceptual quality.
+
+The Flow Decode Context node separately logs how many exact boundaries received five real future latent tokens and why others were skipped. Combining that activation receipt with the decoded overlap comparison distinguishes a missing decode-context window from an appearance change in the newly generated suffix. It does not by itself distinguish the low/probe, learned transfer, and final refinement stages; that attribution requires a matched decoder intervention or rendered stage witnesses.
