@@ -1,11 +1,48 @@
 # Changelog
 
-## Unreleased
+## 3.4.5
 
-- Preserve native PCM endpoints in aligned audio seam patches. Use a convex
-  overlap blend and taper bounded level/DC corrections to identity before the
-  unmodified suffix, avoiding equal-power amplification and global peak scaling
-  that could introduce a click even when carried overlap matches exactly.
+Preserve native PCM endpoints in aligned audio seam patches and expose decoded
+tone/guard observations without changing video geometry.
+
+- Use convex blending for correlated overlap and taper bounded level/DC
+  correction to identity before the unchanged fresh suffix. Matching overlap
+  stays exact, the stereo alignment offset remains shared, and both patch
+  endpoints retain their native samples.
+- Emit the audio seam receipt after the corrected patch is copied.
+- Measure bounded raw RGB/luma means, deviations, percentiles and plan-aligned
+  duplicate overlap before the current video patch. Tone observation does not
+  modify images or add H3/VAE calls; measurement failures preserve assembly.
+- Keep existing prompt transport, continuation state/session schemas, temporal
+  phase, duration finalization and seam widgets. Rejected decoded-overlap reuse
+  and decoded rigid geometry correction are not merged.
+
+The coordinated target-grid profile has reported clean video/audio boundaries.
+This release does not claim universal soundtrack or photometric acceptance.
+
+### Coordinated release set
+
+Update the coordinated components together. Every release links this same
+version set and identifies its implementation PRs.
+
+| Component | Release | Included PRs |
+| --- | --- | --- |
+| Flow-Aligned Regenerate | [v0.3.9](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.9) | [#89](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/89), [#93](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/93) |
+| Sol-H3 | [v0.1.8](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.8) | [#37](https://github.com/xmarre/ComfyUI-Sol-H3/pull/37) |
+| VDN-H3-Plus | [v1.5.7](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.7) | [#33](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/33), [#34](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/34), [#35](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/35), [#36](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/36), [#37](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/37) |
+| H3 Continuum-Plus | [v3.4.5](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/releases/tag/v3.4.5) | [#37](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/37), [#38](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/38) |
+| Latent Upscaler-Plus | [v0.2.2](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/releases/tag/v0.2.2) | [#16](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/pull/16) |
+
+[Spectrum MiniMax H3 v0.2.28](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.28)
+is the unchanged companion. Separate Keyless, audio-training and rejected
+decoded-geometry experiments are outside this release set.
+
+The tested Core adapter repair is
+[ComfyUI #16783](https://github.com/Comfy-Org/ComfyUI/pull/16783).
+It remains an upstream review item, with upstream workflow approval and merge
+controlled by Comfy-Org maintainers. For INT8 fused MLP runtime adapters,
+retain that ComfyUI Patcher PR overlay until the repair is available upstream.
+The independent Core #16720 optimization is not included in this release set.
 
 ## 3.4.4
 

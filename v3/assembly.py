@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import time
@@ -20,6 +21,7 @@ from ..constants import (
 from ..v2.seam_guard import correct_audio_seam
 from .audio_phase import phase_align_decoded_audio
 from .plan import FPS, validate_assembly_plan
+from .video_tone import measure_decoded_video_tone
 from .trajectory_diagnostics import (
     measure_decoded_audio_boundary,
     measure_decoded_audio_overlap_context,
@@ -428,6 +430,24 @@ def assemble_decoded_chunks(
                 )
         elif tuple(segment_images.shape[1:]) != tuple(image_buffer.shape[1:]):
             raise ValueError(f"decoded image geometry changed at chunk {index}")
+
+        if index > 1:
+            try:
+                previous_total = int(chunk_plans[index - 2]["total_frames"])
+                tone = measure_decoded_video_tone(
+                    images[index - 2][:previous_total],
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_global_frame=frame_cursor,
+                )
+                LOG.info(
+                    "H3C-PT227 decoded-video-tone receipt %s",
+                    json.dumps(tone, sort_keys=True),
+                )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT227 decoded-video-tone measurement unavailable: %s", exc
+                )
 
         pt212_recorded = False
         if index > 1 and image_buffer is not None and frame_cursor > 1:
@@ -971,6 +991,7 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
         mode = str(_singleton(video_seam, "video_seam"))
         if mode not in VIDEO_SEAM_ANALYSIS_OPTIONS:
             raise ValueError(f"unknown Video Seam mode: {mode!r}")
+        LOG.info("H3C-PT228 video-seam-mode receipt mode=%r", mode)
         if mode == VIDEO_SEAM_OFF:
             return super().assemble(
                 images,
@@ -1009,6 +1030,25 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
         except Exception as exc:
             analysis_error = exc
             video_patches = {}
+
+        for item in analyses:
+            patch = video_patches.get(item.boundary_index)
+            LOG.info(
+                "H3C-PT228 video-seam-decision receipt mode=%r boundary_index=%d "
+                "classification=%s flash_luma_shift=%.9f flash_reversal=%.9f "
+                "flash_global_fraction=%.9f micro_flash=%s exposure_ramp=%s "
+                "patch_frames=%d action=%r",
+                mode,
+                item.boundary_index,
+                item.classification,
+                item.flash_luma_shift,
+                item.flash_reversal,
+                item.flash_global_fraction,
+                item.micro_flash_candidate,
+                item.exposure_ramp_candidate,
+                0 if patch is None else len(patch),
+                actions.get(item.boundary_index, "analysis only"),
+            )
 
         result_images, result_audio, report = assemble_decoded_chunks(
             images=image_chunks,
