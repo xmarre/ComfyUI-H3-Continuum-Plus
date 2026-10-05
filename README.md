@@ -193,6 +193,14 @@ the physical decode groups. After that operation, connect its IMAGE result, the 
 and the same `assembly_plan` to **H3 Continuum Finalize Duration V3.4**. The finalizer reuses
 Continuum's validated final-frame preservation and sample-aligned audio duration policy.
 
+**H3 Continuum Finalize Duration V3.4** also has a **Timeline Output** selector.
+It defaults to `Exact requested duration (Recommended)`, including for existing workflows.
+To retain the generated tail through the entire branch, select
+`Natural retained timeline (Refinement)` on both Assemble + Seam and Finalize Duration.
+The finalizer can stay connected: it keeps all retained video frames and aligns audio to
+their duration. This output can exceed the requested length; retaining generated samples
+does not guarantee that the model completed a spoken line.
+
 When Driving Audio is connected, preserved source audio is selected for final output and generated audio seam processing is bypassed.
 
 ## Connection order

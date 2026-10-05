@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add Timeline Output to H3 Continuum Finalize Duration V3.4. Natural retained
+  timeline keeps all physical-group frames and aligns audio to their duration;
+  exact requested duration remains the default for existing workflows.
+
 ## 3.4.5
 
 Preserve native PCM endpoints in aligned audio seam patches and expose decoded

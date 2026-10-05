@@ -790,12 +790,14 @@ def finalize_assembled_timeline(
     images: torch.Tensor,
     audio: dict[str, Any],
     assembly_plan: dict[str, Any],
+    exact_total_duration: bool = True,
 ):
-    """Apply Continuum's exact-duration policy after downstream image processing.
+    """Select exact or natural duration after downstream image processing.
 
     The input video must still be the plan's natural retained timeline. This is
     the public post-processing counterpart to ``exact_total_duration=False`` on
-    the assembler and reuses the same final-frame/audio policy as normal assembly.
+    the assembler. Exact mode reuses the normal final-frame/audio policy; natural
+    mode keeps all retained frames and aligns audio to that physical duration.
     """
 
     plan = validate_assembly_plan(assembly_plan)
@@ -805,7 +807,7 @@ def finalize_assembled_timeline(
     natural_frames = sum(int(item["net_frames"]) for item in groups)
     if int(images.shape[0]) != natural_frames:
         raise ValueError(
-            "H3 Continuum exact-duration finalizer requires the natural retained "
+            "H3 Continuum duration finalizer requires the natural retained "
             f"timeline: images={int(images.shape[0])}, plan={natural_frames}"
         )
 
@@ -814,16 +816,19 @@ def finalize_assembled_timeline(
         "waveform": waveform.detach().to("cpu").contiguous(),
         "sample_rate": int(sample_rate),
     }
+    requested_target_frames = int(plan["target_frames"])
+    output_frames = requested_target_frames if exact_total_duration else natural_frames
     terminal_audio = _terminal_audio_trim_receipt(
         normalized_audio,
         natural_frames=natural_frames,
-        target_frames=int(plan["target_frames"]),
+        target_frames=output_frames,
     )
     LOG.info(
         "H3C-PT218 terminal-duration audio-trim receipt "
         "natural_frames=%d target_frames=%d trim_frames=%d sample_rate=%d "
         "available_samples=%d expected_natural_samples=%d target_samples=%d "
-        "discarded_samples=%d discarded_seconds=%.6f discarded_rms=%.9f discarded_peak=%.9f",
+        "discarded_samples=%d discarded_seconds=%.6f discarded_rms=%.9f discarded_peak=%.9f "
+        "requested_target_frames=%d exact_total_duration=%s",
         terminal_audio["natural_frames"],
         terminal_audio["target_frames"],
         terminal_audio["trim_frames"],
@@ -835,16 +840,24 @@ def finalize_assembled_timeline(
         terminal_audio["discarded_seconds"],
         terminal_audio["discarded_rms"],
         terminal_audio["discarded_peak"],
+        requested_target_frames,
+        bool(exact_total_duration),
     )
     result_images, result_audio, duration_report = enforce_total_frames(
         images,
         normalized_audio,
-        target_frames=int(plan["target_frames"]),
-        preserve_final_frame=bool(plan.get("preserve_final_frame", False)),
+        target_frames=output_frames,
+        preserve_final_frame=bool(exact_total_duration and plan.get("preserve_final_frame", False)),
     )
+    if not exact_total_duration:
+        duration_report = (
+            "Natural retained timeline: all physical-group frames retained; "
+            f"audio aligned to {output_frames} frames at {FPS} fps."
+        )
+    output_report = f", output={output_frames}" if not exact_total_duration else ""
     report = (
         "H3 Continuum Finalize Duration V3.4: "
-        f"natural={natural_frames}, target={int(plan['target_frames'])}.\n"
+        f"natural={natural_frames}, target={requested_target_frames}{output_report}.\n"
         f"{duration_report}"
     )
     return result_images, result_audio, report
