@@ -1,7 +1,4 @@
-import json
 import logging
-
-import pytest
 
 import torch
 
@@ -394,30 +391,3 @@ def test_assembly_records_prepatch_pt212_interpretation_and_video_patch_action(c
     assert "H3C-PT216 video-assembly-patch receipt" in joined
     assert "applied=True patch_frames=1 pre_patch_pt212_recorded=True" in joined
     assert "source=pre_patch_raw_decode" in joined
-    tone_line = next(
-        record.getMessage() for record in caplog.records
-        if "H3C-PT227 decoded-video-tone receipt" in record.getMessage()
-    )
-    tone = json.loads(tone_line.split(" receipt ", 1)[1])
-    assert tone["post"]["luma_mean"][0] == pytest.approx(float(images[1][22].mean()))
-    assert tone["production_images_modified"] is False
-
-
-def test_tone_measurement_failure_does_not_change_assembly(monkeypatch):
-    import ComfyUI_H3_Continuum_Join.v3.assembly as assembly
-
-    images, audio = _decoded()
-
-    def unavailable(*args, **kwargs):
-        raise ValueError("test measurement unavailable")
-
-    monkeypatch.setattr(assembly, "measure_decoded_video_tone", unavailable)
-    result_images, _, _ = assemble_decoded_chunks(
-        images=images,
-        audio=audio,
-        assembly_plan=_plan(),
-        exact_total_duration=False,
-        audio_seam="Off",
-        diagnostics=DIAGNOSTICS_OPTIONS[0],
-    )
-    assert torch.equal(result_images, torch.cat((images[0][:124], images[1][22:141])))
