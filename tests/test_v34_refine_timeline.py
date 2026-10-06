@@ -68,6 +68,15 @@ def test_v34_timeline_mode_is_explicit_and_defaults_to_exact():
     assert schema[1]["default"] == V34_TIMELINE_EXACT
 
 
+def test_finalizer_timeline_mode_is_optional_and_defaults_to_exact():
+    schema = H3ContinuumFinalizeDurationV34.INPUT_TYPES()
+    assert set(schema["required"]) == {"images", "audio", "assembly_plan"}
+    mode = schema["optional"]["timeline_mode"]
+    assert mode[0] == (V34_TIMELINE_EXACT, V34_TIMELINE_NATURAL)
+    assert mode[1]["default"] == V34_TIMELINE_EXACT
+    assert mode[1]["display_name"] == "Timeline Output"
+
+
 def test_v34_natural_mode_drives_underlying_assembler_exact_flag_false(monkeypatch):
     captured = {}
 
@@ -134,10 +143,64 @@ def test_post_stitch_finalizer_leaves_target_length_driving_audio_unchanged():
     assert output_audio["sample_rate"] == audio["sample_rate"]
 
 
-def test_post_stitch_finalizer_rejects_already_compacted_video():
+@pytest.mark.parametrize("timeline_mode", [None, V34_TIMELINE_EXACT, [V34_TIMELINE_EXACT]])
+def test_finalizer_node_keeps_legacy_exact_behavior(timeline_mode):
+    kwargs = {} if timeline_mode is None else {"timeline_mode": timeline_mode}
+    images = torch.arange(243, dtype=torch.float32).reshape(243, 1, 1, 1)
+    output_images, output_audio, report = H3ContinuumFinalizeDurationV34().finalize(
+        images, _audio(243), _plan(), **kwargs
+    )
+    assert output_images.shape[0] == 240
+    assert torch.equal(output_images[-1], images[-1])
+    assert output_audio["waveform"].shape[-1] == round(240 / 24 * 48_000)
+    assert "final anchor preserved" in report
+
+
+@pytest.mark.parametrize("timeline_mode", [V34_TIMELINE_NATURAL, [V34_TIMELINE_NATURAL]])
+def test_finalizer_node_natural_mode_preserves_all_frames_and_pcm(timeline_mode, caplog):
+    images = torch.arange(243, dtype=torch.float32).reshape(243, 1, 1, 1)
+    audio = _audio(243)
+    input_images = images.clone()
+    input_waveform = audio["waveform"].clone()
+    with caplog.at_level("INFO", logger="h3_continuum_join"):
+        output_images, output_audio, report = H3ContinuumFinalizeDurationV34().finalize(
+            images, audio, _plan(), timeline_mode=timeline_mode
+        )
+    assert torch.equal(output_images, input_images)
+    assert output_images.data_ptr() == images.data_ptr()
+    assert torch.equal(output_audio["waveform"], input_waveform)
+    assert output_audio["sample_rate"] == audio["sample_rate"]
+    assert torch.equal(images, input_images)
+    assert torch.equal(audio["waveform"], input_waveform)
+    assert "natural=243, target=240, output=243" in report
+    assert "Natural retained timeline" in report
+    assert "final anchor preserved" not in report
+    assert "target_frames=243 trim_frames=0" in caplog.text
+    assert "discarded_samples=0 " in caplog.text
+    assert "requested_target_frames=240 exact_total_duration=False" in caplog.text
+
+
+def test_natural_finalizer_aligns_short_driving_audio_without_changing_source():
+    images = torch.zeros((243, 8, 8, 3))
+    audio = _audio(240)
+    original = audio["waveform"].clone()
+    output_images, output_audio, _report = finalize_assembled_timeline(
+        images=images, audio=audio, assembly_plan=_plan(), exact_total_duration=False
+    )
+    assert output_images.shape[0] == 243
+    waveform = output_audio["waveform"]
+    assert waveform.shape[-1] == round(243 / 24 * audio["sample_rate"])
+    assert torch.equal(waveform[..., :original.shape[-1]], original)
+    assert torch.all(waveform[..., original.shape[-1]:] == original[..., -1:])
+    assert torch.equal(audio["waveform"], original)
+
+
+@pytest.mark.parametrize("timeline_mode", [V34_TIMELINE_EXACT, V34_TIMELINE_NATURAL])
+def test_post_stitch_finalizer_rejects_already_compacted_video(timeline_mode):
     with pytest.raises(ValueError, match="natural retained timeline"):
         H3ContinuumFinalizeDurationV34().finalize(
             torch.zeros((240, 8, 8, 3)),
             _audio(240),
             _plan(),
+            timeline_mode=timeline_mode,
         )

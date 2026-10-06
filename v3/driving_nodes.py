@@ -512,13 +512,13 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
 
 
 class H3ContinuumFinalizeDurationV34:
-    """Finalize a natural post-refinement timeline with Continuum's exact policy."""
+    """Select exact or natural output from a post-refinement timeline."""
 
     DEPRECATED = False
     CATEGORY = CONTINUUM_CATEGORY
     DESCRIPTION = (
-        "Apply the assembly plan's exact target duration after stitch-back, including "
-        "final-frame preservation and sample-aligned audio trim/pad semantics."
+        "Select exact requested duration or the natural retained timeline after stitch-back. "
+        "Exact mode uses the plan's final-frame policy; both modes align audio to the output video."
     )
     SEARCH_ALIASES = ["H3 post stitch duration", "H3 refinement finalizer"]
 
@@ -529,18 +529,37 @@ class H3ContinuumFinalizeDurationV34:
                 "images": ("IMAGE",),
                 "audio": ("AUDIO",),
                 "assembly_plan": ("H3_CONTINUUM_ASSEMBLY_PLAN",),
-            }
+            },
+            "optional": {
+                "timeline_mode": (
+                    V34_TIMELINE_MODES,
+                    {
+                        "default": V34_TIMELINE_EXACT,
+                        "display_name": "Timeline Output",
+                        "tooltip": (
+                            "Exact requested duration applies the normal final-frame/audio policy. "
+                            "Natural retained timeline keeps every input frame and aligns audio "
+                            "to that duration, which can exceed the requested length. The input "
+                            "must still contain the assembler's natural retained timeline."
+                        ),
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = ("IMAGE", "AUDIO", "STRING")
     RETURN_NAMES = ("images", "audio", "report")
     FUNCTION = "finalize"
 
-    def finalize(self, images, audio, assembly_plan):
+    def finalize(self, images, audio, assembly_plan, timeline_mode=V34_TIMELINE_EXACT):
+        timeline_mode = _unwrap_single_audio_value(timeline_mode)
+        if timeline_mode not in V34_TIMELINE_MODES:
+            raise ValueError(f"unknown V3.4 Timeline Output mode: {timeline_mode!r}")
         return finalize_assembled_timeline(
             images=images,
             audio=audio,
             assembly_plan=assembly_plan,
+            exact_total_duration=timeline_mode == V34_TIMELINE_EXACT,
         )
 
 

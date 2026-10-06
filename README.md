@@ -1,29 +1,4 @@
-# ComfyUI-H3-Continuum-Plus 3.4.5
-
-## Coordinated H3 releases
-
-Update the coordinated components together. Every release links this same
-version set and identifies its implementation PRs.
-
-| Component | Release | Included PRs |
-| --- | --- | --- |
-| Flow-Aligned Regenerate | [v0.3.9](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.9) | [#89](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/89), [#93](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/93) |
-| Sol-H3 | [v0.1.8](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.8) | [#37](https://github.com/xmarre/ComfyUI-Sol-H3/pull/37) |
-| VDN-H3-Plus | [v1.5.7](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.7) | [#33](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/33), [#34](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/34), [#35](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/35), [#36](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/36), [#37](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/37) |
-| H3 Continuum-Plus | [v3.4.5](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/releases/tag/v3.4.5) | [#37](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/37), [#38](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/38) |
-| Latent Upscaler-Plus | [v0.2.2](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/releases/tag/v0.2.2) | [#16](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/pull/16) |
-
-[Spectrum MiniMax H3 v0.2.28](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.28)
-is the unchanged companion. Separate Keyless, audio-training and rejected
-decoded-geometry experiments are outside this release set.
-
-The tested Core adapter repair is
-[ComfyUI #16783](https://github.com/Comfy-Org/ComfyUI/pull/16783).
-It remains an upstream review item, with upstream workflow approval and merge
-controlled by Comfy-Org maintainers. For INT8 fused MLP runtime adapters,
-retain that ComfyUI Patcher PR overlay until the repair is available upstream.
-The independent Core #16720 optimization is not included in this release set.
-
+# ComfyUI-H3-Continuum-Plus
 
 > **Plus fork:** This is the `xmarre` maintained Plus fork of [ukr8b3g-cmyk/ComfyUI-H3-Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum). It preserves the upstream project's foundation while carrying additional features, integrations, fixes, and behavior that may intentionally diverge from upstream.
 
@@ -47,7 +22,7 @@ Driving Audio remains authoritative source audio: Native Masked protects the vid
 
 See [Native Masked AV Continuation](docs/NATIVE_MASKED_CONTINUATION.md) for the data flow, temporal math, Run Storage contract, reference/keyframe rules, Spectrum separation, and runtime validation checklist.
 
-## What's new in V3.4
+## V3.4 overview
 
 V3.4 focuses on the two reference workflows that are most useful in normal production:
 
@@ -79,7 +54,7 @@ New V3.4 nodes and the maintained V3.4 templates default to `Continuation Method
 
 The templates include optional external nodes such as Spectrum, Video Helper Suite, rgthree, EasyUse, and RTX Video Super Resolution. Install, replace, connect, or bypass them according to your installation. Media and acceleration choices remain under user control.
 
-## What's new in V3.4
+## V3.4 features
 
 ### Driving Audio
 
@@ -193,6 +168,14 @@ the physical decode groups. After that operation, connect its IMAGE result, the 
 and the same `assembly_plan` to **H3 Continuum Finalize Duration V3.4**. The finalizer reuses
 Continuum's validated final-frame preservation and sample-aligned audio duration policy.
 
+**H3 Continuum Finalize Duration V3.4** also has a **Timeline Output** selector.
+It defaults to `Exact requested duration (Recommended)`, including for existing workflows.
+To retain the generated tail through the entire branch, select
+`Natural retained timeline (Refinement)` on both Assemble + Seam and Finalize Duration.
+The finalizer can stay connected: it keeps all retained video frames and aligns audio to
+their duration. This output can exceed the requested length; retaining generated samples
+does not guarantee that the model completed a spoken line.
+
 When Driving Audio is connected, preserved source audio is selected for final output and generated audio seam processing is bypassed.
 
 ## Connection order
@@ -294,30 +277,6 @@ See [Spectrum v0.2.15 H3 Continuum interoperability](https://github.com/xmarre/C
 
 Turbo LoRA and Spectrum are not mutually exclusive. Quality and speed remain workflow-dependent.
 
-## Issue and pull-request response
-
-### Issue #3
-
-V3.4 removes blanket rejection of unknown upstream/custom class names. Run Storage evaluates the observable generation contract instead of treating an unfamiliar wrapper as automatically incompatible.
-
-See [Issue #3](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum/issues/3).
-
-### Issue #4
-
-V3.4 follows the current Core H3 layout contract and no longer requires the legacy frame_count parameter. The old strict-compatibility toggle is not part of the public interface.
-
-See [Issue #4](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum/issues/4).
-
-### Pull request #1 and #2
-
-These older partial pull requests were superseded by the consolidated [Pull request #5](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum/pull/5). V3.4 selectively includes the compatibility direction needed for the current Core H3 contract, while the broader upstream synchronization and release-automation scope remains a separate upstream review.
-
-The older pull requests are not represented as merged V3.4 changes.
-
-### Pull request #5
-
-PR #5 is the consolidated upstream-to-fork proposal covering current H3 compatibility, reference-input handling, assembly memory behavior, exact-duration handling, continuation-reference interoperability, and CI/release automation. V3.4 already contains the user-facing stability decisions described above; the PR remains an upstream review item and is not claimed as merged here.
-
 ## V3.4 input connection patterns
 
 V3.4 separates the visual reference input from the driving-audio input. Choose the connection pattern that matches your source material.
@@ -374,6 +333,34 @@ No OOM was observed in the cited recent local V3.4 stable checks, including two-
 - Match Output can be substantially slower than 0.4 MP or 0.6 MP.
 - Seam correction may keep the native boundary when a proposed correction is not safer.
 - Optional template nodes must be installed, replaced, or bypassed by the user.
+
+## Upstream issue and pull-request responses
+
+Responses to upstream issues #3 and #4 and pull requests #1, #2 and #5 are in
+[docs/UPSTREAM_RESPONSES.md](docs/UPSTREAM_RESPONSES.md).
+
+## Coordinated H3 release set
+
+H3 Continuum-Plus is released together with the other H3 components.
+Per-version details are in [CHANGELOG.md](CHANGELOG.md).
+
+| Component | Release | Included PRs |
+| --- | --- | --- |
+| Flow-Aligned Regenerate | [v0.3.10](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.10) | [#96](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/96) |
+| Sol-H3 | [v0.1.9](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.9) | [#39](https://github.com/xmarre/ComfyUI-Sol-H3/pull/39) |
+| VDN-H3-Plus | [v1.5.8](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.8) | [#38](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/38) |
+| H3 Continuum-Plus | [v3.4.6](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/releases/tag/v3.4.6) | [#39](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/39), [#40](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/40) |
+| Latent Upscaler-Plus | [v0.2.2](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/releases/tag/v0.2.2) | unchanged |
+
+[Spectrum MiniMax H3 v0.2.28](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.28)
+is the unchanged companion. Separate Keyless, audio-training and rejected
+decoded-geometry experiments are outside this release set.
+
+The tested Core adapter repair is
+[ComfyUI #16783](https://github.com/Comfy-Org/ComfyUI/pull/16783).
+For INT8 fused MLP runtime adapters, retain that ComfyUI Patcher PR overlay until
+the repair is available upstream. The independent Core #16720 optimization is
+not included in this release set.
 
 ## License
 
