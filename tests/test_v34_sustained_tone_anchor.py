@@ -28,7 +28,7 @@ def _clip(*, frames=24, darken=True, scene_cut_at=None, actor=True):
                 # Deliberate subject motion and mouth/face changes are not
                 # photometric evidence about the fixed room background.
                 left = 15 + (index % 8)
-                base[25:53, left : left + 19, :] = (0.55, 0.10, 0.22)
+                base[25:53, left : left + 19, :] = torch.tensor((0.55, 0.10, 0.22))
         continuation.append(base.clamp(0.0, 1.0))
     return prefix, torch.stack(continuation)
 
