@@ -38,9 +38,11 @@ VIDEO_SEAM_OFF = "Off"
 VIDEO_SEAM_ANALYZE = "Analyze Only"
 VIDEO_SEAM_AUTO = "Auto"
 VIDEO_SEAM_AUTO_2 = "Auto 2"
+VIDEO_SEAM_TONE = "Auto 3 (Sustained Tone)"
 VIDEO_SEAM_ANALYSIS_OPTIONS = (
     VIDEO_SEAM_AUTO,
     VIDEO_SEAM_AUTO_2,
+    VIDEO_SEAM_TONE,
     VIDEO_SEAM_ANALYZE,
     VIDEO_SEAM_OFF,
 )
@@ -229,6 +231,7 @@ def assemble_decoded_chunks(
     diagnostics: str,
     image_output_device: str = IMAGE_OUTPUT_AUTO,
     video_patches: dict[int, torch.Tensor] | None = None,
+    tone_affines: dict[int, torch.Tensor] | None = None,
 ):
     plan = validate_assembly_plan(assembly_plan)
     diagnostics_mode = normalize_diagnostics_mode(diagnostics)
@@ -261,6 +264,7 @@ def assemble_decoded_chunks(
         f"Audio Seam: {audio_seam}. Video seam correction is disabled.",
     ]
     video_patches = video_patches or {}
+    tone_affines = tone_affines or {}
 
     for index, (raw_images, raw_audio, chunk) in enumerate(
         zip(images, audio, chunk_plans), start=1
@@ -536,6 +540,21 @@ def assemble_decoded_chunks(
             net_frames=net_frames,
             patch=video_patch,
         )
+        tone_coefficients = tone_affines.get(index - 1)
+        if tone_coefficients is not None:
+            from .video_tone_repair import apply_tone_affines_in_place
+
+            apply_tone_affines_in_place(
+                image_buffer,
+                frame_start=frame_cursor,
+                affines=tone_coefficients,
+            )
+            LOG.info(
+                "H3C-PT233 decoded-tone-assembly receipt boundary_global_frame=%d "
+                "boundary_index=%d corrected_frames=%d authoritative_prefix_modified=False "
+                "audio_modified=False spatial_transform_applied=False",
+                frame_cursor, index - 1, len(tone_coefficients),
+            )
         if index > 1:
             patch_frames = int(video_patch.shape[0]) if torch.is_tensor(video_patch) else 0
             LOG.info(
@@ -791,6 +810,7 @@ def finalize_assembled_timeline(
     audio: dict[str, Any],
     assembly_plan: dict[str, Any],
     exact_total_duration: bool = True,
+    preserve_audible_tail: bool = False,
 ):
     """Select exact or natural duration after downstream image processing.
 
@@ -818,6 +838,35 @@ def finalize_assembled_timeline(
     }
     requested_target_frames = int(plan["target_frames"])
     output_frames = requested_target_frames if exact_total_duration else natural_frames
+    # Speech-free prompting cannot guarantee silence: the H3 model can still
+    # produce significant phonemes in the natural decoder tail. Do not discard
+    # that signal in the explicit audible-tail-safe mode. Preserve BOTH audio
+    # and video duration so that lip synchronization remains unchanged.
+    audible_tail_preserved = False
+    if exact_total_duration and preserve_audible_tail and natural_frames > requested_target_frames:
+        proposed_trim = _terminal_audio_trim_receipt(
+            normalized_audio,
+            natural_frames=natural_frames,
+            target_frames=requested_target_frames,
+        )
+        # The cutoff is a decoded PCM decision, not a hidden-space estimate.
+        # RMS and peak must both exceed a conservative absolute noise floor.
+        if (
+            proposed_trim["discarded_samples"] > 0
+            and proposed_trim["discarded_rms"] >= 0.010
+            and proposed_trim["discarded_peak"] >= 0.050
+        ):
+            output_frames = natural_frames
+            audible_tail_preserved = True
+            LOG.warning(
+                "H3C-PT229 audible-tail preservation applied: "
+                "requested_frames=%d actual_frames=%d spared_samples=%d "
+                "spared_seconds=%.6f discarded_candidate_rms=%.9f "
+                "discarded_candidate_peak=%.9f (AV duration extended)",
+                requested_target_frames, natural_frames,
+                proposed_trim["discarded_samples"], proposed_trim["discarded_seconds"],
+                proposed_trim["discarded_rms"], proposed_trim["discarded_peak"],
+            )
     terminal_audio = _terminal_audio_trim_receipt(
         normalized_audio,
         natural_frames=natural_frames,
@@ -847,14 +896,20 @@ def finalize_assembled_timeline(
         images,
         normalized_audio,
         target_frames=output_frames,
-        preserve_final_frame=bool(exact_total_duration and plan.get("preserve_final_frame", False)),
+        preserve_final_frame=bool(exact_total_duration and not audible_tail_preserved and plan.get("preserve_final_frame", False)),
     )
+    if audible_tail_preserved:
+        duration_report = (
+            f"Audible-tail preservation: kept all {natural_frames} frames and the corresponding "
+            f"PCM instead of discarding active speech/audio to enforce {requested_target_frames} "
+            "frames; video and audio remain synchronized."
+        )
     if not exact_total_duration:
         duration_report = (
             "Natural retained timeline: all physical-group frames retained; "
             f"audio aligned to {output_frames} frames at {FPS} fps."
         )
-    output_report = f", output={output_frames}" if not exact_total_duration else ""
+    output_report = f", output={output_frames}" if (not exact_total_duration or audible_tail_preserved) else ""
     report = (
         "H3 Continuum Finalize Duration V3.4: "
         f"natural={natural_frames}, target={requested_target_frames}{output_report}.\n"
@@ -981,7 +1036,8 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                 "tooltip": (
                     "Analyze Only reports decoded video boundaries without changing them. "
                     "Auto applies the validated transient and micro-flash correction. "
-                    "Auto 2 experimentally adds qualified exposure-ramp smoothing."
+                    "Auto 2 experimentally adds qualified exposure-ramp smoothing. "
+                    "Auto 3 (Sustained Tone) tests background-anchored multi-frame color repair."
                 ),
             },
         )
@@ -1022,6 +1078,7 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
         analysis_error = None
         actions = {}
         video_patches = {}
+        tone_coefficients = {}
         try:
             from .video_seam import (
                 analyze_decoded_boundaries,
@@ -1033,16 +1090,45 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                 images=image_chunks,
                 assembly_plan=plan,
             )
-            if mode in (VIDEO_SEAM_AUTO, VIDEO_SEAM_AUTO_2):
+            if mode in (VIDEO_SEAM_AUTO, VIDEO_SEAM_AUTO_2, VIDEO_SEAM_TONE):
                 video_patches, actions = build_decoded_boundary_patches(
                     images=image_chunks,
                     assembly_plan=plan,
                     analyses=analyses,
                     enable_exposure_ramp=mode == VIDEO_SEAM_AUTO_2,
                 )
+            if mode == VIDEO_SEAM_TONE:
+                from .video_tone_repair import estimate_sustained_tone_anchor
+
+                group_plans = list(plan.get("decode_groups", plan.get("chunks", ())))
+                for group_index in range(1, len(image_chunks)):
+                    if video_patches.get(group_index) is not None:
+                        LOG.info(
+                            "H3C-PT232 decoded-tone-anchor receipt boundary_index=%d "
+                            "applied=False reason=existing_flash_or_ramp_patch",
+                            group_index,
+                        )
+                        continue
+                    previous = image_chunks[group_index - 1]
+                    current = image_chunks[group_index]
+                    previous_total = int(group_plans[group_index - 1]["total_frames"])
+                    current_total = int(group_plans[group_index]["total_frames"])
+                    trim = int(group_plans[group_index]["trim_frames"])
+                    coefficients, receipt = estimate_sustained_tone_anchor(
+                        previous[:previous_total],
+                        current[:current_total],
+                        trim_frames=trim,
+                    )
+                    if coefficients is not None:
+                        tone_coefficients[group_index] = coefficients
+                    LOG.info(
+                        "H3C-PT232 decoded-tone-anchor receipt %s",
+                        json.dumps({"boundary_index": group_index, **receipt}, sort_keys=True),
+                    )
         except Exception as exc:
             analysis_error = exc
             video_patches = {}
+            tone_coefficients = {}
 
         for item in analyses:
             patch = video_patches.get(item.boundary_index)
@@ -1076,12 +1162,18 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                 _singleton(image_output_device, "image_output_device")
             ),
             video_patches=video_patches,
+            tone_affines=tone_coefficients,
         )
         if mode == VIDEO_SEAM_ANALYZE:
             status = "Video Seam: Analyze Only; decoded frames and audio are unchanged."
         elif mode == VIDEO_SEAM_AUTO:
             status = (
                 "Video Seam: Auto; guarded transient and micro-flash correction enabled."
+            )
+        elif mode == VIDEO_SEAM_TONE:
+            status = (
+                "Video Seam: Auto 3 (Experimental); static-background sustained-tone "
+                "anchoring in qualified continuous shots."
             )
         else:
             status = (

@@ -12,6 +12,8 @@ from ComfyUI_H3_Continuum_Join.v3.driving_nodes import (
     H3ContinuumAssembleSeamV34,
     H3ContinuumFinalizeDurationV34,
     V34_TIMELINE_EXACT,
+    V34_TIMELINE_SAFE,
+    V34_TIMELINE_STRICT,
     V34_TIMELINE_NATURAL,
 )
 from ComfyUI_H3_Continuum_Join.v3.plan import ASSEMBLY_PLAN_MAGIC
@@ -62,18 +64,18 @@ def _audio(frames, sample_rate=48_000):
     }
 
 
-def test_v34_timeline_mode_is_explicit_and_defaults_to_exact():
+def test_v34_timeline_mode_is_explicit_and_defaults_to_safe():
     schema = H3ContinuumAssembleSeamV34.INPUT_TYPES()["required"]["timeline_mode"]
-    assert schema[0] == (V34_TIMELINE_EXACT, V34_TIMELINE_NATURAL)
-    assert schema[1]["default"] == V34_TIMELINE_EXACT
+    assert schema[0] == (V34_TIMELINE_SAFE, V34_TIMELINE_EXACT, V34_TIMELINE_STRICT, V34_TIMELINE_NATURAL)
+    assert schema[1]["default"] == V34_TIMELINE_SAFE
 
 
-def test_finalizer_timeline_mode_is_optional_and_defaults_to_exact():
+def test_finalizer_timeline_mode_is_optional_and_defaults_to_safe():
     schema = H3ContinuumFinalizeDurationV34.INPUT_TYPES()
     assert set(schema["required"]) == {"images", "audio", "assembly_plan"}
     mode = schema["optional"]["timeline_mode"]
-    assert mode[0] == (V34_TIMELINE_EXACT, V34_TIMELINE_NATURAL)
-    assert mode[1]["default"] == V34_TIMELINE_EXACT
+    assert mode[0] == (V34_TIMELINE_SAFE, V34_TIMELINE_EXACT, V34_TIMELINE_STRICT, V34_TIMELINE_NATURAL)
+    assert mode[1]["default"] == V34_TIMELINE_SAFE
     assert mode[1]["display_name"] == "Timeline Output"
 
 
@@ -96,12 +98,12 @@ def test_v34_natural_mode_drives_underlying_assembler_exact_flag_false(monkeypat
     assert images.shape[0] == 243
 
 
-def test_v34_exact_mode_keeps_normal_assembler_behavior(monkeypatch):
+def test_v34_legacy_exact_mode_preserves_audible_tail(monkeypatch):
     captured = {}
 
     def fake_assemble(_self, *args, **kwargs):
         captured["exact"] = kwargs["exact_total_duration"]
-        return torch.zeros((240, 8, 8, 3)), _audio(240), "base report"
+        return torch.zeros((243, 8, 8, 3)), _audio(243), "base report"
 
     monkeypatch.setattr(H3ContinuumAssembleSeamExperimental, "assemble", fake_assemble)
     images, _audio_out, _report = H3ContinuumAssembleSeamV34().assemble(
@@ -111,8 +113,8 @@ def test_v34_exact_mode_keeps_normal_assembler_behavior(monkeypatch):
         exact_total_duration=False,
         timeline_mode=V34_TIMELINE_EXACT,
     )
-    assert captured["exact"] is True
-    assert images.shape[0] == 240
+    assert captured["exact"] is False
+    assert images.shape[0] == 243
 
 
 def test_post_stitch_finalizer_reuses_final_anchor_and_audio_policy():
@@ -144,16 +146,16 @@ def test_post_stitch_finalizer_leaves_target_length_driving_audio_unchanged():
 
 
 @pytest.mark.parametrize("timeline_mode", [None, V34_TIMELINE_EXACT, [V34_TIMELINE_EXACT]])
-def test_finalizer_node_keeps_legacy_exact_behavior(timeline_mode):
+def test_finalizer_node_legacy_mode_preserves_audible_tail(timeline_mode):
     kwargs = {} if timeline_mode is None else {"timeline_mode": timeline_mode}
     images = torch.arange(243, dtype=torch.float32).reshape(243, 1, 1, 1)
     output_images, output_audio, report = H3ContinuumFinalizeDurationV34().finalize(
         images, _audio(243), _plan(), **kwargs
     )
-    assert output_images.shape[0] == 240
+    assert output_images.shape[0] == 243
     assert torch.equal(output_images[-1], images[-1])
-    assert output_audio["waveform"].shape[-1] == round(240 / 24 * 48_000)
-    assert "final anchor preserved" in report
+    assert output_audio["waveform"].shape[-1] == round(243 / 24 * 48_000)
+    assert "Audible-tail preservation" in report
 
 
 @pytest.mark.parametrize("timeline_mode", [V34_TIMELINE_NATURAL, [V34_TIMELINE_NATURAL]])
@@ -195,7 +197,7 @@ def test_natural_finalizer_aligns_short_driving_audio_without_changing_source():
     assert torch.equal(audio["waveform"], original)
 
 
-@pytest.mark.parametrize("timeline_mode", [V34_TIMELINE_EXACT, V34_TIMELINE_NATURAL])
+@pytest.mark.parametrize("timeline_mode", [V34_TIMELINE_SAFE, V34_TIMELINE_EXACT, V34_TIMELINE_STRICT, V34_TIMELINE_NATURAL])
 def test_post_stitch_finalizer_rejects_already_compacted_video(timeline_mode):
     with pytest.raises(ValueError, match="natural retained timeline"):
         H3ContinuumFinalizeDurationV34().finalize(
