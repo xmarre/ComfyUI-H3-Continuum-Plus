@@ -175,6 +175,27 @@ For exact frame counts irrespective of active audio, explicitly select
 `Exact requested duration (Recommended)` remains accepted but now uses audible-tail protection
 rather than silently dropping speech; it can exceed the target duration.
 
+**Experimental multi-frame tone repair (run 00039):** Video Seam now also offers
+`Auto 3 (Sustained Tone)`. The standard `Auto` and `Auto 2` modes
+remain unchanged. The new mode first retains ordinary transient-flash
+corrections and, on an otherwise unpatched continuous shot, estimates a
+bounded per-frame RGB affine adjustment from stationary room/background
+pixels. It corrects **only generated frames**, not the authoritative
+video prefix, geometric alignment, or audio. It stops at a scene cut,
+rejects an initial scene cut or insufficient static support, and leaves
+the video unchanged when no sustained darkening is detected.
+
+This is an **experimental decoded-output correction**, not a change to
+Flow's latent sampler or a proof of the model-side cause. In a local
+read-only replay of the estimator on the uploaded 00039 MP4, the
+continuation started at frame 175 and the next shot cut occurred at frame
+195; the estimated RGB bias near frame 180 was about 3 levels out of
+255, with gain around 0.99. Synthetic tests check prefix invariance,
+actor motion, scene-cut stopping and no-op behavior. Final quality
+requires a GPU/ComfyUI video render using this mode. For a controlled
+comparison, change **only Video Seam to Auto 3**, keeping the same seed,
+reference images and `progressive_uniform_source`.
+
 **Explicit subject substitutions in Timeline prompts:** When a prompt states, for example,
 `Replace Clark's identity with <Subject 1>`, the physical compiler now
 rebinds generated **visual role mentions** such as `Clark (S2)`,
