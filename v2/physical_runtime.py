@@ -282,6 +282,42 @@ def _with_runtime_compiler_identity(
     )
 
 
+def _has_authored_timeline_after_output(plan: dict[str, Any]) -> bool:
+    """Identify partial renders whose authored story continues past this run.
+
+    A workflow may deliberately render just the first two chunks of a four-
+    chunk script. Its last *rendered* chunk is not the story's terminal chunk:
+    imposing a speech-free ending on it destroys dialogue intended to continue
+    in a later invocation. Inspect the original, unscoped authored source;
+    the per-chunk physical compiler will intentionally remove future sections.
+    """
+
+    source = plan.get("source")
+    if not isinstance(source, dict) or source.get("kind") != "timeline":
+        return False
+    sections = source.get("sections")
+    if not isinstance(sections, list):
+        return False
+    chunks = int(plan.get("chunks", 0))
+    chunk_seconds = parse_fraction(source.get("chunk_seconds", plan.get("chunk_seconds", 0)))
+    if chunks <= 0 or chunk_seconds <= 0:
+        return False
+    horizon = chunks * chunk_seconds
+    for section in sections:
+        if not isinstance(section, dict) or not str(section.get("body", "")).strip():
+            continue
+        kind = section.get("kind")
+        if kind == "time":
+            authored_end = parse_fraction(section.get("end", 0))
+        elif kind == "chunk":
+            authored_end = int(section.get("chunk_index", 0)) * chunk_seconds
+        else:
+            continue
+        if authored_end > horizon:
+            return True
+    return False
+
+
 def compile_invocation_prompt(
     plan: dict[str, Any], descriptor: Any, *, legacy_text: str, candidate: bool
 ):
@@ -305,6 +341,10 @@ def compile_invocation_prompt(
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))
     if candidate and source_kind == "timeline":
+        # A partial render must not be mistaken for the narrative endpoint.
+        # The original source may have authored future sections that scoping
+        # removes from this physical invocation.
+        authored_future = _has_authored_timeline_after_output(plan)
         scoped_plan, logical_scope = _timeline_plan_for_logical_signal(plan, descriptor)
         runtime_plan, protected_interval = _timeline_plan_with_exact_prefix_context(
             scoped_plan, descriptor
@@ -314,8 +354,27 @@ def compile_invocation_prompt(
         compiled = compile_physical_prompt(
             runtime_plan,
             descriptor,
-            neutral_terminal_padding=True,
+            neutral_terminal_padding=not authored_future,
         )
+        if (
+            authored_future
+            and descriptor.global_end_seconds
+            > Fraction(int(descriptor.target_duration_frames), 1) / descriptor.fps
+        ):
+            compiled = replace(
+                compiled,
+                diagnostics=tuple(compiled.diagnostics) + ({
+                    "level": "info",
+                    "code": "H3C-PT230",
+                    "message": (
+                        "partial authored timeline continues beyond the rendered horizon; "
+                        "preserved ongoing speech in the physical overrun instead of "
+                        "forcing a terminal speech-free lead-out"
+                    ),
+                    "terminal_audio_guard_suppressed": True,
+                    "future_authored_continuation": True,
+                },),
+            )
         compiled = _with_runtime_compiler_identity(
             compiled,
             descriptor,
