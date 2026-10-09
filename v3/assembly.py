@@ -791,6 +791,7 @@ def finalize_assembled_timeline(
     audio: dict[str, Any],
     assembly_plan: dict[str, Any],
     exact_total_duration: bool = True,
+    preserve_audible_tail: bool = False,
 ):
     """Select exact or natural duration after downstream image processing.
 
@@ -818,6 +819,35 @@ def finalize_assembled_timeline(
     }
     requested_target_frames = int(plan["target_frames"])
     output_frames = requested_target_frames if exact_total_duration else natural_frames
+    # Speech-free prompting cannot guarantee silence: the H3 model can still
+    # produce significant phonemes in the natural decoder tail. Do not discard
+    # that signal in the explicit audible-tail-safe mode. Preserve BOTH audio
+    # and video duration so that lip synchronization remains unchanged.
+    audible_tail_preserved = False
+    if exact_total_duration and preserve_audible_tail and natural_frames > requested_target_frames:
+        proposed_trim = _terminal_audio_trim_receipt(
+            normalized_audio,
+            natural_frames=natural_frames,
+            target_frames=requested_target_frames,
+        )
+        # The cutoff is a decoded PCM decision, not a hidden-space estimate.
+        # RMS and peak must both exceed a conservative absolute noise floor.
+        if (
+            proposed_trim["discarded_samples"] > 0
+            and proposed_trim["discarded_rms"] >= 0.010
+            and proposed_trim["discarded_peak"] >= 0.050
+        ):
+            output_frames = natural_frames
+            audible_tail_preserved = True
+            LOG.warning(
+                "H3C-PT229 audible-tail preservation applied: "
+                "requested_frames=%d actual_frames=%d spared_samples=%d "
+                "spared_seconds=%.6f discarded_candidate_rms=%.9f "
+                "discarded_candidate_peak=%.9f (AV duration extended)",
+                requested_target_frames, natural_frames,
+                proposed_trim["discarded_samples"], proposed_trim["discarded_seconds"],
+                proposed_trim["discarded_rms"], proposed_trim["discarded_peak"],
+            )
     terminal_audio = _terminal_audio_trim_receipt(
         normalized_audio,
         natural_frames=natural_frames,
@@ -847,14 +877,20 @@ def finalize_assembled_timeline(
         images,
         normalized_audio,
         target_frames=output_frames,
-        preserve_final_frame=bool(exact_total_duration and plan.get("preserve_final_frame", False)),
+        preserve_final_frame=bool(exact_total_duration and not audible_tail_preserved and plan.get("preserve_final_frame", False)),
     )
+    if audible_tail_preserved:
+        duration_report = (
+            f"Audible-tail preservation: kept all {natural_frames} frames and the corresponding "
+            f"PCM instead of discarding active speech/audio to enforce {requested_target_frames} "
+            "frames; video and audio remain synchronized."
+        )
     if not exact_total_duration:
         duration_report = (
             "Natural retained timeline: all physical-group frames retained; "
             f"audio aligned to {output_frames} frames at {FPS} fps."
         )
-    output_report = f", output={output_frames}" if not exact_total_duration else ""
+    output_report = f", output={output_frames}" if (not exact_total_duration or audible_tail_preserved) else ""
     report = (
         "H3 Continuum Finalize Duration V3.4: "
         f"natural={natural_frames}, target={requested_target_frames}{output_report}.\n"
