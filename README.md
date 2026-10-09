@@ -175,6 +175,17 @@ For exact frame counts irrespective of active audio, explicitly select
 `Exact requested duration (Recommended)` remains accepted but now uses audible-tail protection
 rather than silently dropping speech; it can exceed the target duration.
 
+**Explicit subject substitutions in Timeline prompts:** When a prompt states, for example,
+`Replace Clark's identity with <Subject 1>`, the physical compiler now
+rebinds generated **visual role mentions** such as `Clark (S2)`,
+`Clark/Maekar`, and `Clark's expression` to `<Subject 1>` in every relevant
+physical chunk. It leaves `<d>...</d>` dialogue unchanged and does not infer
+unspecified identity mappings. For maximum reference fidelity, name
+`<Subject N> (Sx)` directly at every speaker appearance, and distinguish a
+composition/clothing-only reference from the reference defining facial
+identity. This is semantic prompt conditioning, not a guarantee of a perfect
+face match on every stochastic H3 sample.
+
 **Partial Timeline previews:** If the authored Timeline contains later sections
 (for example, `[14-21s]` and `[21-28s]`) but only two 7-second chunks are
 requested, the physical prompt compiler no longer falsely treats the
