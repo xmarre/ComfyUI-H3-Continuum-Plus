@@ -84,3 +84,52 @@ def test_future_section_crossing_horizon_is_treated_as_continuation():
         "[7-16s]\nConversation carries on after the preview ends."
     )
     assert _has_authored_timeline_after_output(plan) is True
+
+
+
+def test_first_chunk_compiled_conditioning_is_invariant_to_terminal_fix():
+    """PT230 cannot directly change the chunk-1 text or reference contract.
+
+    The first generated window ends at frame 175 (7.2917 s), far before the
+    requested 336-frame / 14 s output horizon. Switching the terminal policy
+    therefore must leave all prompt-identity fields byte-identical.
+    """
+    from ComfyUI_H3_Continuum_Join.v2.physical_prompts import compile_physical_prompt
+    from ComfyUI_H3_Continuum_Join.v2.physical_runtime import _timeline_plan_for_logical_signal
+
+    plan = _plan(
+        "subject_definitions:\n"
+        "<Subject 1> is Maekar from <Picture 1>. He replaces Clark.\n"
+        "<Subject 2> is Mary from <Picture 2>.\n"
+        "<Picture 3> defines Clark's clothing, couch, and composition.\n"
+        "Replace Clark's identity with <Subject 1>.\n"
+        "[0-7s]\nCut to Clark (S2). <d>[English] I'm being honest.</d>\n"
+        "[7-14s]\nClark (S2) continues talking.\n"
+        "[14-21s]\nThe conversation continues.\n"
+        "[21-28s]\nFinal exchange."
+    )
+    descriptor = make_physical_sample_descriptor(
+        group_id="chunk:1",
+        logical_indices=(0,),
+        retained_before=0,
+        context_frames=0,
+        total_frames=175,
+        target_duration_frames=336,
+        continuation_method="Native Masked",
+        initial_state_origin="sequence",
+        include_first=False,
+        include_last=False,
+        presentation_contract={"reference_count": 3, "reference_image_hashes": ["one", "two", "three"]},
+    )
+    assert _has_authored_timeline_after_output(plan)
+    scoped, _scope = _timeline_plan_for_logical_signal(plan, descriptor)
+    before = compile_physical_prompt(scoped, descriptor, neutral_terminal_padding=True)
+    after = compile_physical_prompt(scoped, descriptor, neutral_terminal_padding=False)
+    assert before.text == after.text
+    assert before.text_sha256 == after.text_sha256
+    assert before.physical_conditioning_hash == after.physical_conditioning_hash
+    assert before.descriptor_digest == after.descriptor_digest
+    assert before.presentation_digest == after.presentation_digest
+    assert before.compiler_version == after.compiler_version
+    assert before.contributing_intervals == after.contributing_intervals
+    assert before.diagnostics == after.diagnostics
