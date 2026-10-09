@@ -453,7 +453,7 @@ def inner_range_header_like(line: str) -> bool:
 # Do not guess equivalence from names, speaker numbers, or image ordering.
 _EXPLICIT_IDENTITY_REPLACEMENT = re.compile(
     r"\bReplace\s+(?P<alias>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,3})"
-    r"'s\s+identity\s+with\s+(?P<subject><Subject\s+\d+>)\b",
+    r"'s\s+identity\s+with\s+(?P<subject><Subject\s+\d+>)(?=\W|$)",
     re.IGNORECASE,
 )
 _DIALOGUE_SPANS = re.compile(r"(<d(?:\s+[^>]*)?>.*?</d>)", re.IGNORECASE | re.DOTALL)
