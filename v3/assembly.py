@@ -1095,7 +1095,7 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                     images=image_chunks,
                     assembly_plan=plan,
                     analyses=analyses,
-                    enable_exposure_ramp=mode in (VIDEO_SEAM_AUTO_2, VIDEO_SEAM_TONE),
+                    enable_exposure_ramp=mode == VIDEO_SEAM_AUTO_2,
                 )
             if mode == VIDEO_SEAM_TONE:
                 from .video_tone_repair import estimate_sustained_tone_anchor
