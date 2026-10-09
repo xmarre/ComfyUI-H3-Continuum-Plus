@@ -23,6 +23,7 @@ def _input(tail_amplitude: float):
     plan = {
         "target_frames": 336,
         "decode_groups": [{"net_frames": 175}, {"net_frames": 170}],
+        "chunks": [{"net_frames": 175}, {"net_frames": 170}],
         "preserve_final_frame": False,
     }
     return frames, {"waveform": pcm, "sample_rate": 32000}, plan
