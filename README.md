@@ -175,6 +175,19 @@ For exact frame counts irrespective of active audio, explicitly select
 `Exact requested duration (Recommended)` remains accepted but now uses audible-tail protection
 rather than silently dropping speech; it can exceed the target duration.
 
+**Partial Timeline previews:** If the authored Timeline contains later sections
+(for example, `[14-21s]` and `[21-28s]`) but only two 7-second chunks are
+requested, the physical prompt compiler no longer falsely treats the
+14-second preview boundary as the story's end. It preserves the current
+chunk's ongoing-dialogue prompt through native-grid overrun instead of
+injecting a terminal speech-free lead-out. Later sections remain excluded
+from the current chunk's conditioning. This does **not** generate the
+missing future dialogue: render the later chunks to hear a scripted
+utterance continue into them. Dense dialogue that cannot fit at a natural
+speaking rate within its assigned chunk also requires re-timing or a
+time-aligned Driving Audio source; audio assembly cannot reconstruct
+words the model did not intelligibly generate.
+
 Select `Natural retained timeline (Refinement)` on **H3 Continuum Assemble + Seam V3.4**
 when a downstream operation must process every physical decode-group frame. After that
 operation, connect its IMAGE result, the assembler AUDIO, and the same `assembly_plan` to
