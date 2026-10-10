@@ -14,6 +14,7 @@ from ComfyUI_H3_Continuum_Join.v3.assembly import (
 from ComfyUI_H3_Continuum_Join.v3.nodes import NODE_CLASS_MAPPINGS
 from ComfyUI_H3_Continuum_Join.v3.plan import ASSEMBLY_PLAN_MAGIC
 from ComfyUI_H3_Continuum_Join.v3.video_seam import analyze_video_boundary
+from ComfyUI_H3_Continuum_Join.v3.decoded_gauge import translate_decoded_frames
 
 
 def _frames(values, *, height=8, width=8):
@@ -391,3 +392,107 @@ def test_assembly_records_prepatch_pt212_interpretation_and_video_patch_action(c
     assert "H3C-PT216 video-assembly-patch receipt" in joined
     assert "applied=True patch_frames=1 pre_patch_pt212_recorded=True" in joined
     assert "source=pre_patch_raw_decode" in joined
+
+
+def test_assembly_applies_decoded_rigid_gauge_to_complete_retained_segment(monkeypatch, caplog):
+    images, audio = _decoded()
+    height = width = 8
+    y, x = torch.meshgrid(
+        torch.arange(height, dtype=torch.float32),
+        torch.arange(width, dtype=torch.float32),
+        indexing="ij",
+    )
+    base = torch.stack(
+        (
+            x / float(width - 1),
+            y / float(height - 1),
+            (x + y) / float(height + width - 2),
+        ),
+        dim=-1,
+    )
+    images[0][:] = base
+    images[1][:] = base
+
+    def fake_plan(_trajectory, *, affine, scene):
+        assert scene is not None
+        return {
+            "policy": "decoded_chunk_rigid_gauge_v1",
+            "eligible": True,
+            "reason": "coherent_decoded_rigid_boundary_impulse",
+            "whole_retained_segment": True,
+            "temporal_release": False,
+            "observations": {
+                "upper45": {"excess_dx_px": -2.0, "excess_dy_px": 1.0},
+                "full": {"excess_dx_px": -2.0, "excess_dy_px": 1.0},
+            },
+            "consensus_excess_dx_px": -2.0,
+            "consensus_excess_dy_px": 1.0,
+            "proposed_correction_dx_px": 2.0,
+            "proposed_correction_dy_px": -1.0,
+        }
+
+    def fake_select(
+        _previous,
+        _current,
+        *,
+        boundary_global_frame,
+        original_trajectory,
+        plan,
+    ):
+        assert boundary_global_frame == 124
+        assert original_trajectory is not None
+        return {
+            **plan,
+            "accepted": True,
+            "applied": False,
+            "reason": "accepted_decoded_rigid_chunk_gauge",
+            "selected_dx_px": 2.0,
+            "selected_dy_px": -1.0,
+            "selected_score": {
+                "before_mean_boundary_error_px": 2.25,
+                "after_mean_boundary_error_px": 0.25,
+                "mean_improvement_ratio": 8.0 / 9.0,
+            },
+        }
+
+    monkeypatch.setattr(
+        "ComfyUI_H3_Continuum_Join.v3.assembly.plan_decoded_rigid_gauge",
+        fake_plan,
+    )
+    monkeypatch.setattr(
+        "ComfyUI_H3_Continuum_Join.v3.assembly.select_decoded_rigid_gauge_translation",
+        fake_select,
+    )
+
+    native_images, _, _ = assemble_decoded_chunks(
+        images=images,
+        audio=audio,
+        assembly_plan=_plan(),
+        exact_total_duration=False,
+        audio_seam="Off",
+        diagnostics="Off",
+        video_geometry_correction=False,
+    )
+    with caplog.at_level(logging.INFO, logger="h3_continuum_join"):
+        corrected_images, _, _ = assemble_decoded_chunks(
+            images=images,
+            audio=audio,
+            assembly_plan=_plan(),
+            exact_total_duration=False,
+            audio_seam="Off",
+            diagnostics="Off",
+            video_geometry_correction=True,
+        )
+
+    expected = translate_decoded_frames(
+        native_images[124:],
+        dx=2.0,
+        dy=-1.0,
+    )
+    assert torch.equal(corrected_images[:124], native_images[:124])
+    torch.testing.assert_close(corrected_images[124:], expected)
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "H3C-PT225 decoded-rigid-gauge receipt" in joined
+    assert "eligible=True accepted=True applied=True" in joined
+    assert "whole_retained_segment=true corrected_frames=119 temporal_release=false" in joined
+    assert "audio_modified=false extra_h3_nfe=0 extra_vae_calls=0" in joined

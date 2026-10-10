@@ -20,11 +20,18 @@ from ..constants import (
 )
 from ..v2.seam_guard import correct_audio_seam
 from .audio_phase import phase_align_decoded_audio
+from .decoded_gauge import (
+    DECODED_RIGID_GAUGE_POLICY,
+    apply_decoded_rigid_gauge_in_place,
+    plan_decoded_rigid_gauge,
+    select_decoded_rigid_gauge_translation,
+)
 from .plan import FPS, validate_assembly_plan
 from .video_tone import measure_decoded_video_tone
 from .trajectory_diagnostics import (
     measure_decoded_audio_boundary,
     measure_decoded_audio_overlap_context,
+    measure_decoded_boundary_affine,
     measure_decoded_boundary_trajectory,
     interpret_decoded_boundary_shot,
 )
@@ -229,6 +236,8 @@ def assemble_decoded_chunks(
     diagnostics: str,
     image_output_device: str = IMAGE_OUTPUT_AUTO,
     video_patches: dict[int, torch.Tensor] | None = None,
+    video_geometry_correction: bool = False,
+    video_actions: dict[int, str] | None = None,
 ):
     plan = validate_assembly_plan(assembly_plan)
     diagnostics_mode = normalize_diagnostics_mode(diagnostics)
@@ -261,6 +270,7 @@ def assemble_decoded_chunks(
         f"Audio Seam: {audio_seam}. Video seam correction is disabled.",
     ]
     video_patches = video_patches or {}
+    video_actions = video_actions if video_actions is not None else {}
 
     for index, (raw_images, raw_audio, chunk) in enumerate(
         zip(images, audio, chunk_plans), start=1
@@ -450,6 +460,9 @@ def assemble_decoded_chunks(
                 )
 
         pt212_recorded = False
+        trajectory = None
+        shot = None
+        affine = None
         if index > 1 and image_buffer is not None and frame_cursor > 1:
             try:
                 previous_window = image_buffer[max(0, frame_cursor - 8) : frame_cursor]
@@ -526,6 +539,75 @@ def assemble_decoded_chunks(
                     exc,
                 )
 
+            try:
+                affine = measure_decoded_boundary_affine(
+                    previous_window,
+                    raw_images[:total_frames],
+                    trim_frames=trim_frames,
+                    boundary_global_frame=frame_cursor,
+                    forward_frames=3,
+                    previous_transitions=3,
+                )
+                for roi_name in ("upper45", "full"):
+                    affine_fields = affine[roi_name]
+                    LOG.info(
+                        "H3C-PT224 decoded-affine receipt "
+                        "boundary_global_frame=%d trim_frame=%d roi=%s "
+                        "boundary_scale_x=%.8f boundary_scale_y=%.8f "
+                        "boundary_translation_x_px=%+.4f "
+                        "boundary_translation_y_px=%+.4f "
+                        "boundary_fit_residual_x_px=%.6f "
+                        "boundary_fit_residual_y_px=%.6f "
+                        "boundary_scale_confidence_x=%.6f "
+                        "boundary_scale_confidence_y=%.6f "
+                        "pre_median_scale_x=%.8f pre_median_scale_y=%.8f "
+                        "post_first3_median_scale_x=%.8f "
+                        "post_first3_median_scale_y=%.8f "
+                        "pairwise_scale_x=%s pairwise_scale_y=%s "
+                        "pairwise_translation_x_px=%s "
+                        "pairwise_translation_y_px=%s "
+                        "production_gate=false",
+                        int(affine["boundary_global_frame"]),
+                        int(affine["current_trim_frame"]),
+                        roi_name,
+                        affine_fields["boundary_scale_x"],
+                        affine_fields["boundary_scale_y"],
+                        affine_fields["boundary_translation_x_px"],
+                        affine_fields["boundary_translation_y_px"],
+                        affine_fields["boundary_fit_residual_x_px"],
+                        affine_fields["boundary_fit_residual_y_px"],
+                        affine_fields["boundary_scale_confidence_x"],
+                        affine_fields["boundary_scale_confidence_y"],
+                        affine_fields["pre_median_scale_x"],
+                        affine_fields["pre_median_scale_y"],
+                        affine_fields["post_first3_median_scale_x"],
+                        affine_fields["post_first3_median_scale_y"],
+                        affine_fields["pairwise_scale_x"],
+                        affine_fields["pairwise_scale_y"],
+                        affine_fields["pairwise_translation_x_px"],
+                        affine_fields["pairwise_translation_y_px"],
+                    )
+                    if diagnostics_mode == DIAGNOSTICS_FULL:
+                        reports.append(
+                            "decoded affine "
+                            f"{index-1}->{index} {roi_name}: "
+                            f"scale="
+                            f"({affine_fields['boundary_scale_x']:.6f},"
+                            f"{affine_fields['boundary_scale_y']:.6f}), "
+                            f"translation="
+                            f"({affine_fields['boundary_translation_x_px']:+.3f},"
+                            f"{affine_fields['boundary_translation_y_px']:+.3f})px"
+                        )
+            except Exception as exc:
+                LOG.warning(
+                    "H3C-PT224 decoded-affine unavailable "
+                    "boundary_global_frame=%d trim_frame=%d reason=%s: %s",
+                    frame_cursor,
+                    trim_frames,
+                    type(exc).__name__,
+                    exc,
+                )
+
         # copy_ supports CPU<->CUDA directly, so do not first materialize a full
         # retained-chunk CUDA temporary with segment_images.to(device=...).
         image_buffer[frame_cursor:frame_stop].copy_(segment_images)
@@ -548,6 +630,101 @@ def assemble_decoded_chunks(
                 patch_frames,
                 pt212_recorded,
             )
+
+        if index > 1 and video_geometry_correction:
+            geometry_receipt = {
+                "policy": DECODED_RIGID_GAUGE_POLICY,
+                "eligible": False,
+                "accepted": False,
+                "applied": False,
+                "reason": "trajectory_unavailable",
+                "whole_retained_segment": True,
+                "temporal_release": False,
+            }
+            if trajectory is not None and shot is not None:
+                geometry_plan = plan_decoded_rigid_gauge(
+                    trajectory,
+                    affine=affine,
+                    scene=shot,
+                )
+                geometry_receipt = dict(geometry_plan)
+                if geometry_plan.get("eligible"):
+                    trial = select_decoded_rigid_gauge_translation(
+                        previous_window,
+                        image_buffer[frame_cursor:frame_stop],
+                        boundary_global_frame=frame_cursor,
+                        original_trajectory=trajectory,
+                        plan=geometry_plan,
+                    )
+                    geometry_receipt = dict(trial)
+                    if trial.get("accepted"):
+                        selected_dx = float(trial["selected_dx_px"])
+                        selected_dy = float(trial["selected_dy_px"])
+                        apply_decoded_rigid_gauge_in_place(
+                            image_buffer,
+                            frame_start=frame_cursor,
+                            frame_stop=frame_stop,
+                            dx=selected_dx,
+                            dy=selected_dy,
+                        )
+                        geometry_receipt.update(
+                            applied=True,
+                            corrected_frames=net_frames,
+                            audio_modified=False,
+                            output_geometry_changed=True,
+                        )
+                        action = (
+                            "applied decoded rigid gauge "
+                            f"({selected_dx:+.2f},{selected_dy:+.2f}) px "
+                            f"to {net_frames} retained frame(s)"
+                        )
+                        existing_action = video_actions.get(index - 1)
+                        if existing_action and not existing_action.startswith("kept native boundary"):
+                            action = existing_action + "; " + action
+                        video_actions[index - 1] = action
+
+            observations = geometry_receipt.get("observations", {})
+            upper = observations.get("upper45", {})
+            full = observations.get("full", {})
+            selected_score = geometry_receipt.get("selected_score", {})
+            LOG.info(
+                "H3C-PT225 decoded-rigid-gauge receipt "
+                "policy=%s boundary_global_frame=%d boundary_index=%d "
+                "eligible=%s accepted=%s applied=%s reason=%s "
+                "upper_excess=(%+.4f,%+.4f) full_excess=(%+.4f,%+.4f) "
+                "consensus_excess=(%+.4f,%+.4f) selected=(%+.4f,%+.4f) "
+                "before_mean_error_px=%.4f after_mean_error_px=%.4f improvement=%.4f "
+                "whole_retained_segment=true corrected_frames=%d temporal_release=false "
+                "audio_modified=false extra_h3_nfe=0 extra_vae_calls=0",
+                geometry_receipt.get("policy", DECODED_RIGID_GAUGE_POLICY),
+                frame_cursor,
+                index - 1,
+                bool(geometry_receipt.get("eligible")),
+                bool(geometry_receipt.get("accepted")),
+                bool(geometry_receipt.get("applied")),
+                geometry_receipt.get("reason", "unknown"),
+                float(upper.get("excess_dx_px", 0.0)),
+                float(upper.get("excess_dy_px", 0.0)),
+                float(full.get("excess_dx_px", 0.0)),
+                float(full.get("excess_dy_px", 0.0)),
+                float(geometry_receipt.get("consensus_excess_dx_px", 0.0)),
+                float(geometry_receipt.get("consensus_excess_dy_px", 0.0)),
+                float(geometry_receipt.get("selected_dx_px", 0.0)),
+                float(geometry_receipt.get("selected_dy_px", 0.0)),
+                float(selected_score.get("before_mean_boundary_error_px", 0.0)),
+                float(selected_score.get("after_mean_boundary_error_px", 0.0)),
+                float(selected_score.get("mean_improvement_ratio", 0.0)),
+                int(geometry_receipt.get("corrected_frames", 0)),
+            )
+            if diagnostics_mode == DIAGNOSTICS_FULL:
+                reports.append(
+                    "decoded rigid gauge "
+                    f"{index-1}->{index}: {geometry_receipt.get('reason', 'unknown')}, "
+                    f"applied={bool(geometry_receipt.get('applied'))}, "
+                    f"translation="
+                    f"({float(geometry_receipt.get('selected_dx_px', 0.0)):+.3f},"
+                    f"{float(geometry_receipt.get('selected_dy_px', 0.0)):+.3f}) px"
+                )
 
         if audio_buffer is None:
             audio_buffer = torch.empty(
@@ -1076,13 +1253,19 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                 _singleton(image_output_device, "image_output_device")
             ),
             video_patches=video_patches,
+            # Hardware 00717 falsified the decoded whole-chunk rigid-gauge
+            # acceptance metric: the candidate applied and reduced its own
+            # phase-correlation boundary score, while the reported top-expansion
+            # / frame-shift artifact remained. Keep the implementation as
+            # historical diagnostic code, but production seam modes must not
+            # mutate decoded geometry through this actuator.
+            video_geometry_correction=False,
+            video_actions=actions,
         )
         if mode == VIDEO_SEAM_ANALYZE:
             status = "Video Seam: Analyze Only; decoded frames and audio are unchanged."
         elif mode == VIDEO_SEAM_AUTO:
-            status = (
-                "Video Seam: Auto; guarded transient and micro-flash correction enabled."
-            )
+            status = "Video Seam: Auto; guarded transient and micro-flash correction enabled."
         else:
             status = (
                 "Video Seam: Auto 2 (Experimental); guarded transient, micro-flash, "
