@@ -1,5 +1,60 @@
 # Changelog
 
+## 3.4.7
+
+Protect generated speech/audio at the requested duration boundary, improve
+physical Timeline prompt routing for partial previews and explicitly authored
+subject replacement, and provide an opt-in decoded-video tone repair.
+
+- **Preserve audible tail (recommended)** keeps the exact requested output when
+  the decoder overrun is quiet. When truncation would discard meaningfully
+  active PCM, it retains the natural video and audio timeline together.
+  **Strict exact duration** remains available. Previously saved
+  `Exact requested duration (Recommended)` selections are interpreted as
+  audible-tail-safe rather than silently truncating active audio.
+- **Partial Timeline previews** preserve the active last-chunk dialogue
+  semantics through the native-frame overrun when later authored sections
+  extend beyond the requested render horizon. Future chunk bodies are not
+  imported into the current chunk's prompt.
+- **Explicit subject replacement** canonicalizes generated visual role
+  references to the requested `<Subject N>` across scoped physical chunks.
+  It does not infer missing mappings or rewrite spoken `<d>...</d>` text.
+- **Video Seam Auto 3 (Sustained Tone)** optionally applies bounded,
+  background-anchored RGB corrections to generated decoded frames within
+  eligible continuous shots. It retains existing transient correction behavior,
+  never modifies the authoritative prefix or audio, and adds no H3 or VAE calls.
+  Existing Auto and Auto 2 modes remain unchanged.
+
+### Validation and limitations
+
+Automated tests cover audible/quiet finalization, strict and legacy modes,
+preview prompt scoping, explicit subject binding, and experimental tone
+correction. Rendered output confirmed synchronized 14.375-second natural
+video/audio retention and successful Auto 3 darkening mitigation in an observed
+case. These observations do not establish universal output quality.
+
+**Not fixed:** semantic dialogue interruption or unintelligible speech at an
+internal chunk join, inability to fit oversized scripted dialogue into its
+authored interval, incomplete speech beyond the last generated sample, and
+some continuation zoom/detail loss or wardrobe inconsistency. The tone
+correction is photometric only; it does not restore geometry or fine detail.
+These issues require separate generation/conditioning investigation. Prompt
+completion and facial/wardrobe fidelity are not guaranteed.
+
+### Compatible companion versions
+
+These are independently released components; no companion source changes
+are included in this Continuum release.
+
+| Component | Release | Implementation PR |
+| --- | --- | --- |
+| Flow-Aligned Regenerate | [v0.3.12](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.12) | [#99](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/99) |
+| Sol-H3 | [v0.1.10](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.10) | [#40](https://github.com/xmarre/ComfyUI-Sol-H3/pull/40) |
+| VDN-H3-Plus | [v1.5.9](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.9) | [#39](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/39), [#40](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/pull/40) |
+| H3 Continuum-Plus | **v3.4.7** | [#42](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/42) |
+| Latent Upscaler-Plus | [v0.2.2](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/releases/tag/v0.2.2) | unchanged |
+| Spectrum MiniMax H3 | [v0.2.29](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.29) | unchanged |
+
 ## 3.4.6
 
 Let a post-refinement branch keep the natural retained timeline through the
