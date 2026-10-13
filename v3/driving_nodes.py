@@ -35,9 +35,17 @@ V34_CONTINUITY_OPTIONS = (
     V34_CONTINUITY_STRONG,
     V2_CONTINUITY_OPTIONS[3],
 )
+# Retain the legacy literal for saved workflows, but route it to audible-tail
+# safety: exact duration must not silently discard speech. Strict truncation
+# remains explicitly selectable for workflows requiring a hard frame count.
 V34_TIMELINE_EXACT = "Exact requested duration (Recommended)"
+V34_TIMELINE_SAFE = "Preserve audible tail (recommended)"
+V34_TIMELINE_STRICT = "Strict exact duration (may truncate active audio)"
 V34_TIMELINE_NATURAL = "Natural retained timeline (Refinement)"
-V34_TIMELINE_MODES = (V34_TIMELINE_EXACT, V34_TIMELINE_NATURAL)
+V34_TIMELINE_MODES = (
+    V34_TIMELINE_SAFE, V34_TIMELINE_EXACT,
+    V34_TIMELINE_STRICT, V34_TIMELINE_NATURAL,
+)
 
 
 def _normalize_v34_continuity(value: str) -> str:
@@ -441,12 +449,13 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
         required["timeline_mode"] = (
             V34_TIMELINE_MODES,
             {
-                "default": V34_TIMELINE_EXACT,
+                "default": V34_TIMELINE_SAFE,
                 "display_name": "Timeline Output",
                 "tooltip": (
-                    "Exact requested duration keeps the normal V3.4 output. Natural retained "
-                    "timeline preserves every physical-group frame for downstream refinement; "
-                    "finish that branch with H3 Continuum Finalize Duration V3.4."
+                    "Preserve audible tail normally produces the requested duration but keeps "
+                    "the full synchronized AV when cropping would discard active audio. "
+                    "Strict exact duration always trims, even through speech. Natural retained "
+                    "timeline keeps every frame for downstream refinement."
                 ),
             },
         )
@@ -465,11 +474,13 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
         return schema
 
     def assemble(self, *args, driving_audio=None, timeline_mode=None, **kwargs):
+        audible_tail_safe = False
         if timeline_mode is not None:
             timeline_mode = _unwrap_single_audio_value(timeline_mode)
             if timeline_mode not in V34_TIMELINE_MODES:
                 raise ValueError(f"unknown V3.4 Timeline Output mode: {timeline_mode!r}")
-            exact_value = timeline_mode == V34_TIMELINE_EXACT
+            audible_tail_safe = timeline_mode in (V34_TIMELINE_SAFE, V34_TIMELINE_EXACT)
+            exact_value = timeline_mode == V34_TIMELINE_STRICT
             if len(args) >= 4:
                 args = (*args[:3], exact_value, *args[4:])
             else:
@@ -477,7 +488,7 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
         preserved_audio = _driving_audio_from_plan(args, kwargs)
         images, audio, report = super().assemble(*args, **kwargs)
         selected = preserved_audio or _copy_audio(driving_audio)
-        if selected is None:
+        if selected is None and not audible_tail_safe:
             return images, audio, report
 
         plan_value = kwargs.get("assembly_plan")
@@ -494,7 +505,19 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
             if len(exact) != 1:
                 raise ValueError("exact_total_duration must contain exactly one value")
             exact = exact[0]
-        if bool(exact):
+        if audible_tail_safe:
+            images, audio, duration_note = finalize_assembled_timeline(
+                images=images,
+                audio=selected if selected is not None else audio,
+                assembly_plan=plan_value,
+                exact_total_duration=True,
+                preserve_audible_tail=True,
+            )
+            report = str(report) + "\n" + str(duration_note)
+            if selected is None:
+                return images, audio, report
+            selected = audio
+        elif bool(exact) and selected is not None:
             _, selected, _ = enforce_total_frames(
                 images,
                 selected,
@@ -534,13 +557,12 @@ class H3ContinuumFinalizeDurationV34:
                 "timeline_mode": (
                     V34_TIMELINE_MODES,
                     {
-                        "default": V34_TIMELINE_EXACT,
+                        "default": V34_TIMELINE_SAFE,
                         "display_name": "Timeline Output",
                         "tooltip": (
-                            "Exact requested duration applies the normal final-frame/audio policy. "
-                            "Natural retained timeline keeps every input frame and aligns audio "
-                            "to that duration, which can exceed the requested length. The input "
-                            "must still contain the assembler's natural retained timeline."
+                            "Audible-tail-safe mode keeps full synchronized AV if active PCM "
+                            "would otherwise be truncated. Strict exact duration always trims; "
+                            "natural retains every frame. Input must be the natural timeline."
                         ),
                     },
                 ),
@@ -559,7 +581,8 @@ class H3ContinuumFinalizeDurationV34:
             images=images,
             audio=audio,
             assembly_plan=assembly_plan,
-            exact_total_duration=timeline_mode == V34_TIMELINE_EXACT,
+            exact_total_duration=timeline_mode != V34_TIMELINE_NATURAL,
+            preserve_audible_tail=timeline_mode in (V34_TIMELINE_SAFE, V34_TIMELINE_EXACT),
         )
 
 

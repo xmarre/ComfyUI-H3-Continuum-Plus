@@ -449,6 +449,53 @@ def inner_range_header_like(line: str) -> bool:
     return bool(_INNER_RANGE_HEADER.match(str(line)))
 
 
+# Restrict alias rebinding to a user-authored, explicit identity substitution.
+# Do not guess equivalence from names, speaker numbers, or image ordering.
+_EXPLICIT_IDENTITY_REPLACEMENT = re.compile(
+    r"\bReplace\s+(?P<alias>[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,3})"
+    r"'s\s+identity\s+with\s+(?P<subject><Subject\s+\d+>)(?=\W|$)",
+    re.IGNORECASE,
+)
+_DIALOGUE_SPANS = re.compile(r"(<d(?:\s+[^>]*)?>.*?</d>)", re.IGNORECASE | re.DOTALL)
+
+
+def _explicit_subject_aliases(preamble: str) -> dict[str, str]:
+    """Return only unambiguous role substitutions explicitly authored by user."""
+
+    result: dict[str, str] = {}
+    conflicts: set[str] = set()
+    for match in _EXPLICIT_IDENTITY_REPLACEMENT.finditer(str(preamble)):
+        alias = match.group("alias")
+        key = alias.casefold()
+        target = match.group("subject")
+        if key in result and result[key].casefold() != target.casefold():
+            conflicts.add(key)
+        result[key] = target
+    for key in conflicts:
+        result.pop(key, None)
+    return result
+
+
+def _bind_explicit_subject_aliases(body: str, aliases: dict[str, str]) -> tuple[str, int]:
+    """Use Subject tags for visual role mentions, never inside spoken <d>."""
+
+    if not aliases:
+        return str(body), 0
+    pieces = _DIALOGUE_SPANS.split(str(body))
+    count = 0
+    for index in range(0, len(pieces), 2):
+        prose = pieces[index]
+        for alias, target in sorted(aliases.items(), key=lambda item: -len(item[0])):
+            pattern = re.compile(
+                r"(?<![\w])" + re.escape(alias) + r"(?:/[A-Za-z][\w-]*)?(?![\w])",
+                re.IGNORECASE,
+            )
+            prose, changed = pattern.subn(lambda _match: target, prose)
+            count += changed
+        pieces[index] = prose
+    return "".join(pieces), count
+
+
 def _resolved_candidates(source: dict[str, Any], chunk_seconds: Fraction) -> list[dict[str, Any]]:
     result = []
     for raw in source.get("sections") or []:
@@ -932,6 +979,29 @@ def compile_physical_prompt(
 
     segments = _join_segments(segments)
     preamble = str(source.get("preamble", "")).strip()
+    explicit_aliases = _explicit_subject_aliases(preamble)
+    canonicalized_mentions = 0
+    if explicit_aliases:
+        for segment in segments:
+            # Only explicitly authored generation prose is rebound; protected
+            # prefix context, fixed audio lead-outs and padding are unchanged.
+            if "authored" in segment.get("roles", ()):
+                rebound, mentions = _bind_explicit_subject_aliases(
+                    segment["body"], explicit_aliases
+                )
+                segment["body"] = rebound
+                canonicalized_mentions += mentions
+    if canonicalized_mentions:
+        diagnostics.append({
+            "level": "info",
+            "code": "H3C-PT231",
+            "message": (
+                "canonicalized explicitly declared visual identity role mentions "
+                "to their <Subject N> tags; spoken <d> text unchanged"
+            ),
+            "identity_alias_count": len(explicit_aliases),
+            "visual_mentions_canonicalized": canonicalized_mentions,
+        })
     if terminal_audio_guard_start is not None:
         local_guard_start = terminal_audio_guard_start - start
         local_output_end = output_end - start

@@ -162,19 +162,69 @@ Inputs: images, audio, assembly_plan, and driving_audio.
 
 Controls: Audio Seam, Video Seam, and Timeline Output.
 
-`Exact requested duration (Recommended)` keeps the normal compact V3.4 result. Select
-`Natural retained timeline (Refinement)` when a downstream operation must process every frame in
-the physical decode groups. After that operation, connect its IMAGE result, the assembler AUDIO,
-and the same `assembly_plan` to **H3 Continuum Finalize Duration V3.4**. The finalizer reuses
-Continuum's validated final-frame preservation and sample-aligned audio duration policy.
+**Timeline Output defaults to `Preserve audible tail (recommended)`.** The normal
+exact-length result is retained when the discarded decoder tail is quiet. If enforcing the
+target duration would discard active decoded PCM, Continuum preserves the **full video and
+audio together** instead, rather than cutting through speech or desynchronizing lips.
+For example, 345 retained frames for a requested 336-frame output produce 14.375 seconds
+instead of clipping the last 0.375 seconds. The `H3C-PT229` receipt and node report explicitly
+record this decision. This policy is deterministic, output-only, and uses no new H3 or VAE calls.
 
-**H3 Continuum Finalize Duration V3.4** also has a **Timeline Output** selector.
-It defaults to `Exact requested duration (Recommended)`, including for existing workflows.
-To retain the generated tail through the entire branch, select
-`Natural retained timeline (Refinement)` on both Assemble + Seam and Finalize Duration.
-The finalizer can stay connected: it keeps all retained video frames and aligns audio to
-their duration. This output can exceed the requested length; retaining generated samples
-does not guarantee that the model completed a spoken line.
+For exact frame counts irrespective of active audio, explicitly select
+`Strict exact duration (may truncate active audio)`. The older saved selector literal
+`Exact requested duration (Recommended)` remains accepted but now uses audible-tail protection
+rather than silently dropping speech; it can exceed the target duration.
+
+**Experimental sustained-tone correction:** Video Seam also offers
+`Auto 3 (Sustained Tone)`. Standard `Auto` and `Auto 2` remain unchanged.
+Auto 3 retains ordinary guarded transient corrections and, when no previous
+patch applies and the shot is continuous, estimates a bounded per-frame RGB
+affine adjustment from stationary background regions. Only newly generated
+decoded frames are modified: the authoritative prefix, audio and spatial
+geometry remain untouched. The estimator rejects insufficient static support,
+avoids initial scene cuts and stops correction at a later detected cut.
+
+Auto 3 has been verified in a rendered continuation to reduce sustained
+darkening at a chunk boundary. It does not correct geometric drift, cumulative
+zoom, loss of fine background detail, or incomplete speech. Its applicability
+and quality remain scene-dependent. For a controlled comparison, use the same
+seed, reference inputs and sampling settings while changing only Video Seam.
+
+**Explicit subject substitutions in Timeline prompts:** When a prompt states, for example,
+`Replace Clark's identity with <Subject 1>`, the physical compiler now
+rebinds generated **visual role mentions** such as `Clark (S2)`,
+`Clark/Maekar`, and `Clark's expression` to `<Subject 1>` in every relevant
+physical chunk. It leaves `<d>...</d>` dialogue unchanged and does not infer
+unspecified identity mappings. For maximum reference fidelity, name
+`<Subject N> (Sx)` directly at every speaker appearance, and distinguish a
+composition/clothing-only reference from the reference defining facial
+identity. This is semantic prompt conditioning, not a guarantee of a perfect
+face match on every stochastic H3 sample.
+
+**Partial Timeline previews:** If the authored Timeline contains later sections
+(for example, `[14-21s]` and `[21-28s]`) but only two 7-second chunks are
+requested, the physical prompt compiler no longer falsely treats the
+14-second preview boundary as the story's end. It preserves the current
+chunk's ongoing-dialogue prompt through native-grid overrun instead of
+injecting a terminal speech-free lead-out. Later sections remain excluded
+from the current chunk's conditioning. This does **not** generate the
+missing future dialogue: render the later chunks to hear a scripted
+utterance continue into them. Dense dialogue that cannot fit at a natural
+speaking rate within its assigned chunk also requires re-timing or a
+time-aligned Driving Audio source; audio assembly cannot reconstruct
+words the model did not intelligibly generate.
+
+Select `Natural retained timeline (Refinement)` on **H3 Continuum Assemble + Seam V3.4**
+when a downstream operation must process every physical decode-group frame. After that
+operation, connect its IMAGE result, the assembler AUDIO, and the same `assembly_plan` to
+**H3 Continuum Finalize Duration V3.4**, which has the same safe/strict/natural choices.
+Natural mode always keeps the full generated timeline, even with quiet padding.
+
+**Limitations:** This protects material already generated beyond the exact endpoint. It
+cannot invent missing words or force the diffusion model to finish a spoken line;
+a mid-sequence chunk handoff with interrupted linguistic content needs a separate
+generation/conditioning repair. Audible audio might be music or ambience rather than speech;
+the policy protects any substantially non-silent tail.
 
 When Driving Audio is connected, preserved source audio is selected for final output and generated audio seam processing is bypassed.
 
