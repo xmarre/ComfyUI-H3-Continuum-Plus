@@ -20,6 +20,7 @@ from ..reference_video import (
 from ..v2.decoder import enforce_total_frames
 from .assembly import (
     H3ContinuumAssembleSeamExperimental,
+    VIDEO_SEAM_TONE,
     finalize_assembled_timeline,
 )
 from .nodes import CATEGORY as CONTINUUM_CATEGORY, H3ContinuumSamplerProduction
@@ -446,6 +447,23 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
     def INPUT_TYPES(cls):
         schema = super().INPUT_TYPES()
         required = dict(schema["required"])
+        # V3.4 defaults to the user-validated sustained-tone path without
+        # changing defaults on the older experimental V3 seam node. Saved
+        # workflows retain their explicitly serialized Video Seam selection.
+        modes, settings = required["video_seam"]
+        required["video_seam"] = (
+            (VIDEO_SEAM_TONE, *(mode for mode in modes if mode != VIDEO_SEAM_TONE)),
+            {
+                **settings,
+                "default": VIDEO_SEAM_TONE,
+                "tooltip": (
+                    "Auto 3 (default) applies guarded transient correction plus "
+                    "bounded, static-background sustained-tone anchoring in "
+                    "qualified continuous shots. It cannot repair spatial zoom "
+                    "or lost detail. Auto and Auto 2 remain selectable."
+                ),
+            },
+        )
         required["timeline_mode"] = (
             V34_TIMELINE_MODES,
             {
@@ -573,7 +591,7 @@ class H3ContinuumFinalizeDurationV34:
     RETURN_NAMES = ("images", "audio", "report")
     FUNCTION = "finalize"
 
-    def finalize(self, images, audio, assembly_plan, timeline_mode=V34_TIMELINE_EXACT):
+    def finalize(self, images, audio, assembly_plan, timeline_mode=V34_TIMELINE_SAFE):
         timeline_mode = _unwrap_single_audio_value(timeline_mode)
         if timeline_mode not in V34_TIMELINE_MODES:
             raise ValueError(f"unknown V3.4 Timeline Output mode: {timeline_mode!r}")

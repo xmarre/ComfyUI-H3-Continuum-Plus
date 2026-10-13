@@ -1,0 +1,17 @@
+{
+  "h3_continuum_sampler_v34": {
+    "continuation_method": "Native Masked — exact continuation (Recommended)",
+    "continuity": "Strong — 39 frames",
+    "audio_continuity": true
+  },
+  "h3_continuum_assemble_seam_v34": {
+    "audio_seam": "Auto",
+    "video_seam": "Auto 3 (Sustained Tone)",
+    "image_output_device": "Auto",
+    "timeline_mode": "Preserve audible tail (recommended)"
+  },
+  "h3_continuum_finalize_duration_v34": {
+    "timeline_mode": "Preserve audible tail (recommended)"
+  },
+  "notes": "Settings reference only; import the standard or Turbo JSON under examples/workflows as a ComfyUI graph. Existing saved graphs retain their selected modes."
+}
