@@ -974,19 +974,23 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "H3ContinuumAssembleSeamExperimental"
+        "Node name for S&R": "H3ContinuumAssembleSeamV34"
       },
       "widgets_values": [
         true,
         "Auto",
+        "Auto 3 (Sustained Tone)",
+        "Detailed Report",
         "Auto",
-        "Detailed Report"
+        "Preserve audible tail (recommended)"
       ],
       "widgets_values_named": {
         "exact_total_duration": true,
         "audio_seam": "Auto",
-        "video_seam": "Auto",
-        "diagnostics": "Detailed Report"
+        "video_seam": "Auto 3 (Sustained Tone)",
+        "diagnostics": "Detailed Report",
+        "image_output_device": "Auto",
+        "timeline_mode": "Preserve audible tail (recommended)"
       },
       "color": "#232",
       "bgcolor": "#353"

@@ -1,5 +1,40 @@
 # Changelog
 
+## 3.4.8
+
+Align the V3.4 assembler's new-node defaults, maintained standard/Turbo
+ComfyUI workflows, and documentation with the validated sustained-tone
+continuation profile.
+
+- Default **Video Seam** to `Auto 3 (Sustained Tone)` on the **V3.4**
+  assembler only; keep `Auto` and `Auto 2` selectable and leave the
+  older V3 experimental seam node's default unchanged.
+- Update both V3.4 workflow templates with a complete positional and named
+  assembler widget payload: `Audio Seam = Auto`,
+  `Video Seam = Auto 3 (Sustained Tone)`,
+  `Image Output Device = Auto`, and
+  `Timeline Output = Preserve audible tail (recommended)`.
+- Retain `Native Masked` / `Strong — 39 frames` on the sample V3.4
+  samplers, and preserve separate standard and Turbo acceleration settings.
+- Document these defaults and backward compatibility in the English/Japanese
+  READMEs. Include a V3.4 recommended-settings reference and tests validating
+  the saved node schema and both JSON workflow variants.
+- Preserve all previously selected modes in existing saved workflows. No
+  migration overwrites user-owned widget values.
+
+Auto 3 is a bounded decoded RGB photometric correction only. It does not
+guarantee correction of cumulative geometry/zoom, lost scene detail, or
+interrupted dialogue. Generated audio completion remains model-dependent.
+
+### Compatible companion versions (unchanged)
+
+Flow-Aligned Regenerate [v0.3.12](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.12) ([#99](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/pull/99));
+Sol-H3 [v0.1.10](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.10);
+VDN-H3-Plus [v1.5.9](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.9);
+Latent Upscaler-Plus [v0.2.2](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/releases/tag/v0.2.2);
+Spectrum MiniMax H3 [v0.2.29](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.29).
+No companion source changes are part of this release.
+
 ## 3.4.7
 
 Protect generated speech/audio at the requested duration boundary, improve

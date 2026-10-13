@@ -49,8 +49,11 @@ This is a usability and reliability decision, not a claim that the experimental 
 
 - [V3.4 standard](examples/workflows/MiniMax_H3_Continuum_V34.json)
 - [V3.4 Turbo](examples/workflows/MiniMax_H3_Continuum_V34_turbo.json)
+- [V3.4 recommended settings reference](examples/recommended_settings_v34.json) (readable settings reference, not an importable ComfyUI graph)
 
 New V3.4 nodes and the maintained V3.4 templates default to `Continuation Method = Native Masked — exact continuation (Recommended)`. Saved legacy V3.4 graphs that do not serialize `continuation_method` are migrated on load to `Guide / Motion Context` so reopening them preserves their previous guide/RoPE generation semantics. For new Native Masked workflows with generated Audio Continuity enabled, use `Continuity = Strong — 39 frames` (or Auto, which resolves to the same exact AV boundary).
+
+The maintained V3.4 standard and Turbo templates now explicitly serialize `Video Seam = Auto 3 (Sustained Tone)`, `Audio Seam = Auto`, `Timeline Output = Preserve audible tail (recommended)`, and `Image Output Device = Auto`. The assembler's **new-node** Video Seam default is also Auto 3. Existing saved workflows retain their explicit `Auto`/`Auto 2` selections; selecting Auto 3 for those graphs remains a manual choice. Older V3 experimental nodes are unchanged.
 
 The templates include optional external nodes such as Spectrum, Video Helper Suite, rgthree, EasyUse, and RTX Video Super Resolution. Install, replace, connect, or bypass them according to your installation. Media and acceleration choices remain under user control.
 
@@ -175,8 +178,9 @@ For exact frame counts irrespective of active audio, explicitly select
 `Exact requested duration (Recommended)` remains accepted but now uses audible-tail protection
 rather than silently dropping speech; it can exceed the target duration.
 
-**Experimental sustained-tone correction:** Video Seam also offers
-`Auto 3 (Sustained Tone)`. Standard `Auto` and `Auto 2` remain unchanged.
+**Video Seam defaults to `Auto 3 (Sustained Tone)` on new V3.4 assembler nodes.**
+It remains a content-dependent photometric correction; `Auto` and `Auto 2`
+remain selectable, and saved graphs retain their chosen modes.
 Auto 3 retains ordinary guarded transient corrections and, when no previous
 patch applies and the shot is continuous, estimates a bounded per-frame RGB
 affine adjustment from stationary background regions. Only newly generated
@@ -187,8 +191,9 @@ avoids initial scene cuts and stops correction at a later detected cut.
 Auto 3 has been verified in a rendered continuation to reduce sustained
 darkening at a chunk boundary. It does not correct geometric drift, cumulative
 zoom, loss of fine background detail, or incomplete speech. Its applicability
-and quality remain scene-dependent. For a controlled comparison, use the same
-seed, reference inputs and sampling settings while changing only Video Seam.
+and quality remain scene-dependent. For a controlled comparison or when Auto 3
+misclassifies a shot, keep the same seed, reference inputs and sampling settings
+and switch only Video Seam to `Auto` (or `Analyze Only` for read-only diagnostics).
 
 **Explicit subject substitutions in Timeline prompts:** When a prompt states, for example,
 `Replace Clark's identity with <Subject 1>`, the physical compiler now
