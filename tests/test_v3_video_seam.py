@@ -391,3 +391,104 @@ def test_assembly_records_prepatch_pt212_interpretation_and_video_patch_action(c
     assert "H3C-PT216 video-assembly-patch receipt" in joined
     assert "applied=True patch_frames=1 pre_patch_pt212_recorded=True" in joined
     assert "source=pre_patch_raw_decode" in joined
+
+
+def test_delayed_single_frame_pulse_is_classified_after_first_retained_frame():
+    previous = _frames([0.5] * 8, height=32, width=32)
+    current = _frames(
+        [0.5, 0.5, 0.5, 0.5, 0.475, 0.5, 0.5, 0.5],
+        height=32,
+        width=32,
+    )
+    analysis = analyze_video_boundary(previous, current, trim_frames=2)
+    assert not analysis.scene_cut
+    assert not analysis.micro_flash_candidate
+    assert analysis.delayed_flash_candidate
+    assert analysis.delayed_flash_offset == 2
+    assert analysis.delayed_flash_impulse < -0.02
+    assert analysis.classification == "delayed_single_frame_flash"
+
+
+def test_delayed_patch_changes_only_impulse_frame_and_preserves_audio():
+    images, audio = _decoded()
+    images[1][24] = 0.225  # trim 22 plus delayed offset 2
+    node = H3ContinuumAssembleSeamExperimental()
+    common = {
+        "images": images,
+        "audio": audio,
+        "assembly_plan": [_plan()],
+        "exact_total_duration": [False],
+        "audio_seam": ["Off"],
+        "diagnostics": ["Off"],
+    }
+    unpatched, original_audio, _ = node.assemble(
+        video_seam=[VIDEO_SEAM_OFF], **common
+    )
+    corrected, corrected_audio, report = node.assemble(
+        video_seam=[VIDEO_SEAM_AUTO], **common
+    )
+    assert torch.allclose(unpatched[126], torch.full_like(unpatched[126], 0.225))
+    assert torch.allclose(corrected[126], torch.full_like(corrected[126], 0.25))
+    assert torch.equal(corrected[:126], unpatched[:126])
+    assert torch.equal(corrected[127:], unpatched[127:])
+    assert torch.equal(corrected_audio["waveform"], original_audio["waveform"])
+    assert "offset +2 (1 frame; preceding frames unchanged)" in report
+
+
+def test_delayed_detector_rejects_smooth_exposure_and_persistent_content_change():
+    previous = _frames([0.5] * 8, height=32, width=32)
+    smooth = _frames(
+        [0.5, 0.5, 0.5, 0.505, 0.510, 0.515, 0.520, 0.525],
+        height=32,
+        width=32,
+    )
+    cut = _frames(
+        [0.5, 0.5, 0.5, 0.5, 0.62, 0.62, 0.62, 0.62],
+        height=32,
+        width=32,
+    )
+    for candidate in (smooth, cut):
+        analysis = analyze_video_boundary(previous, candidate, trim_frames=2)
+        assert not analysis.delayed_flash_candidate
+
+
+def test_delayed_detector_rejects_localized_flash_and_ordinary_motion():
+    previous = _frames([0.5] * 8, height=32, width=32)
+    current = _frames([0.5] * 8, height=32, width=32)
+    current[4, :8, :8, :] = 0.1
+    analysis = analyze_video_boundary(previous, current, trim_frames=2)
+    assert not analysis.delayed_flash_candidate
+
+    def moving_bar(position):
+        frame = torch.zeros((32, 32, 3), dtype=torch.float32)
+        frame[:, position : position + 4, :] = 1.0
+        return frame
+    previous = torch.stack([moving_bar(i) for i in range(3, 11)])
+    current = torch.stack([moving_bar(i) for i in range(9, 17)])
+    motion = analyze_video_boundary(previous, current, trim_frames=2)
+    assert not motion.delayed_flash_candidate
+
+
+def test_delayed_patch_can_be_suppressed_to_preserve_auto3_tone_estimator():
+    from ComfyUI_H3_Continuum_Join.v3.video_seam import (
+        analyze_decoded_boundaries, build_decoded_boundary_patches,
+    )
+
+    images, _audio = _decoded()
+    images[1][24] = 0.225
+    plan = _plan()
+    analyses = analyze_decoded_boundaries(images=images, assembly_plan=plan)
+    assert analyses[0].delayed_flash_candidate
+    assert analyses[0].delayed_flash_offset == 2
+
+    patch_auto, _ = build_decoded_boundary_patches(
+        images=images, assembly_plan=plan, analyses=analyses,
+        enable_delayed_flash=True,
+    )
+    assert 1 in patch_auto
+
+    patch_auto3, _ = build_decoded_boundary_patches(
+        images=images, assembly_plan=plan, analyses=analyses,
+        enable_delayed_flash=False,
+    )
+    assert patch_auto3 == {}

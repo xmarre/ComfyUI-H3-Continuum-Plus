@@ -76,3 +76,60 @@ def test_cut_at_boundary_is_not_tone_aligned():
     coeff, report = estimate_sustained_tone_anchor(prefix, continuation, trim_frames=0)
     assert coeff is None
     assert report["reason"] == "scene_cut_at_boundary"
+
+
+def test_lost_background_correspondence_releases_to_identity_before_raw_frame(monkeypatch):
+    from ComfyUI_H3_Continuum_Join.v3 import video_tone_repair as tone
+
+    prefix, continuation = _clip(frames=70, actor=False)
+    original_pair = tone._background_pair
+    calls = 0
+
+    def support_ends_after_42(reference, frame, static):
+        nonlocal calls
+        calls += 1
+        if calls > 42:
+            return None, 0.0
+        return original_pair(reference, frame, static)
+
+    monkeypatch.setattr(tone, "_background_pair", support_ends_after_42)
+    coeff, receipt = estimate_sustained_tone_anchor(
+        prefix, continuation, trim_frames=0
+    )
+    assert receipt["applied"] is True
+    assert receipt["corrected_frames"] == 42
+    assert receipt["support_stop_reason"] == "lost_background_correspondence"
+    assert receipt["release_to_identity"] is True
+    assert receipt["release_frames"] == 16
+    assert receipt["first_uncorrected_frame"] == 42
+    torch.testing.assert_close(coeff[-1, :, 0], torch.ones(3), rtol=0, atol=0)
+    torch.testing.assert_close(coeff[-1, :, 1], torch.zeros(3), rtol=0, atol=0)
+    assert float(coeff[-16, :, 1].abs().max()) > 0.0
+
+    buffer = torch.cat((prefix.clone(), continuation.clone()), dim=0)
+    apply_tone_affines_in_place(buffer, frame_start=len(prefix), affines=coeff)
+    assert torch.equal(buffer[:len(prefix)], prefix)
+    assert torch.equal(buffer[len(prefix)+41], continuation[41])
+    assert torch.equal(buffer[len(prefix)+42:], continuation[42:])
+
+
+def test_no_release_if_supported_correction_ends_at_terminal_video_frame():
+    prefix, continuation = _clip(frames=24, actor=False)
+    coeff, receipt = estimate_sustained_tone_anchor(prefix, continuation, trim_frames=0)
+    assert receipt["applied"] is True
+    assert receipt["support_stop_reason"] == "sample_window_end"
+    assert receipt["release_to_identity"] is False
+    assert receipt["release_frames"] == 0
+    assert float(coeff[-1, :, 1].abs().max()) > 0.0
+
+
+def test_96_frame_analysis_cap_releases_before_remaining_generated_frames():
+    prefix, continuation = _clip(frames=110, actor=False)
+    coeff, receipt = estimate_sustained_tone_anchor(prefix, continuation, trim_frames=0)
+    assert receipt["applied"] is True
+    assert len(coeff) == 96
+    assert receipt["release_to_identity"] is True
+    assert receipt["release_frames"] == 16
+    assert receipt["first_uncorrected_frame"] == 96
+    torch.testing.assert_close(coeff[-1, :, 0], torch.ones(3), rtol=0, atol=0)
+    torch.testing.assert_close(coeff[-1, :, 1], torch.zeros(3), rtol=0, atol=0)
