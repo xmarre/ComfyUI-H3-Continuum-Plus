@@ -30,6 +30,11 @@ MIN_MICRO_FLASH_GLOBAL_FRACTION = 0.70
 MAX_EXPOSURE_RAMP_REVERSAL = 0.25
 MIN_MOTION_CROSS_DELTA = 0.006
 MIN_MOTION_JUMP_RATIO = 1.60
+MAX_DELAYED_FLASH_OFFSET = 3
+MIN_DELAYED_FLASH_IMPULSE = 0.010
+MIN_DELAYED_FLASH_GLOBAL_FRACTION = 0.75
+MAX_DELAYED_FLASH_NEIGHBOR_DRIFT = 0.008
+MAX_DELAYED_FLASH_EDGE_DISAGREEMENT = 0.040
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,10 @@ class VideoBoundaryAnalysis:
     motion_hitch_candidate: bool
     classification: str
     reason: str
+    delayed_flash_offset: int | None = None
+    delayed_flash_impulse: float = 0.0
+    delayed_flash_global_fraction: float = 0.0
+    delayed_flash_candidate: bool = False
 
 
 def _validate_frames(frames: Any, label: str) -> None:
@@ -196,6 +205,42 @@ def _transient_flash_metrics(
     return initial_shift, reversal, float(global_fraction)
 
 
+def _delayed_flash_metrics(current: torch.Tensor) -> tuple[int | None, float, float]:
+    """Detect an isolated generated-frame luminance pulse after seam frame zero.
+
+    Rejection is the default: require local recovery, broad same-sign support
+    and limited spatial-edge disagreement. This is not a motion estimator.
+    """
+    if int(current.shape[0]) < 4:
+        return None, 0.0, 0.0
+    y = _luma(current)
+    means = y.mean(dim=(1, 2))
+    end = min(MAX_DELAYED_FLASH_OFFSET + 1, int(current.shape[0]) - 1)
+    for offset in range(1, end):
+        baseline = 0.5 * (means[offset - 1] + means[offset + 1])
+        impulse = float((means[offset] - baseline).item())
+        strength = abs(impulse)
+        if strength < MIN_DELAYED_FLASH_IMPULSE:
+            continue
+        drift = float(abs(means[offset + 1] - means[offset - 1]).item())
+        if drift > max(MAX_DELAYED_FLASH_NEIGHBOR_DRIFT, 0.60 * strength):
+            continue
+        nearby = (current[offset - 1] + current[offset + 1]) * 0.5
+        if _edge_delta(current[offset], nearby) > MAX_DELAYED_FLASH_EDGE_DISAGREEMENT:
+            continue
+        residual = y[offset] - (y[offset - 1] + y[offset + 1]) * 0.5
+        tiles = F.adaptive_avg_pool2d(
+            residual[None, None], (FLASH_TILE_GRID, FLASH_TILE_GRID)
+        )[0, 0]
+        signed = tiles * (1.0 if impulse > 0 else -1.0)
+        fraction = float(
+            (signed >= max(0.003, strength * 0.35)).float().mean().item()
+        )
+        if fraction >= MIN_DELAYED_FLASH_GLOBAL_FRACTION:
+            return offset, impulse, fraction
+    return None, 0.0, 0.0
+
+
 def _temporal_motion_metrics(
     previous: torch.Tensor,
     current: torch.Tensor,
@@ -291,6 +336,9 @@ def analyze_video_boundary(
     cross_frame_delta, motion_baseline_delta, motion_jump_ratio = (
         _temporal_motion_metrics(previous, current[nominal_index:])
     )
+    delayed_offset, delayed_impulse, delayed_fraction = _delayed_flash_metrics(
+        current[nominal_index:]
+    )
     transient_flash_candidate = (
         not scene_cut
         and flash_luma_shift >= MIN_FLASH_LUMA_SHIFT
@@ -321,8 +369,14 @@ def analyze_video_boundary(
         and cross_frame_delta >= MIN_MOTION_CROSS_DELTA
         and motion_jump_ratio >= MIN_MOTION_JUMP_RATIO
     )
+    delayed_flash_candidate = bool(
+        not scene_cut and not transient_flash_candidate and not micro_flash_candidate
+        and delayed_offset is not None
+    )
     if scene_cut:
         classification = "scene_cut"
+    elif delayed_flash_candidate:
+        classification = "delayed_single_frame_flash"
     elif transient_flash_candidate:
         classification = "transient_flash"
     elif micro_flash_candidate:
@@ -379,6 +433,10 @@ def analyze_video_boundary(
         motion_hitch_candidate=motion_hitch_candidate,
         classification=classification,
         reason=reason,
+        delayed_flash_offset=delayed_offset if delayed_flash_candidate else None,
+        delayed_flash_impulse=delayed_impulse if delayed_flash_candidate else 0.0,
+        delayed_flash_global_fraction=delayed_fraction if delayed_flash_candidate else 0.0,
+        delayed_flash_candidate=delayed_flash_candidate,
     )
 
 
@@ -427,7 +485,10 @@ def _correction_kind_and_count(
 ) -> tuple[str, int]:
     correction_kind = "transient flash"
     replace_frames = int(analysis.recommended_rewind)
-    if analysis.micro_flash_candidate:
+    if analysis.delayed_flash_candidate and analysis.delayed_flash_offset is not None:
+        correction_kind = "delayed single-frame flash"
+        replace_frames = int(analysis.delayed_flash_offset) + 1
+    elif analysis.micro_flash_candidate:
         correction_kind = "micro-flash"
         replace_frames = 1
     elif enable_exposure_ramp and analysis.exposure_ramp_candidate:
@@ -466,6 +527,7 @@ def build_decoded_boundary_patches(
         if analysis.scene_cut or not (
             analysis.transient_flash_candidate
             or analysis.micro_flash_candidate
+            or analysis.delayed_flash_candidate
             or (enable_exposure_ramp and analysis.exposure_ramp_candidate)
         ):
             actions[boundary] = "kept native boundary; correction guard rejected candidate"
@@ -508,6 +570,32 @@ def build_decoded_boundary_patches(
         )
         if tuple(previous_anchor.shape) != tuple(recovery_anchor.shape):
             raise ValueError("decoded image geometry changed at video seam")
+
+        if analysis.delayed_flash_candidate:
+            # The assembler accepts a contiguous prefix patch. Only the
+            # detected interior frame is changed; earlier frames remain exact.
+            offset = int(analysis.delayed_flash_offset)
+            before = current_raw[current_trim + offset - 1].detach().to(
+                device="cpu", dtype=torch.float32
+            )
+            after = current_raw[current_trim + offset + 1].detach().to(
+                device="cpu", dtype=torch.float32
+            )
+            original = patch[offset].to(dtype=torch.float32)
+            target_mean = (
+                before.mean(dim=(0, 1), keepdim=True)
+                + after.mean(dim=(0, 1), keepdim=True)
+            ) * 0.5
+            original_mean = original.mean(dim=(0, 1), keepdim=True)
+            patch[offset].copy_(
+                (original + target_mean - original_mean).clamp(0.0, 1.0).to(dtype=patch.dtype)
+            )
+            patches[current_index] = patch
+            actions[boundary] = (
+                f"normalized delayed exposure pulse at offset +{offset} "
+                "(1 frame; preceding frames unchanged)"
+            )
+            continue
 
         for offset in range(replace_frames):
             alpha = float(offset + 1) / float(replace_frames + 1)
@@ -576,6 +664,9 @@ def format_video_boundary_analysis(
         f"motion_base={analysis.motion_baseline_delta:.6f}, "
         f"motion_jump={analysis.motion_jump_ratio:.2f}x, "
         f"micro_flash={'yes' if analysis.micro_flash_candidate else 'no'}, "
+        f"delayed_flash_offset={analysis.delayed_flash_offset}, "
+        f"delayed_flash_impulse={analysis.delayed_flash_impulse:+.6f}, "
+        f"delayed_flash_global={analysis.delayed_flash_global_fraction:.1%}, "
         f"exposure_ramp={'yes' if analysis.exposure_ramp_candidate else 'no'}, "
         f"motion_hitch={'yes' if analysis.motion_hitch_candidate else 'no'} "
         f"({analysis.reason}); action={action}"
