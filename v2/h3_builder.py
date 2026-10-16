@@ -93,6 +93,7 @@ def encode_prompt_conditioning(
     last_image: torch.Tensor | None,
     reference_audio_assets=None,
     timeline_video_assets=None,
+    dialogue_history: str = "",
 ) -> list:
     images = []
     if first_image is not None:
@@ -113,8 +114,9 @@ def encode_prompt_conditioning(
         tokenize_options = {
             "minimax_ref_items": ref_items
         }
-    tokens = clip.tokenize(str(prompt), **tokenize_options)
-    conditioning = clip.encode_from_tokens_scheduled(tokens)
+    from .dialogue_history import encode_with_dialogue_history
+
+    conditioning = encode_with_dialogue_history(clip, str(prompt), dialogue_history, tokenize_options)
     if reference_audio_assets is None and timeline_video_assets is None:
         return conditioning
     refs = []
