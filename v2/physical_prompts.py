@@ -243,6 +243,7 @@ class CompiledPhysicalPrompt:
     descriptor_digest: str
     presentation_digest: str
     physical_conditioning_hash: str
+    encoder_history: str = ""
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -257,6 +258,7 @@ class CompiledPhysicalPrompt:
             "descriptor_digest": self.descriptor_digest,
             "presentation_digest": self.presentation_digest,
             "physical_conditioning_hash": self.physical_conditioning_hash,
+            **({"encoder_history": self.encoder_history} if self.encoder_history else {}),
         }
 
 
@@ -1212,6 +1214,9 @@ def validate_physical_metadata(value: Any) -> dict[str, Any]:
     if str(compiled.get("presentation_digest", "")) != expected_presentation_hash:
         raise PhysicalPromptError("compiled physical prompt presentation digest mismatch")
 
+    encoder_history = compiled.get("encoder_history", "")
+    if not isinstance(encoder_history, str):
+        raise PhysicalPromptError("compiled encoder history is invalid")
     expected_conditioning_hash = canonical_sha256(
         {
             "compiler_version": compiler_version,
@@ -1219,6 +1224,7 @@ def validate_physical_metadata(value: Any) -> dict[str, Any]:
             "text": text,
             "presentation_contract": presentation,
             "terminal_contract": descriptor.get("terminal_contract"),
+            **({"encoder_history": encoder_history} if encoder_history else {}),
         }
     )
     compiled_conditioning_hash = str(compiled.get("physical_conditioning_hash", ""))
