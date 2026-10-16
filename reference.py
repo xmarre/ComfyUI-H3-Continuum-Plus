@@ -301,6 +301,7 @@ def encode_reference_prompt(
     last_image: torch.Tensor | None = None,
     reference_audio_assets=None,
     timeline_video_assets=None,
+    dialogue_history: str = "",
 ) -> list[list[Any]]:
     if any(latent is None for latent in assets.latents):
         raise ReferenceConditioningError("reference latents were not encoded")
@@ -323,6 +324,10 @@ def encode_reference_prompt(
         prompt,
         int(first_image is not None) + int(last_image is not None),
     )
+    presentation_history = _shift_reference_picture_tags(
+        dialogue_history,
+        int(first_image is not None) + int(last_image is not None),
+    )
     try:
         tokens = clip.tokenize(
             presentation_prompt,
@@ -332,7 +337,12 @@ def encode_reference_prompt(
         raise ReferenceConditioningError(
             "This ComfyUI Core/CLIP does not support MiniMax H3 image references"
         ) from exc
-    conditioning = clip.encode_from_tokens_scheduled(tokens)
+    from .v2.dialogue_history import encode_with_dialogue_history
+
+    conditioning = encode_with_dialogue_history(
+        clip, presentation_prompt, presentation_history,
+        {"minimax_ref_items": presentation_items}, current_tokens=tokens,
+    )
     refs = []
     for image, latent in zip(assets.images, assets.latents, strict=True):
         refs.append(
