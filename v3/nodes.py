@@ -94,6 +94,12 @@ class H3ContinuumAdvancedV3:
                 "session": ("H3_CONTINUUM_SESSION",),
                 "initial_state": ("H3_CONTINUUM_STATE",),
                 "prompt_plan": ("H3_CONTINUUM_PROMPT_PLAN",),
+                "conditioning_lookahead": (
+                    "BOOLEAN", {
+                        "default": True,
+                        "tooltip": "Pre-encode eligible adjacent Qwen prompts while the encoder is resident.",
+                    },
+                ),
             },
         }
 
@@ -115,9 +121,11 @@ class H3ContinuumAdvancedV3:
         session=None,
         initial_state=None,
         prompt_plan=None,
+        conditioning_lookahead=None,
     ):
         return (
             {
+                "conditioning_lookahead": conditioning_lookahead,
                 "audio_continuity": bool(audio_continuity),
                 "diagnostics": diagnostics,
                 "reroll_from_chunk": int(reroll_from_chunk),
@@ -274,6 +282,7 @@ class H3ContinuumSamplerV3:
             advanced = None
 
         advanced_values = {
+            "conditioning_lookahead": None,
             "audio_continuity": True,
             "diagnostics": DIAGNOSTICS_OPTIONS[0],
             "reroll_from_chunk": 0,
@@ -324,6 +333,7 @@ class H3ContinuumSamplerV3:
             continuity=continuity,
             base_seed=base_seed,
             audio_continuity=advanced_values["audio_continuity"],
+            conditioning_lookahead=advanced_values["conditioning_lookahead"],
             exact_total_duration=False,
             diagnostics=advanced_values["diagnostics"],
             reroll_from_chunk=advanced_values["reroll_from_chunk"],
@@ -615,6 +625,18 @@ class H3ContinuumSamplerProduction(H3ContinuumSamplerV3):
                         "tooltip": "Request-local State Manager prompt provenance. Leave empty for ordinary STRING workflows.",
                     },
                 ),
+                "conditioning_lookahead": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "advanced": True,
+                        "display_name": "Qwen Lookahead",
+                        "tooltip": (
+                            "Encode the next eligible fixed-geometry chunk while Qwen is resident. "
+                            "Disable for matched hot-run performance comparisons."
+                        ),
+                    },
+                ),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -663,6 +685,7 @@ class H3ContinuumSamplerProduction(H3ContinuumSamplerV3):
         driving_audio_vae=None,
         reference_video_source=None,
         timeline_video_source=None,
+        conditioning_lookahead=None,
     ):
         runtime_started_at = time.perf_counter()
         from ..reference import prepare_reference_assets
@@ -714,6 +737,7 @@ class H3ContinuumSamplerProduction(H3ContinuumSamplerV3):
                 reference_video_source=reference_video_source,
                 timeline_video_source=timeline_video_source,
                 advanced={
+                    "conditioning_lookahead": conditioning_lookahead,
                     "audio_continuity": bool(audio_continuity),
                     "diagnostics": diagnostics,
                     "reroll_from_chunk": regenerate_from,
