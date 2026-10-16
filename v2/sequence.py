@@ -6,7 +6,7 @@ runs for every chunk without intermediate VAE decoding, and decoding/assembly
 happens after the sampling phase.
 """
 from __future__ import annotations
-import copy, hashlib, logging
+import copy, hashlib, logging, time
 from typing import Any
 import torch
 from ..compatibility import accelerator_summary, check_comfy_h3_runtime
@@ -869,6 +869,10 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             _record_context_diagnostics(tracker=context_diagnostics,reports=sampling_reports,state=previous_state,continuity=continuity,reused=True,continuation_method=continuation_method,audio_continuity=audio_continuity,driving_audio_active=driving_audio_source is not None)
     normal_indices,terminal_merge_pending=_terminal_sampling_plan(chunks=chunks,completed=len(entries),merge_enabled=terminal_merge_enabled)
     target_duration_frames=int(round(chunks*chunk_seconds*FPS))
+    # Pairwise lookahead retains at most one bounded CPU conditioning result.
+    # The actual descriptor and encoder cache key are checked again at use.
+    prefetched = {}
+    prefetched_descriptor = None
     for sequence_index in normal_indices:
         prompt=prompts[sequence_index]; prompt_hash_value=prompt_hashes[sequence_index]; effective_reroll_nonce=int(reroll_nonce) if int(reroll_from_chunk)>0 and sequence_index+1>=int(reroll_from_chunk) else 0; seed=derive_chunk_seed(base_seed,sequence_index,effective_reroll_nonce); video_context=None; audio_context=None; context_before=None
         geometry=resolve_normal_geometry(
@@ -896,11 +900,71 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                 from ..timeline_video import encode_timeline_video_chunk
                 timeline_video_assets=encode_timeline_video_chunk(video_vae,timeline_video_source,sequence_index)
             chunk_cache={}
+        consumed_prefetch = bool(prefetched and prefetched_descriptor == descriptor.digest)
+        prefetched_keys = set(prefetched) if consumed_prefetch else set()
+        if consumed_prefetch:
+            chunk_cache.update(prefetched)
+        prefetched.clear()
+        prefetched_descriptor = None
+        encoding_started = time.perf_counter()
         base_conditioning,compiled,physical_meta,conditioning_key=encode_physical_prompt_conditioning(
             clip=clip,plan=plan,descriptor=descriptor,legacy_text=prompt,assets=assets,
             include_first=include_first,include_last=include_last,reference_assets=reference_assets,
             reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets,cache=chunk_cache,
         )
+        actual_prefetch_hit = consumed_prefetch and conditioning_key in prefetched_keys
+        LOG.info(
+            "H3C-PT237 conditioning stage=normal chunk=%d prefetched_reused=%s "
+            "host_wall_s=%.3f",
+            sequence_index + 1, actual_prefetch_hit, time.perf_counter() - encoding_started,
+        )
+        if (not actual_prefetch_hit and timeline_video_source is None
+                and sequence_index + 1 in normal_indices):
+            from .conditioning_lifecycle import bounded_cpu_conditioning, plan_next_geometry
+            next_geometry = plan_next_geometry(
+                current=geometry, continuity=continuity, continuation_method=continuation_method,
+                audio_continuity=audio_continuity, driving_audio_active=driving_audio_source is not None,
+                chunks=chunks, chunk_seconds=chunk_seconds, retained_frames=retained_frames,
+                width=width, height=height, debug=debug,
+            )
+            if next_geometry is not None:
+                next_last = bool(last_frame is not None and next_geometry.is_final)
+                next_descriptor = make_normal_descriptor(
+                    geometry=next_geometry, retained_before=retained_frames + geometry.net_frames,
+                    target_duration_frames=target_duration_frames, continuation_method=continuation_method,
+                    initial_state_external=False, assets=assets, include_first=False, include_last=next_last,
+                    reference_assets=reference_assets, reference_audio_source=reference_audio_source,
+                    reference_video_source=reference_video_source, timeline_video_source=None,
+                )
+                # Speculation must not mutate the ordinary per-request cache.
+                # If the next encode fails, its usual sequential encode will
+                # still report that error at the next actual invocation.
+                lookahead_started = time.monotonic()
+                outcome = "skipped"
+                try:
+                    ahead, _, _, ahead_key = encode_physical_prompt_conditioning(
+                        clip=clip, plan=plan, descriptor=next_descriptor,
+                        legacy_text=prompts[sequence_index + 1], assets=assets,
+                        include_first=False, include_last=next_last,
+                        reference_assets=reference_assets,
+                        reference_audio_assets=reference_audio_assets,
+                        timeline_video_assets=reference_video_assets,
+                        cache=dict(cache),
+                    )
+                    snapshot = bounded_cpu_conditioning(ahead)
+                    if snapshot is not None:
+                        prefetched[ahead_key] = snapshot
+                        prefetched_descriptor = next_descriptor.digest
+                        outcome = "prepared"
+                    else:
+                        outcome = "uncacheable_or_oversize"
+                except Exception as exc:
+                    outcome = "failed_" + type(exc).__name__
+                finally:
+                    LOG.info(
+                        "H3C-PT236 conditioning-lookahead next_chunk=%d status=%s wall_s=%.3f",
+                        sequence_index + 2, outcome, time.monotonic() - lookahead_started,
+                    )
         token_telemetry=conditioning_telemetry(base_conditioning)
         chunk_plan=dict(geometry.plan); chunk_plan["physical_prompt"]=physical_meta
         latent=empty_h3_latent(width,height,geometry.total_frames)
