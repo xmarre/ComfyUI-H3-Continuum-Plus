@@ -392,7 +392,20 @@ def compile_invocation_prompt(
                 "compiled_text_sha256": compiled.text_sha256,
             },
         )
-        return replace(compiled, diagnostics=diagnostics)
+        from .dialogue_history import dialogue_history_enabled, with_dialogue_history
+
+        if not dialogue_history_enabled():
+            return replace(compiled, diagnostics=diagnostics)
+
+        # Historical text belongs to the preceding logical invocation. The
+        # current outer chunk body may begin inside the carried physical prefix
+        # even though it never conditioned the previous sample.
+        history_plan = plan
+        logical_indices = tuple(descriptor.logical_indices)
+        if logical_indices and logical_indices[0] > 0:
+            previous = replace(descriptor, logical_indices=(logical_indices[0] - 1,))
+            history_plan, _ = _timeline_plan_for_logical_signal(plan, previous)
+        return with_dialogue_history(replace(compiled, diagnostics=diagnostics), history_plan, descriptor)
     return compile_legacy_nominal(plan, descriptor, text=legacy_text)
 
 def _validate_physical_timeline_video_assets(
@@ -546,8 +559,23 @@ def encode_physical_prompt_conditioning(
             include_last_actual,
             presentation_digest(descriptor.presentation_contract),
         )
+        if compiled.encoder_history:
+            key += (compiled.encoder_history,)
     cache_hit = key in cache
-    encoder_text_sha256 = text_sha256(compiled.text)
+    from .dialogue_history import dialogue_history_enabled
+
+    LOG.info(
+        "H3C-PT235 dialogue-history selection group=%s enabled=%s history_available=%s "
+        "history_sha256=%s cache_hit=%s",
+        str(getattr(descriptor, "group_id", "?")),
+        dialogue_history_enabled(), bool(compiled.encoder_history),
+        text_sha256(compiled.encoder_history) if compiled.encoder_history else "none",
+        cache_hit,
+    )
+    encoder_text_sha256 = (
+        canonical_sha256([compiled.encoder_history, compiled.text])
+        if compiled.encoder_history else text_sha256(compiled.text)
+    )
     LOG.info(
         "H3C-PT222 encoder-text receipt group=%s compiled_text_sha256=%s "
         "qwen_input_sha256=%s cache_hit=%s",
@@ -603,6 +631,7 @@ def encode_physical_prompt_conditioning(
                 last_image=last_image,
                 reference_audio_assets=reference_audio_assets,
                 timeline_video_assets=timeline_video_assets,
+                dialogue_history=compiled.encoder_history,
             )
         else:
             cache[key] = encode_prompt_conditioning(
@@ -612,6 +641,7 @@ def encode_physical_prompt_conditioning(
                 last_image=last_image,
                 reference_audio_assets=reference_audio_assets,
                 timeline_video_assets=timeline_video_assets,
+                dialogue_history=compiled.encoder_history,
             )
     video_presentation = descriptor.presentation_contract.get("video")
     timeline_video = (
