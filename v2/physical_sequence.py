@@ -99,13 +99,28 @@ def resolve_normal_geometry(
         audio_continuity=bool(audio_continuity),
         driving_audio_active=bool(driving_audio_active),
     )
+    return continuation_geometry(
+        sequence_index=sequence_index, chunks=chunks, chunk_seconds=chunk_seconds,
+        retained_frames=retained_frames, width=width, height=height,
+        continuation_method=continuation_method, debug=debug,
+        context_frames=context_frames, clip_index=int(previous_state["clip_index"]) + 1,
+        motion_score=motion_score, reason=reason,
+    )
+
+
+def continuation_geometry(
+    *, sequence_index, chunks, chunk_seconds, retained_frames, width, height,
+    continuation_method, debug, context_frames, clip_index, motion_score=0.0,
+    reason="planned fixed context",
+):
+    """Construct continuation geometry after context length has been resolved."""
+    is_final = sequence_index == int(chunks) - 1
     desired_cumulative = int(round((sequence_index + 1) * float(chunk_seconds) * FPS))
     requested_new_frames = max(1, desired_cumulative - int(retained_frames))
     if is_final:
         shape = make_extension_shape_at_least(context_frames, requested_new_frames)
     else:
         shape = make_extension_shape(context_frames, requested_new_frames / FPS)
-    clip_index = int(previous_state["clip_index"]) + 1
     plan = make_plan(
         continuation=True,
         clip_index=clip_index,
