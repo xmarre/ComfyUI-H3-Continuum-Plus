@@ -1096,6 +1096,11 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                     assembly_plan=plan,
                     analyses=analyses,
                     enable_exposure_ramp=mode == VIDEO_SEAM_AUTO_2,
+                    # Delayed flash patching and a sustained-tone transform
+                    # are independently estimated from raw frames. Do not
+                    # allow a delayed-frame patch to veto Auto 3's entire
+                    # sustained correction.
+                    enable_delayed_flash=mode != VIDEO_SEAM_TONE,
                 )
             if mode == VIDEO_SEAM_TONE:
                 from .video_tone_repair import estimate_sustained_tone_anchor
@@ -1136,7 +1141,8 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                 "H3C-PT228 video-seam-decision receipt mode=%r boundary_index=%d "
                 "classification=%s flash_luma_shift=%.9f flash_reversal=%.9f "
                 "flash_global_fraction=%.9f micro_flash=%s exposure_ramp=%s "
-                "patch_frames=%d action=%r",
+                "patch_frames=%d delayed_flash_offset=%s delayed_flash_impulse=%+.9f "
+                "delayed_flash_global=%.6f action=%r",
                 mode,
                 item.boundary_index,
                 item.classification,
@@ -1146,6 +1152,9 @@ class H3ContinuumAssembleSeamExperimental(H3ContinuumAssembleV3):
                 item.micro_flash_candidate,
                 item.exposure_ramp_candidate,
                 0 if patch is None else len(patch),
+                item.delayed_flash_offset,
+                item.delayed_flash_impulse,
+                item.delayed_flash_global_fraction,
                 actions.get(item.boundary_index, "analysis only"),
             )
 

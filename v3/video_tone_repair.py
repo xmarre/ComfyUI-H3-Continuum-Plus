@@ -16,7 +16,7 @@ import torch
 
 from .video_tone import _sample_rgb
 
-TONE_POLICY = "decoded_static_background_color_anchor_v1"
+TONE_POLICY = "decoded_static_background_color_anchor_v2"
 MAX_SAMPLE_FRAMES = 96
 MIN_STATIC_FRACTION = 0.16
 MAX_STATIC_VARIATION = 0.016
@@ -101,7 +101,9 @@ def estimate_sustained_tone_anchor(
 
     A scene cut *at* the seam is rejected. A later cut terminates correction:
     no photometric correction is transferred across different compositions.
-    If no cut occurs, correction is bounded to 96 frames and faded out.
+    A continuous-shot correction fades to identity before its support ends if
+    the estimator loses correspondence or reaches its 96-frame analysis cap.
+    A terminal chunk without a following uncorrected frame needs no release.
     """
     receipt: dict = {
         "policy": TONE_POLICY,
@@ -146,19 +148,23 @@ def estimate_sustained_tone_anchor(
     drifts = []
     confidence = []
     cut_at = None
+    stop_reason = "sample_window_end"
     previous_frame = post[0]
     for index, frame in enumerate(post):
         if index > 0 and float((frame - previous_frame).abs().mean().item()) >= SCENE_CUT_MEAN_DELTA:
             cut_at = index
+            stop_reason = "scene_cut"
             break
         previous_frame = frame
         mask, fraction = _background_pair(reference, frame, static)
         if mask is None:
             # Do not extrapolate an unverified color transform into moving
             # backgrounds or unrelated compositions.
+            stop_reason = "lost_background_correspondence"
             break
         params = _fit_affine(reference, frame, mask)
         if params is None:
+            stop_reason = "unreliable_affine_fit"
             break
         drift = ((reference - frame).mean(dim=0))[mask].median()
         drifts.append(float(drift.item()))
@@ -179,13 +185,27 @@ def estimate_sustained_tone_anchor(
         smoothed = result.clone()
         smoothed[1:-1] = (result[:-2] + result[1:-1] * 2 + result[2:]) / 4
         result = smoothed
-    if cut_at is None and len(result) == MAX_SAMPLE_FRAMES:
-        # Fade before the bounded analysis horizon to avoid a late one-frame
-        # color discontinuity on a continuous but changing shot.
-        fade_length = min(16, len(result))
-        for index in range(fade_length):
-            weight = (fade_length - 1 - index) / max(1, fade_length - 1)
-            row = len(result) - fade_length + index
+    # An early loss of correspondence previously returned live color
+    # coefficients through the last supported frame, then abruptly restored
+    # raw decode at the next frame. That creates a second color seam inside
+    # the continuation. Release only when a subsequent uncorrected frame
+    # exists and the terminator was not a verified scene cut.
+    release_required = (
+        cut_at is None
+        and (
+            (len(result) < target_length)
+            or (len(result) == MAX_SAMPLE_FRAMES and len(current) - trim > len(result))
+        )
+    )
+    release_frames = 0
+    if release_required:
+        release_frames = min(16, len(result))
+        # Coefficients for the last corrected frame become the exact identity.
+        # The following original decoded frame is therefore not preceded by
+        # an artificially adjusted frame. No motion or scene correction is made.
+        for index in range(release_frames):
+            weight = (release_frames - 1 - index) / max(1, release_frames - 1)
+            row = len(result) - release_frames + index
             result[row, :, 0] = 1 + (result[row, :, 0] - 1) * weight
             result[row, :, 1] *= weight
     receipt.update(
@@ -193,6 +213,10 @@ def estimate_sustained_tone_anchor(
         reason="static_background_drift",
         corrected_frames=len(result),
         cut_after_frames=cut_at,
+        support_stop_reason=stop_reason,
+        release_to_identity=release_required,
+        release_frames=release_frames,
+        first_uncorrected_frame=len(result) if len(result) < len(current) - trim else None,
         median_static_fraction=float(torch.tensor(confidence).median().item()),
         early_drift=early_drift,
         max_bias=float(result[..., 1].abs().max().item()),
