@@ -242,3 +242,76 @@ def test_encoder_cache_reuses_identical_inputs_but_not_changed_references(
         metadata.append(meta)
     assert len(clip.inputs) == 2
     assert metadata[0]["descriptor_digest"] != metadata[1]["descriptor_digest"]
+
+
+def _timed_project():
+    p = blank_project()
+    p["prompts"]["global"] = "A woman walks."
+    p["assets"] = [{"id": "a" * 64, "kind": "image", "alias": "Alice"}]
+    p["tracks"] = [
+        {
+            "id": "pr",
+            "role": "prompt",
+            "clips": [
+                {"id": "c1", "start": 0, "end": 84, "text": "she smiles"},
+                {"id": "c2", "start": 200, "end": 300, "text": "@Alice turns"},
+            ],
+        },
+        {
+            "id": "ref",
+            "role": "image_reference",
+            "clips": [{"id": "r", "asset_id": "a" * 64, "start": 336, "end": 504}],
+        },
+    ]
+    return validate(p)
+
+
+def test_timed_regions_are_rebased_onto_each_physical_invocation_clock():
+    from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
+        compile_physical_prompt,
+        make_physical_sample_descriptor,
+    )
+
+    plan = compile_project(_timed_project())
+    provider = TimelineInputs(plan["project"], plan["jobs"][0], None)
+    timeline = provider.invocation_plan({}, 1)
+    descriptor = make_physical_sample_descriptor(
+        group_id="g",
+        logical_indices=[1],
+        retained_before=175,
+        context_frames=22,
+        total_frames=192,
+        target_duration_frames=504,
+        continuation_method="native_masked",
+        initial_state_origin="none",
+        include_first=False,
+        include_last=False,
+        presentation_contract={},
+    )
+    text = compile_physical_prompt(timeline, descriptor).text
+    # Region [200,300) starts 25 frames after the 175-frame first chunk and
+    # 22 native context frames precede it inside this sample.
+    assert "[1.958333-6.125s]\nA woman walks.\n@Alice turns" in text
+    assert "she smiles" not in text and "(no prompt)" not in text
+    assert "8.333" not in text
+
+
+def test_override_replaces_inherited_text_only_inside_its_span():
+    p = _timed_project()
+    p["prompts"].update(mode="List", script='["inherited one", "inherited two"]')
+    p["tracks"][0]["clips"] = [
+        {"id": "o", "start": 42, "end": 84, "text": "override", "override": True}
+    ]
+    window = compile_project(p)["jobs"][0]["windows"][0]
+    assert [s["text"] for s in window["segments"]] == [
+        "A woman walks.\ninherited one",
+        "A woman walks.\noverride",
+        "A woman walks.\ninherited one",
+    ]
+
+
+def test_alias_without_active_reference_warns_and_keeps_text():
+    windows = compile_project(_timed_project())["jobs"][0]["windows"]
+    assert "@Alice turns" in windows[1]["segments"][1]["text"]
+    assert any("@Alice" in w for w in windows[1]["warnings"])
+    assert not windows[2]["warnings"]

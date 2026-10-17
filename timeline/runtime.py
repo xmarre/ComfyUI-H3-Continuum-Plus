@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import copy
-import re
 from collections import OrderedDict
 import torch
 
@@ -19,6 +18,7 @@ class TimelineInputs:
         self.windows = self.job["windows"]
         self.manifests = []
         self.conditioning_cache = {}
+        self.timeline_plan = None
         self.reference_cache = OrderedDict()
         self.reference_cache_bytes = 0
         self.offset = job["range"][0]
@@ -49,25 +49,40 @@ class TimelineInputs:
         )
 
     def invocation_plan(self, original, index):
+        """Native Timeline source for a window with timed prompt regions.
+
+        Each window is an outer section on its exact job-clock chunk boundary;
+        timed regions are a strict inner partition of it. The physical
+        compiler then re-bases them onto each invocation's own clock, including
+        native context, without importing adjacent windows.
+        """
         if not self.windows[index].get("timed_prompt"):
             return original
-        from ..v2.prompts import make_prompt_plan
+        if self.timeline_plan is None:
+            from ..v2.prompts import make_prompt_plan
+            from .model import seconds_text
 
-        def shift(match):
-            # Inner authored times are project absolute; physical compiler uses
-            # the native job clock. The source-media PTS remains independent.
-            return f"{max(0, float(match[1]) - self.offset / 24):.9f}-{max(0, float(match[2]) - self.offset / 24):.9f}s:"
-
-        rows = []
-        for n, w in enumerate(self.windows, 1):
-            body = re.sub(r"(?m)^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s:", shift, w["prompt"])
-            rows.append(f"[Chunk {n}]\n{body or ' '} ")
-        return make_prompt_plan(
-            mode="Timeline",
-            script="\n".join(rows),
-            chunks=len(rows),
-            chunk_seconds=self.project["chunk_frames"] / 24,
-        )
+            origin = self.job["range"][0]
+            rows = []
+            for w in self.windows:
+                a, b = (x - origin for x in w["range"])
+                rows.append(f"[{seconds_text(a)}-{seconds_text(b)}s]")
+                if w.get("segments"):
+                    for segment in w["segments"]:
+                        x, y = (v - origin for v in segment["range"])
+                        rows.append(f"{seconds_text(x)}-{seconds_text(y)}s:")
+                        rows.append(segment["text"])
+                else:
+                    # Untimed windows use the nominal List plan; this body only
+                    # keeps the routing partition well formed.
+                    rows.append(w["prompt"] or "(no prompt)")
+            self.timeline_plan = make_prompt_plan(
+                mode="Timeline",
+                script="\n".join(rows),
+                chunks=len(self.windows),
+                chunk_seconds=self.project["chunk_frames"] / 24,
+            )
+        return self.timeline_plan
 
     def materialize(self, index, *, video_vae, audio_vae, width, height):
         from ..reference import prepare_reference_assets, encode_reference_latents

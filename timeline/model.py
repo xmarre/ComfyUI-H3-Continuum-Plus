@@ -39,6 +39,14 @@ def rational(value):
     return result
 
 
+def seconds_text(frames):
+    """Stable decimal seconds for prompt headers; equal frames, equal strings."""
+    value = Fraction(int(frames), 24)
+    if value.denominator == 1:
+        return str(value.numerator)
+    return f"{float(value):.6f}".rstrip("0").rstrip(".")
+
+
 def sample_boundary(frame, rate, fps=Fraction(24)):
     return round(Fraction(int(frame) * int(rate), 1) / fps)
 
@@ -236,10 +244,12 @@ def compile_window(p, index):
         if i["role"] == "image_reference" and i["alias"]
     }
     prompts = p["prompts"]
-    text = str(prompts.get("global", ""))
+    global_text = str(prompts.get("global", ""))
+    base = global_text
+    # Timed items are (start_frame, end_frame, body, override) in project frames.
+    timed = []
     # Reuse existing Fixed/List/Timeline parser, including permissive fallback.
     script = str(prompts.get("script", ""))
-    timed = False
     if script:
         from ..v2.prompts import (
             resolve_prompt_mode,
@@ -253,7 +263,7 @@ def compile_window(p, index):
             mode = resolve_prompt_mode(prompts.get("mode", "Fixed"), script)
             if mode == PROMPT_MODE_LIST:
                 values = _list_values(script)
-                text += "\n" + values[min(index, len(values) - 1)]
+                base += "\n" + values[min(index, len(values) - 1)]
             elif mode == PROMPT_MODE_TIMELINE:
                 sections = parse_timeline_sections(script)
                 exact = [
@@ -273,16 +283,15 @@ def compile_window(p, index):
                     and rational(s["start"]) < Fraction(end, 24)
                     and Fraction(start, 24) < rational(s["end"])
                 ]
-                text += "\n" + timeline_preamble(script)
+                base += "\n" + timeline_preamble(script)
                 if exact:
-                    text += "\n" + exact[0]["body"]
+                    base += "\n" + exact[0]["body"]
                 elif selected:
                     for section in selected:
-                        a, b = (
-                            max(Fraction(start, 24), rational(section["start"])),
-                            min(Fraction(end, 24), rational(section["end"])),
-                        )
-                        text += f"\n{float(a):.9f}-{float(b):.9f}s:\n{section['body']}"
+                        a = max(start, round(rational(section["start"]) * 24))
+                        b = min(end, round(rational(section["end"]) * 24))
+                        if a < b:
+                            timed.append((a, b, section["body"], False))
                 else:
                     preceding = [
                         s
@@ -293,23 +302,68 @@ def compile_window(p, index):
                             and rational(s["end"]) <= Fraction(start, 24)
                         )
                     ]
-                    text += "\n" + (preceding[-1] if preceding else sections[0])["body"]
-                timed = True
+                    base += "\n" + (preceding[-1] if preceding else sections[0])["body"]
             else:
-                text += "\n" + script
+                base += "\n" + script
         except (ValueError, TypeError, IndexError, KeyError):
             # Same permissive opaque fallback as existing prompt plans.
-            text += "\n" + script
+            base += "\n" + script
     for i in inputs:
         if i["role"] == "prompt":
-            body = i["text"]
-            if i["override"]:
-                text = str(prompts.get("global", "")) + "\n" + body
+            timed.append((*i["range"], i["text"], i["override"]))
+    authored = "\n".join([global_text, script, *(t[2] for t in timed)])
+
+    def resolve(value):
+        return re.sub(r"@([\w-]+)", lambda m: aliases.get(m[1], m[0]), value).strip()
+
+    segments = None
+    if timed:
+        # A strict contiguous partition of the window. An override replaces the
+        # inherited script text inside its own span; the global prompt remains.
+        cuts = sorted({start, end, *(x for a, b, *_ in timed for x in (a, b))})
+        segments = []
+        for a, b in zip(cuts, cuts[1:]):
+            active = [t for t in timed if t[0] < b and a < t[1]]
+            head = global_text if any(t[3] for t in active) else base
+            body = resolve("\n".join([head, *(t[2] for t in active)]))
+            if segments and (not body or body == segments[-1]["text"]):
+                segments[-1]["range"][1] = b
             else:
-                a, b = i["range"]
-                text += f"\n{float(Fraction(a, 24)):.9f}-{float(Fraction(b, 24)):.9f}s:\n{body}"
-                timed = True
-    text = re.sub(r"@([\w-]+)", lambda m: aliases.get(m[1], m[0]), text).strip()
+                segments.append({"range": [a, b], "text": body})
+        if len(segments) > 1 and not segments[0]["text"]:
+            segments[1]["range"][0] = segments[0]["range"][0]
+            segments.pop(0)
+        if len(segments) == 1:
+            base, segments, timed = segments[0]["text"], None, []
+    # Nominal text keeps window-local times for the non-physical transport.
+    text = resolve(
+        "\n".join(
+            [base]
+            + [
+                f"{seconds_text(a - start)}-{seconds_text(b - start)}s:\n{body}"
+                for a, b, body, _ in timed
+            ]
+        )
+    )
+    warnings = []
+    known = {
+        str(x.get("alias"))
+        for x in [*p["assets"], *(c for t in p["tracks"] for c in t["clips"])]
+        if x.get("alias")
+    }
+    for name in sorted(set(re.findall(r"@([\w-]+)", authored)) & known - set(aliases)):
+        warnings.append(
+            f"@{name} has no active image reference in chunk {index + 1}; the text is kept as written"
+        )
+    by_alias = {}
+    for i in inputs:
+        if i["role"] == "image_reference" and i["alias"]:
+            by_alias.setdefault(i["alias"], set()).add(i["asset_id"])
+    for name, assets_for_alias in sorted(by_alias.items()):
+        if len(assets_for_alias) > 1:
+            warnings.append(
+                f"@{name} names {len(assets_for_alias)} different active images in chunk {index + 1}; it resolves to {aliases[name]}"
+            )
 
     def audio_identity(i):
         return {
@@ -345,6 +399,7 @@ def compile_window(p, index):
         if full_guide
         else "none",
         "prompt": text,
+        "segments": segments,
         "images": images,
         "video": video,
         "guide": guide,
@@ -353,7 +408,8 @@ def compile_window(p, index):
     return {
         "index": index,
         "range": [start, end],
-        "timed_prompt": timed,
+        "timed_prompt": segments is not None,
+        "warnings": warnings,
         **semantic,
         "aliases": aliases,
         "generation_hash": digest(
