@@ -9,6 +9,7 @@ from typing import Any
 import torch
 
 from ..state import extract_av_streams
+from .determinism_witness import emit_sampler_witness
 
 
 class SamplingRuntimeError(RuntimeError):
@@ -134,6 +135,16 @@ def sample_chunk(
     )
     guider = _make_basic_guider(model, conditioning)
     noise = _prepare_noise(working, seed)
+    emit_sampler_witness(
+        "before_sample",
+        seed=seed,
+        conditioning=conditioning,
+        latent_image=latent_image,
+        noise=noise,
+        noise_mask=noise_mask,
+        sampler_name=f"{type(sampler).__module__}.{type(sampler).__qualname__}",
+        sigmas=sigmas,
+    )
 
     x0_output: dict[str, Any] = {}
     callback = None
@@ -151,6 +162,7 @@ def sample_chunk(
         seed=int(seed),
     )
     samples = samples.to(comfy.model_management.intermediate_device())
+    emit_sampler_witness("after_sample", seed=seed, samples=samples)
     output = working.copy()
     output.pop("downscale_ratio_spacial", None)
     output.pop("downscale_ratio_temporal", None)
