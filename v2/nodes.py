@@ -25,6 +25,7 @@ from .prompts import (
     validate_sparse_prompt_overrides,
 )
 from .sequence import run_sequence
+from .conditioning_lifecycle import conditioning_lookahead_scope
 from .session import entry_to_state, session_summary, validate_session
 from .session_io import (
     load_session,
@@ -322,6 +323,7 @@ class H3ContinuumSamplerV2:
         driving_audio_vae=None,
         reference_video_source=None,
         timeline_video_source=None,
+        conditioning_lookahead=None,
         **clip_prompt_inputs,
     ):
         (
@@ -362,40 +364,41 @@ class H3ContinuumSamplerV2:
                 for index in range(1, int(chunks) + 1)
             ],
         )
-        return run_sequence(
-            model=model,
-            clip=clip,
-            video_vae=video_vae,
-            audio_vae=audio_vae,
-            sampler=sampler,
-            sigmas=sigmas,
-            first_frame=first_frame,
-            last_frame=last_frame,
-            prompt_plan=prompt_plan,
-            width=int(width),
-            height=int(height),
-            continuity=continuity,
-            base_seed=int(base_seed),
-            audio_continuity=bool(audio_continuity),
-            exact_total_duration=bool(exact_total_duration),
-            diagnostics_mode=diagnostics,
-            reroll_from_chunk=int(reroll_from_chunk),
-            reroll_nonce=int(reroll_nonce),
-            strict_compatibility=False,
-            debug=bool(debug),
-            seam_correction=seam_correction,
-            enable_preview=bool(show_preview),
-            session=session,
-            initial_state=initial_state,
-            latent_only=bool(latent_only),
-            reference_assets=reference_assets,
-            reference_audio_source=reference_audio_source,
-            reference_audio_vae=reference_audio_vae,
-            driving_audio_source=driving_audio_source,
-            driving_audio_vae=driving_audio_vae,
-            reference_video_source=reference_video_source,
-            timeline_video_source=timeline_video_source,
-        )
+        with conditioning_lookahead_scope(conditioning_lookahead):
+            return run_sequence(
+                model=model,
+                clip=clip,
+                video_vae=video_vae,
+                audio_vae=audio_vae,
+                sampler=sampler,
+                sigmas=sigmas,
+                first_frame=first_frame,
+                last_frame=last_frame,
+                prompt_plan=prompt_plan,
+                width=int(width),
+                height=int(height),
+                continuity=continuity,
+                base_seed=int(base_seed),
+                audio_continuity=bool(audio_continuity),
+                exact_total_duration=bool(exact_total_duration),
+                diagnostics_mode=diagnostics,
+                reroll_from_chunk=int(reroll_from_chunk),
+                reroll_nonce=int(reroll_nonce),
+                strict_compatibility=False,
+                debug=bool(debug),
+                seam_correction=seam_correction,
+                enable_preview=bool(show_preview),
+                session=session,
+                initial_state=initial_state,
+                latent_only=bool(latent_only),
+                reference_assets=reference_assets,
+                reference_audio_source=reference_audio_source,
+                reference_audio_vae=reference_audio_vae,
+                driving_audio_source=driving_audio_source,
+                driving_audio_vae=driving_audio_vae,
+                reference_video_source=reference_video_source,
+                timeline_video_source=timeline_video_source,
+            )
 
 
 class H3ContinuumPromptPlanPreview:
