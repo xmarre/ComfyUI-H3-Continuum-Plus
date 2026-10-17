@@ -1,10 +1,16 @@
-# ComfyUI-H3-Continuum-Plus 3.4.9
+# ComfyUI-H3-Continuum-Plus 3.4.10
 
 > **Plus フォーク:** これは `xmarre` が保守する [ukr8b3g-cmyk/ComfyUI-H3-Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum) の Plus フォークです。上流プロジェクトを基盤として維持しつつ、上流と意図的に異なる機能、統合、修正、挙動を含む場合があります。
 
-**V3.4 Stable (v3.4.9):** Driving Audio、Video Reference、Audio / Video Seam、Run Storageを含む安定版です。
+**V3.4 Stable (v3.4.10):** Driving Audio、Video Reference、Audio / Video Seam、Run Storageを含む安定版です。
 
 MiniMax H3を複数チャンクで連続生成し、直前チャンク末尾の**映像latent / 音声latentを直接**次チャンクへ継承するComfyUIカスタムノードです。チャンク間でVideo/Audio VAEのDecode→Encodeは行いません。
+
+## v3.4.10 更新 (2026-10-17)
+
+[PR #49](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/49) では、Continuum が内部的に生成していた継続・終端・パディング用の指示文が MiniMax H3 の音声生成で発話される問題に対処しました。保護済みプレフィックス、未指定区間、終端区間の時刻・役割はメタデータとして保持し、内部指示文を Qwen のテキスト条件へ渡さないようにしています。対話履歴も、ユーザーが記述した台詞と話者情報だけをエンコードし、JSON や内部説明文を除外します。ユーザーによる生成テストでは報告されていた不要な発話が解消したと確認されました。Python 3.10–3.13 の自動テストも通過しています。
+
+**制限:** すべての自発的発話や文末の途切れを防止する保証ではありません。映像・音声の潜在状態、時刻マスク、既存ワークフローの設定は変更していません。詳細は [Audio prompt boundaries](docs/AUDIO_PROMPT_BOUNDARIES.md) と [Changelog](CHANGELOG.md) を参照してください。関連コンポーネントのバージョンは変更されません。Comfy Registry への公開は PublisherId の権限確認が完了するまで行いません。
 
 ## v3.4.9 更新 (2026-10-17)
 

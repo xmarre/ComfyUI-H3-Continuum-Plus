@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from fractions import Fraction
-import json
 import logging
 import os
 import re
@@ -23,7 +22,7 @@ from .physical_prompts import (
     text_sha256,
 )
 
-POLICY = "qwen_causal_dialogue_history_v1"
+POLICY = "qwen_causal_dialogue_history_v2"
 ENV = "H3C_CAUSAL_DIALOGUE_HISTORY"
 _DIALOGUE = re.compile(r"<d>.*?</d>", re.DOTALL)
 LOG = logging.getLogger("h3_continuum_join")
@@ -68,11 +67,14 @@ def with_dialogue_history(compiled, plan, descriptor):
         last_candidate = chosen[0]
     if not records:
         return compiled
-    history = (
-        "Authored dialogue context for the carried audio interval. Event times are not word alignment.\n"
-        + json.dumps({"speaker_context": source.get("preamble", ""), "intervals": records},
-                     ensure_ascii=False, sort_keys=True)
-        + "\nEnd of authored context. Current physical generation instructions follow.\n"
+    # The causal context must contain authored language only. Machine keys,
+    # timestamps, control directives and JSON wrappers can be vocalized through
+    # current-token states despite dropping the history rows from DiT input.
+    history = "\n\n".join(
+        part for part in (
+            str(source.get("preamble", "")).strip(),
+            *(record["authored_context"].strip() for record in records),
+        ) if part
     )
     version = f"{compiled.compiler_version}+{POLICY}"
     identity = {
@@ -86,6 +88,12 @@ def with_dialogue_history(compiled, plan, descriptor):
                        "code": "H3C-PT234", "level": "info",
                        "message": "experimental authored overlap dialogue is Qwen-only context; its rows are excluded from DiT conditioning",
                        "history_sha256": text_sha256(history), "interval_count": len(records),
+                       "intervals": [{
+                           "global_start": record["global_start"],
+                           "global_end": record["global_end"],
+                           "utterance_continues_past_boundary":
+                               record["utterance_continues_past_boundary"],
+                       } for record in records],
                    },))
 
 

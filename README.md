@@ -1,5 +1,11 @@
 # ComfyUI-H3-Continuum-Plus
 
+## v3.4.10 — H3 speech-control isolation (17 October 2026)
+
+PR [#49](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/49) removes Continuum's internally generated phrases (including "Immutable carried continuation context" and terminal/padding instructions) from shared H3 text/audio conditioning. Exact protected prefixes, fresh gaps and terminal intervals retain their structural timing records; the sampler's native latent mask, user-authored speech and routing remain intact. Experimental Qwen dialogue history now passes only authored speaker/dialogue content, not machine-written JSON or explanatory wrappers. The owner confirmed the reported unwanted spoken phrases were eliminated in their generation test. Automated validation includes Qwen token-input checks and 499 passing tests on Python 3.10–3.13. This does not establish universal speech completion or silence at the output trim.
+
+See [audio prompt boundaries](docs/AUDIO_PROMPT_BOUNDARIES.md), [dialogue history](docs/CAUSAL_DIALOGUE_HISTORY.md), and [the changelog](CHANGELOG.md). Compatible companion releases remain Flow v0.3.14, Sol-H3 v0.1.11 and VDN-H3-Plus v1.5.10. This Plus fork still declares the upstream Comfy Registry publisher ID; v3.4.10 is a GitHub release, **not** an unauthorized Registry publication.
+
 ## v3.4.9 — coordinated release (17 October 2026)
 
 This release merges Continuum **#44/#46/#47** alongside **Flow v0.3.14**, **VDN-H3-Plus v1.5.10** and **Sol-H3 v0.1.11**. #47's `Qwen Lookahead` (default true, eligible fixed-geometry chunks only) retains one descriptor-checked, detached CPU conditioning result; logs `H3C-PT236` (prepared), `H3C-PT237` (consumed) confirm reuse. Use `H3C_CONDITIONING_LOOKAHEAD=0` to disable globally. #46's causal overlap-dialogue conditioning is **experimental**, not a demonstrated gibberish fix; use `H3C_CAUSAL_DIALOGUE_HISTORY=0` for comparison. #44 fixes delayed flash and Auto 3 tone-repair release edges but does not guarantee underlying model tone continuity. Existing standard/Turbo workflows preserve native masked continuation, strong 39-frame overlap, Auto audio, Auto 3 tone, and audible-tail-safe assembly. See [v3.4 settings](examples/recommended_settings_v34.json), [causal dialogue](docs/CAUSAL_DIALOGUE_HISTORY.md), and [Qwen lifecycle](docs/CONDITIONING_LIFECYCLE.md).

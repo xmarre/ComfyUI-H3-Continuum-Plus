@@ -1,5 +1,27 @@
 # Changelog
 
+## 3.4.10
+
+Prevent internal Continuum timeline-control instructions from entering MiniMax H3's generated speech conditioning ([PR #49](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/49)).
+
+- Exact protected-prefix, fresh-gap, terminal lead-out, and discarded native-grid padding intervals remain in the physical Timeline's precise timing/provenance metadata without injecting synthetic sentences or machine-only timestamp blocks into Qwen text. The existing latent prefix mask and duration/assembly paths are unchanged.
+- Causal Qwen dialogue history contains only author-supplied speaker context and dialogue. JSON keys, timestamp wrappers, and implementation instructions are diagnostics only; historical embedding rows remain excluded from the DiT conditioning.
+- Bump physical compiler and dialogue-history conditioning identities to invalidate incompatible stored conditioning. Preserve user-authored prompts, `<d>...</d>` dialogue, routed Timeline bodies, reference presentation, and Fixed/List legacy behavior.
+- Add regression coverage for the **actual Qwen token stream**, structural interval boundaries and roles, and dialogue-history transport. GitHub CI passes across Python 3.10–3.13; the owner additionally confirmed that the reported synthetic phrases no longer appear as spoken output in their generation test.
+
+**Limitations:** This removes known *machine-authored* speech contamination; it does not guarantee that MiniMax H3 never produces unsolicited speech, that speech always ends before trimming, or that every cross-boundary utterance is complete. The terminal lead-out no longer contains a natural-language silencing instruction; final speech timing remains model-dependent. See [Audio prompt boundaries](docs/AUDIO_PROMPT_BOUNDARIES.md).
+
+**Publication:** GitHub release only. This fork retains `PublisherId=ukr8b3g-cmyk`, so Comfy Registry publication remains gated pending explicitly authorized credentials and publisher identity. No companion repository or Keyless changes are included.
+
+### Compatible companion versions (unchanged)
+
+- [Flow-Aligned Regenerate v0.3.14](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.14)
+- [Sol-H3 v0.1.11](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.11)
+- [VDN-H3-Plus v1.5.10](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.10)
+- [Latent Upscaler-Plus v0.2.2](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus/releases/tag/v0.2.2)
+- [Spectrum MiniMax H3 v0.2.29](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3/releases/tag/v0.2.29)
+
+
 ## 3.4.9
 
 Coordinated continuation release for VDN-H3-Plus v1.5.10, Sol-H3 v0.1.11 and Flow-Aligned Regenerate v0.3.14.
