@@ -1,5 +1,13 @@
 # ComfyUI-H3-Continuum-Plus
 
+## v3.4.11 — Comfy Registry ownership (17 October 2026)
+
+The Plus fork is registered for publishing with **`PublisherId = "xmarre"`** and its own Registry node ID, **`comfyui-h3-continuum-plus`**. This identifies the maintained Plus fork separately from upstream `ukr8b3g-cmyk/ComfyUI-H3-Continuum`. The original author is still credited in the package metadata.
+
+After a successful GitHub release, the Registry workflow verifies that release is the exact current `main` commit, checks its publisher ID and package identity, then uploads using a Registry API key from the repository secret `REGISTRY_ACCESS_TOKEN`. It does not publish an untested branch, stale release or unverified package. Registry publishing requires the repository secret to be configured with an API key authorized for `xmarre`; a successful GitHub release does not alone establish Registry availability.
+
+**Installation compatibility:** Plus retains its existing ComfyUI runtime node identifiers, but its Registry **distribution** ID is different from the upstream package. Do not install both Continuum variants in the same ComfyUI instance; they expose overlapping node identifiers. Existing Git/Manager installations are not migrated by changing the Registry distribution metadata. All previously documented V3.4 production defaults and v3.4.10 speech fixes are preserved.
+
 ## v3.4.10 — H3 speech-control isolation (17 October 2026)
 
 PR [#49](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/49) removes Continuum's internally generated phrases (including "Immutable carried continuation context" and terminal/padding instructions) from shared H3 text/audio conditioning. Exact protected prefixes, fresh gaps and terminal intervals retain their structural timing records; the sampler's native latent mask, user-authored speech and routing remain intact. Experimental Qwen dialogue history now passes only authored speaker/dialogue content, not machine-written JSON or explanatory wrappers. The owner confirmed the reported unwanted spoken phrases were eliminated in their generation test. Automated validation includes Qwen token-input checks and 499 passing tests on Python 3.10–3.13. This does not establish universal speech completion or silence at the output trim.

@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.4.11
+
+Publish Continuum-Plus under its maintainer-owned Comfy Registry identity, separate from the original H3 Continuum project.
+
+- Set the Comfy Registry publisher to **`xmarre`**, verified against existing xmarre Registry releases. Use a distinct, immutable Registry node ID **`comfyui-h3-continuum-plus`** and display name **H3 Continuum Plus**, to avoid conflating this maintained fork with the original package `comfyui-h3-continuum`.
+- Preserve the original project author, `ukr8b3g-cmyk`, and add the Plus maintainer, `xmarre`, in metadata. Runtime node class identifiers, stored data and H3 behavior are unchanged.
+- Publish only an already-created, successful GitHub release at the current `main` commit: pin to its tag, verify the package name, publisher, repository and version, require a Registry API token, and retain the verified Comfy CLI installer. Failed, absent, or stale releases cannot publish.
+- Remove old repository-variable publication gates that prevented this fork's approved publisher from deploying. The secret `REGISTRY_ACCESS_TOKEN` must contain a **Registry API key issued to the `xmarre` publisher**; GitHub authentication is not a substitute.
+- Preserve the v3.4.10 speech-control isolation, legacy workflows, default sampler/assembler settings and the existing production validation suite.
+
+The Registry entry for this fork is distinct from the upstream entry. Existing installations obtained under a different Registry node ID are not automatically reassigned. Do not install the original Continuum and Continuum-Plus simultaneously because their runtime node IDs overlap.
+
+### Compatible component versions
+
+Flow-Aligned Regenerate v0.3.14, Sol-H3 v0.1.11, VDN-H3-Plus v1.5.10, Latent Upscaler-Plus v0.2.2 and Spectrum MiniMax H3 v0.2.29 are unchanged.
+
+
 ## 3.4.10
 
 Prevent internal Continuum timeline-control instructions from entering MiniMax H3's generated speech conditioning ([PR #49](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/pull/49)).
