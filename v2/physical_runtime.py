@@ -32,15 +32,10 @@ from .physical_prompts import (
 
 LOG = logging.getLogger("h3_continuum_join")
 
-# V3 remains the exact-prefix suppression identity. V4 is used only when the
-# compiler actually emits the new post-prefix fresh-gap continuity bridge.
-_RUNTIME_PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v3"
-_RUNTIME_FRESH_GAP_COMPILER_VERSION = "physical_timeline_text_v4"
-_EXACT_PREFIX_CONTEXT_BODY = (
-    "Immutable carried continuation context. This interval already exists in the protected input "
-    "and is not new generation. Do not restage or replay content from this protected interval "
-    "after new generation begins."
-)
+# Prefix protection is performed by the sampler's latent mask. This timed
+# interval carries no machine-authored instructions into H3's speech pathway.
+_RUNTIME_CONTROL_FREE_COMPILER_VERSION = "physical_timeline_text_v8"
+_EXACT_PREFIX_CONTEXT_BODY = ""
 
 
 def build_presentation_contract(
@@ -253,18 +248,11 @@ def _with_runtime_compiler_identity(
             "global_end": fraction_string(end),
         },
     )
-    fresh_gap_bridge = any(
-        item.get("code") == "H3C-PT220"
-        and item.get("fallback_type") == "exact_prefix_fresh_gap_bridge"
-        for item in diagnostics
-        if isinstance(item, dict)
+    compiler_version = (
+        TERMINAL_PADDING_COMPILER_VERSION
+        if compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION
+        else _RUNTIME_CONTROL_FREE_COMPILER_VERSION
     )
-    if compiled.compiler_version == TERMINAL_PADDING_COMPILER_VERSION:
-        compiler_version = TERMINAL_PADDING_COMPILER_VERSION
-    elif fresh_gap_bridge:
-        compiler_version = _RUNTIME_FRESH_GAP_COMPILER_VERSION
-    else:
-        compiler_version = _RUNTIME_PHYSICAL_COMPILER_VERSION
     physical_hash = canonical_sha256(
         {
             "compiler_version": compiler_version,
@@ -332,11 +320,9 @@ def compile_invocation_prompt(
     chunk-routing boundaries. Physical overlap may remap timestamps inside the
     selected chunk body, but it must not import adjacent chunk bodies.
 
-    Timeline V4 treats an exact Native Masked prefix as immutable context and
-    gives an uncovered fresh interval immediately after it a dedicated
-    continuity bridge. This preserves the full physical local clock without
-    extending protected-context prose into generated time or importing an
-    adjacent logical chunk body.
+    Exact Native Masked prefixes and uncovered fresh-gap intervals remain
+    structural metadata rather than new language in H3 conditioning. This
+    preserves physical timing without importing adjacent logical chunk bodies.
     """
 
     source_kind = str((plan.get("source") or {}).get("kind", "legacy_logical"))

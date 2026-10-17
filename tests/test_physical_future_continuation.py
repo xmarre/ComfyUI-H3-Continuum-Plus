@@ -65,15 +65,18 @@ def test_two_chunk_preview_of_four_chunk_story_does_not_silence_future_dialogue(
     assert not any(item["code"] in ("H3C-PT217", "H3C-PT219") for item in compiled.diagnostics)
 
 
-def test_genuine_two_chunk_story_retains_terminal_speech_guard(monkeypatch):
+def test_genuine_two_chunk_story_retains_terminal_interval_without_control_text(monkeypatch):
     plan = _plan(
         "[0-7s]\nMary says hello.\n"
         "[7-14s]\nClark finishes his last sentence and remains silent."
     )
     assert _has_authored_timeline_after_output(plan) is False
     compiled = _compile(monkeypatch, plan)
-    assert "Terminal speech-free lead-out" in compiled.text
-    assert "Terminal latent-grid padding only" in compiled.text
+    assert "Terminal speech-free lead-out" not in compiled.text
+    assert "Terminal latent-grid padding only" not in compiled.text
+    assert [item["terminal_role"] for item in compiled.contributing_intervals[-2:]] == [
+        "speech_free_leadout", "discarded_padding",
+    ]
     assert any(item["code"] == "H3C-PT219" for item in compiled.diagnostics)
     assert not any(item["code"] == "H3C-PT230" for item in compiled.diagnostics)
 

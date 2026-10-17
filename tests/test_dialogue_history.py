@@ -1,6 +1,5 @@
 """Transport tests; these do not establish trained-model speech quality."""
 import copy
-import json
 
 import pytest
 import torch
@@ -88,9 +87,13 @@ def test_boundary_history_respects_inner_intervals_and_author_override(monkeypat
     assert 'Too old.' not in compiled.encoder_history
     assert 'Future line.' not in compiled.encoder_history
     assert 'Future line.' in compiled.text
-    data = json.loads(compiled.encoder_history.splitlines()[1])
+    data = next(item for item in compiled.diagnostics if item['code'] == 'H3C-PT234')
     assert [item['utterance_continues_past_boundary'] for item in data['intervals']] == [False]
     assert data['intervals'][-1]['global_end'] == '7'
+    assert 'utterance_continues_past_boundary' not in compiled.encoder_history
+    assert 'Authored dialogue context' not in compiled.encoder_history
+    assert '"intervals"' not in compiled.encoder_history
+    assert 'Current physical generation instructions' not in compiled.encoder_history
     assert 'Ongoing phrase.' not in compiled.encoder_history
 
 
@@ -136,6 +139,37 @@ def test_history_rows_removed_while_causal_effect_and_reference_rows_survive(opt
     assert tensor.untyped_storage().nbytes() == tensor.numel() * tensor.element_size()
 
 
+def test_continuum_control_vocabulary_never_enters_qwen_token_stream(monkeypatch):
+    monkeypatch.setenv(history.ENV, '1')
+    p = plan(
+        'Voice (S1) is low and calm.\n'
+        '[0-7s]\n(S1) says <d>[English] The first answer.</d>\n'
+        '[7-14s]\n(S1) says <d>[English] The second answer.</d>'
+    )
+    compiled = compile_(p, descriptor(exact=True))
+    clip = CausalClip()
+    history.encode_with_dialogue_history(
+        clip, compiled.text, compiled.encoder_history, {},
+    )
+    assert len(clip.calls) == 1
+    actual_qwen_text = ''.join(
+        chr(token) for token, _ in clip.calls[0]['qwen3vl_32b'][0]
+    )
+    assert actual_qwen_text == compiled.encoder_history + compiled.text
+    assert 'The first answer.' in actual_qwen_text
+    assert 'The second answer.' in actual_qwen_text
+    for leaked in (
+        'Immutable carried continuation context',
+        'Terminal speech-free lead-out',
+        'Terminal latent-grid padding only',
+        'Continuous transition of the existing shot',
+        'Authored dialogue context for the carried audio interval',
+        'utterance_continues_past_boundary',
+        'Current physical generation instructions follow',
+    ):
+        assert leaked not in actual_qwen_text
+
+
 def test_incompatible_tokenizer_and_missing_tags_fall_back_to_current_prompt():
     class OtherClip:
         def tokenize(self, text, **opts):
@@ -172,7 +206,7 @@ def test_crossing_utterance_preserves_authored_words_without_guessing_word_align
     got = compile_(p, descriptor())
     assert 'A sentence crosses the boundary.' in got.encoder_history
     assert 'A sentence crosses the boundary.' in got.text
-    data = json.loads(got.encoder_history.splitlines()[1])
+    data = next(item for item in got.diagnostics if item['code'] == 'H3C-PT234')
     assert data['intervals'][0]['utterance_continues_past_boundary'] is True
 
 
@@ -204,7 +238,7 @@ def test_ignored_overlapping_timeline_sections_do_not_duplicate_history(monkeypa
     p = plan('[0-10s]\n(S1) says <d>[English] Continuous line.</d>\n'
              '[6-7s]\nAn ignored overlapping instruction.\n[10-28s]\nWaves.')
     got = compile_(p, descriptor())
-    data = json.loads(got.encoder_history.splitlines()[1])
+    data = next(item for item in got.diagnostics if item['code'] == 'H3C-PT234')
     assert len(data['intervals']) == 1
     assert got.encoder_history.count('Continuous line.') == 1
     assert data['intervals'][0]['global_start'] == '17/3'
@@ -215,7 +249,7 @@ def test_separately_authored_repeated_lines_remain_distinct_history_events(monke
     monkeypatch.setenv(history.ENV, '1')
     p = plan('[0-6s]\n(S1) says <d>[English] Again.</d>\n'
              '[6-10s]\n(S1) says <d>[English] Again.</d>\n[10-28s]\nWaves.')
-    data = json.loads(compile_(p, descriptor()).encoder_history.splitlines()[1])
+    data = next(item for item in compile_(p, descriptor()).diagnostics if item['code'] == 'H3C-PT234')
     assert len(data['intervals']) == 2
 
 
