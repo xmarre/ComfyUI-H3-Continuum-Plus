@@ -191,3 +191,30 @@ def test_sequential_physical_reuse_accepts_exact_match(monkeypatch):
 
     assert len(accepted) == 2
     assert not any("differs" in note for note in notes)
+
+
+def test_causal_dialogue_history_reuse_and_policy_change(monkeypatch):
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_PROMPTS", "1")
+    monkeypatch.setenv("H3C_CAUSAL_DIALOGUE_HISTORY", "1")
+    plan = make_prompt_plan(
+        mode=PROMPT_MODE_TIMELINE,
+        script="[0-7s]\n(S1) says <d>[English] Previous words.</d>\n[7-14s]\n(S2) says <d>[English] Next words.</d>",
+        chunks=2, chunk_seconds=7.0,
+    )
+    stored = _entries(plan)
+    assert stored[1]["plan"]["physical_prompt"]["compiled"]["encoder_history"]
+    kwargs = dict(
+        prompt_plan=plan, prompts=list(plan["prompts"]), chunks=2,
+        chunk_seconds=7.0, width=96, height=64,
+        continuity=CONTINUITY_OPTIONS[0], continuation_method=CONTINUATION_GUIDE,
+        audio_continuity=True, driving_audio_active=False, debug=False,
+        initial_frame_count=align_frame_count_up(round(7.0 * 24)), assets=_assets(),
+        initial_state_external=False, terminal_merge_enabled=False,
+    )
+    accepted, notes = sequence._physical_reuse_prefix(stored, **kwargs)
+    assert len(accepted) == 2
+    assert not any("differs" in note for note in notes)
+    monkeypatch.setenv("H3C_CAUSAL_DIALOGUE_HISTORY", "0")
+    accepted, notes = sequence._physical_reuse_prefix(stored, **kwargs)
+    assert len(accepted) == 1
+    assert any("conditioning identity differs" in note for note in notes)
