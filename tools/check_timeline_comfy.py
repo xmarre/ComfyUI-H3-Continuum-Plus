@@ -20,6 +20,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--comfy-root", type=Path, required=True)
     parser.add_argument("--browser-test", type=Path)
+    parser.add_argument(
+        "--front-end-root",
+        type=Path,
+        help="Serve this frontend build instead of the installed package",
+    )
     args = parser.parse_args()
     args.comfy_root = args.comfy_root.resolve()
     base = "http://127.0.0.1:8199"
@@ -48,6 +53,16 @@ def main():
                 else content
             )
 
+    # Older ComfyUI releases have no --offline switch.
+    help_text = subprocess.run(
+        [sys.executable, str(args.comfy_root / "main.py"), "--help"],
+        cwd=args.comfy_root,
+        capture_output=True,
+        text=True,
+    ).stdout
+    extra = ["--offline"] if "--offline" in help_text else []
+    if args.front_end_root:
+        extra += ["--front-end-root", str(args.front_end_root.resolve())]
     with tempfile.TemporaryDirectory(prefix="h3-comfy-check-") as td:
         directory = Path(td)
         for name in ("input", "output", "user"):
@@ -58,7 +73,7 @@ def main():
                 sys.executable,
                 str(args.comfy_root / "main.py"),
                 "--cpu",
-                "--offline",
+                *extra,
                 "--disable-all-custom-nodes",
                 "--whitelist-custom-nodes",
                 "ComfyUI-H3-Continuum-Plus",

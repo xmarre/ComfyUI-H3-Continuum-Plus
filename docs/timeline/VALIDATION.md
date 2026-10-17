@@ -2,7 +2,7 @@
 
 ## Executed evidence
 
-The standalone Python suite passes **525 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **8 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
+The standalone Python suite passes **539 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **9 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
 
 The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10, 3.11, 3.12 and 3.13, including publisher-toolchain verification. Final commit checks are authoritative on the implementation PR.
 
@@ -11,11 +11,13 @@ The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10
 | Temporal compiler | Exact `[0,7)` / `[7,14)` source windows; absolute 44.1/48 kHz sample boundaries; long prompt lists; exact outer-header isolation; malformed-text fallback | Deterministic logical scheduling and role separation |
 | Actual native sequence loop with CPU sampler fixtures | Invocation-local reference changes under both compiler modes; changed chunk 2 preserves chunk 1; equal encoder inputs reuse conditioning while changed references do not | Runtime routing, causal prefix and cache integration; not H3 output quality |
 | Real media | FFmpeg/PyAV 25 fps, VFR and nonzero-PTS sources; mono/stereo normalization; exact guide-frame padding and original source selections | Source decoding and normalized time/sample behavior |
+| Audio windows | Cached whole-stream PCM slices equal the sequential decode sample for sample; one decode serves every window; a measured 1 s window late in a 30-minute AAC source drops from about 5 s per call to a cached slice | Linear-cost previews, waveforms and export after a source's first decode |
+| Prompt transport | Timed regions compile through the native physical compiler onto each invocation's clock, including continuation context; no neighboring chunk text | Correct physical-local prompt timing; not H3 prompt adherence |
 | Long source | A real two-hour video, with a selected seven-second window, decodes fewer than 64 source frames including seek context | No complete-film decode on the selected video path; does not quantify every codec's memory use |
 | Composition | Lossless normalized RGB and float PCM comparisons; replacement interval with unchanged original frames and soundtrack outside it; cancellation cleanup | Working retained/generated composition and normalized export |
 | Persistence | Atomic project saves, revision conflicts, registered-asset verification, missing/stale path rejection and relinking identities | Disk/project identity behavior |
 | Real ComfyUI server | Import, save/reopen, compile, thumbnails, waveform, bounded composition preview and export endpoints; four registered nodes; actual queued Studio→Export execution | HTTP/node integration without trained weights |
-| Real ComfyUI frontend | Open, split, undo/redo, save/reload, typing isolation, A/B transport, composed AV preview, independent cloning, workflow disposal, graph serialization and delivered sampler-workflow serialization | Browser integration on ComfyUI 0.41.0 / frontend 1.55.17 |
+| Real ComfyUI frontend | Open, split, undo/redo, save/reload, typing isolation, view state kept out of the prompt input, A/B transport, composed AV preview, independent cloning and repeated paste, multi-job reroll queued in order with a fresh nonce, workflow disposal, graph serialization and delivered sampler-workflow serialization | Browser integration on ComfyUI 0.41.0 and 0.30.0, each with frontend 1.55.17 |
 
 The browser run reported zero page exceptions. The offline frontend emitted unrelated missing-static-resource and blocked update-check messages. No sampling-quality result is inferred from those browser tests.
 
@@ -35,6 +37,7 @@ The real-server checker expects the package installed in that ComfyUI's custom_n
 
 ```text
 python tools/check_timeline_comfy.py --comfy-root /path/to/ComfyUI --browser-test tests/timeline_browser.cjs
+# optional: --front-end-root /path/to/frontend/static to serve a specific frontend build
 ```
 
 `H3_TIMELINE_CHROMIUM` can select a Chromium executable. The unit environment explicitly defaults to legacy standalone prompt transport; tests of physical transport opt in independently. Normal ComfyUI package loading retains its production physical-prompt default.
