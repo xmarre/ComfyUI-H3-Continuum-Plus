@@ -18,6 +18,7 @@ class TimelineInputs:
         self.store = store
         self.windows = self.job["windows"]
         self.manifests = []
+        self.conditioning_cache = {}
         self.reference_cache = OrderedDict()
         self.reference_cache_bytes = 0
         self.offset = job["range"][0]
@@ -37,8 +38,10 @@ class TimelineInputs:
         if audio_vae is None:
             raise ValueError("Timeline audio guidance requires the H3 Audio VAE")
         rate = int(getattr(audio_vae, "audio_sample_rate", 32000))
+        self.guide_rate = rate
         a = self.offset
         b = a + self.job["range"][1] - self.job["range"][0] + 34
+        self.guide_mix_range = [a, b]
         pcm = mix_audio(self.project, self.store.assets, a, b, rate, "guide")
         audio = {"waveform": torch.from_numpy(pcm)[None], "sample_rate": rate}
         return prepare_driving_audio_source(
@@ -94,7 +97,7 @@ class TimelineInputs:
                 from PIL import Image
                 import numpy as np
 
-                with Image.open(self.store.assets.path(item["asset_id"])) as im:
+                with Image.open(self.store.assets.verify(item["asset_id"])) as im:
                     image = (
                         torch.from_numpy(np.asarray(im.convert("RGB")).copy()).float()[
                             None
@@ -209,6 +212,43 @@ class TimelineInputs:
                 + self.offset,
             ],
         }
+        if hasattr(self, "guide_rate"):
+            from .model import sample_boundary, active_clips, clip_input
+
+            start = max(0, descriptor.retained_before - descriptor.context_frames)
+            presentation["timeline_studio"]["audio_guide"] = {
+                "active": self.guide_active(index),
+                "sample_rate": self.guide_rate,
+                "encoder_mix_global_samples": [
+                    sample_boundary(f, self.guide_rate) for f in self.guide_mix_range
+                ],
+                "requested_global_samples": [
+                    sample_boundary(self.offset + start, self.guide_rate),
+                    sample_boundary(
+                        self.offset + start + descriptor.total_frames, self.guide_rate
+                    ),
+                ],
+                "latent_slice_ticks_40hz": [
+                    round(start * 40 / 24),
+                    round((start + descriptor.total_frames) * 40 / 24),
+                ],
+                "contributing_source_clips": [
+                    clip_input(
+                        self.project,
+                        t,
+                        c,
+                        self.offset + start,
+                        self.offset + start + descriptor.total_frames,
+                    )
+                    for t, c in active_clips(
+                        self.project,
+                        self.offset + start,
+                        self.offset + start + descriptor.total_frames,
+                    )
+                    if c["audio_role"] in {"guide", "both"}
+                ],
+                "gap_policy": "silence where no active guide clip; final mix is independent",
+            }
         # Reconstruct through the native descriptor factory to recalculate digest.
         from ..v2.physical_prompts import make_physical_sample_descriptor
 

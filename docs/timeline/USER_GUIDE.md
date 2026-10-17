@@ -14,7 +14,7 @@ The implementation has been exercised with ComfyUI 0.41.0 and frontend 1.55.17, 
 2. Open **Continuum Timeline Studio**. The project owns output dimensions, 24 fps, duration, chunk length and selected render interval. Chunk length uses output frames: 168 means seven seconds; the native supported range is 96–360 frames.
 3. Write the global prompt or a Fixed, List or Timeline script. Add timed Prompt region tracks for more detailed scheduling. A double-click in a Prompt track creates a region.
 4. Connect the typed timeline to **Continuum Timeline Sampler**. Its two latent lists go through Core video/audio VAE Decode, then **H3 Continuum Assemble V3.4**. Set **Timeline Output = Natural retained timeline (Refinement)**. Connect assembled images/audio and the sampler's take output to **Continuum Timeline Save Take**.
-5. Choose **Queue selection**. It queues immutable graph/project snapshots, splitting selections longer than 16 chunks into ordered jobs. Editing the project afterwards does not change those queued inputs.
+5. Choose **Queue selection** to reuse matching results, or **Reroll selection** to request a fresh alternative. It queues immutable graph/project snapshots, splitting selections longer than 16 chunks into ordered jobs. Editing the project afterwards does not change those queued inputs.
 6. Open **Review takes**, preview an alternative, then accept/select it. The original take files remain available. The accepted take appears on the Generated takes lane.
 7. Export **FFV1 / PCM** for a lossless normalized composition, or **H.264 / AAC** for delivery. Exports are written to ComfyUI's output directory. The Export node also supports ordinary ComfyUI queue execution.
 
@@ -63,9 +63,9 @@ Fixed/List/Timeline parsing retains the existing permissive fallback. Exact oute
 
 ## Native time and continuation
 
-The editor distinguishes source PTS, output frames, logical chunk windows and physical H3 windows. Native sample boundaries need not fall at seven-second edges. The first seven-second sample normally occupies 175 physical frames. Continuation adds protected context and native rounding; that context is never counted as fresh output. Native geometry remains owned by Continuum.
+The editor distinguishes source PTS, output frames, logical chunk windows and physical H3 windows. Native sample boundaries need not fall at seven-second edges. The first seven-second sample normally occupies 175 physical frames. Continuation adds protected context and native rounding; that context is never counted as fresh output. Native geometry remains owned by Continuum. First/last-frame inputs anchor the boundaries of the selected generation chain.
 
-The compiler includes a compatible accepted prefix when rerendering an internal selected chunk. Run Storage authenticates it against effective media, text, model/CLIP/VAE/sampler identities and the sigma schedule. Changing chunk N invalidates its causal suffix. A different accepted upstream take also changes downstream lineage. Valid preceding output is reusable; stale generated footage is rejected by composition rather than advertised as valid.
+The compiler includes the compatible accepted prefix and its bounded causal job suffix when rerendering an internal selected chunk; only the chosen output interval is composited. Run Storage authenticates it against effective media, text, model/CLIP/VAE/sampler identities and the sigma schedule. Changing chunk N’s visual conditions invalidates its causal suffix. Guide-audio edits use conservative project-wide invalidation until narrower Audio VAE dependencies and phase behavior are qualified. A different accepted upstream take also changes downstream lineage. Valid preceding output is reusable; stale generated footage is rejected by composition rather than advertised as valid.
 
 Jobs retain natural output while transferring native state. Their recorded physical output ranges determine placement across job boundaries. Only the selected intersection is placed in the cut. Use Natural retained timeline at the assembler: cropping each job independently would discard material needed to preserve the native chain. Timeline Studio disables terminal FL2VA grouping for its scoped jobs and uses separate invocations; legacy V3.4 grouping remains unchanged.
 
@@ -79,9 +79,9 @@ Sampling commits each completed chunk through native Run Storage. A cancelled or
 
 ## Export and performance policies
 
-Composition decodes one output-second block at a time. Lossless export preserves normalized RGB pixels and float PCM after declared frame sampling, scaling, channel mapping, gain and mixing. It does not copy the source compressed bitstream. H.264/AAC is re-encoded. Mono audio is duplicated at unchanged amplitude to the stereo mix. The default output rate follows the first audio asset, or 48 kHz without one. Peaks above full scale are clipped after summation; crossfades use overlapping clips and their fades.
+Composition decodes one output-second block at a time. Lossless export preserves normalized 8-bit SDR RGB pixels and float PCM after declared frame sampling, scaling, channel mapping, gain and mixing. It does not copy the source compressed bitstream. H.264/AAC is re-encoded. Mono audio is duplicated at unchanged amplitude to the stereo mix. The default output rate follows the first audio asset, or 48 kHz without one. Peaks above full scale are clipped after summation; crossfades use overlapping clips and their fades.
 
-Audio extraction uses a sequential decoder up to the requested end and selects absolute resampled sample boundaries. This avoids packet-PTS seek-rounding shifts. It stays bounded in RAM and does not decode source video, but a late audio window can require reading a long compressed prefix. Full-job guide audio is encoded through the existing H3 Audio VAE path; jobs are bounded to 16 chunks. Reference-image encodes use a 128 MiB CPU cache. Video-reference preparation is limited to its selected invocation and an efficient reference canvas.
+Audio extraction uses a sequential decoder up to the requested end and selects absolute resampled sample boundaries. This avoids packet-PTS seek-rounding shifts. It stays bounded in RAM and does not decode source video, but a late audio window can require reading a long compressed prefix. Full-job guide audio, with bounded right context for physical overrun, is encoded through the existing H3 Audio VAE path. Uncovered guide-mix samples are explicitly silence and the input manifest records the encode/sample scope; jobs are bounded to 16 chunks. Reference-image encodes use a 128 MiB CPU cache. Video-reference preparation is limited to its selected invocation and an efficient reference canvas.
 
 Composition previews render at most 30 seconds at a time and use the actual final mix. Source-window proxies and export caches consume disk space. HDR tone mapping, source-stream pass-through, subtitles, OTIO, freeform masks/transitions, dock integration, internal native keyframes and per-span hot LoRA switching are not provided by this version. No inactive controls advertise them.
 
@@ -95,3 +95,7 @@ Composition previews render at most 30 seconds at a time and use the actual fina
 - **Same project edited elsewhere:** reload the newer server revision or duplicate the Studio node for an independent project.
 
 CPU, media, HTTP, serializer and browser evidence is listed in `VALIDATION.md`. Trained-H3 output quality, audiovisual phase across native and multi-job boundaries, accelerator combinations, hot-run overhead and perceptual retake quality require the GPU acceptance matrix. They must not be inferred from passing unit tests.
+
+## Editor view
+
+![Timeline Studio editing real source media](editor.png)

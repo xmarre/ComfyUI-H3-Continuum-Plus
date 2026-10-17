@@ -214,8 +214,13 @@ def compile_window(p, index):
         raise ValueError(
             f"Chunk {index + 1} exceeds H3's eight active reference images"
         )
+    picture_by_asset = {
+        i["asset_id"]: f"<Picture {n}>" for n, i in enumerate(images, 1)
+    }
     aliases = {
-        i["alias"]: f"<Picture {n}>" for n, i in enumerate(images, 1) if i["alias"]
+        i["alias"]: picture_by_asset[i["asset_id"]]
+        for i in inputs
+        if i["role"] == "image_reference" and i["alias"]
     }
     prompts = p["prompts"]
     text = str(prompts.get("global", ""))
@@ -312,7 +317,20 @@ def compile_window(p, index):
         for i in inputs
         if i["role"] == "video_guide"
     ]
+    # Guide encoding is full-context within each bounded native job. Until a
+    # smaller receptive-field/phase contract is proven on the actual H3 VAE,
+    # guide edits conservatively invalidate project sampling identities.
+    full_guide = [
+        audio_identity(clip_input(p, t, c, 0, p["duration_frames"]))
+        for t, c in active_clips(p, 0, p["duration_frames"])
+        if c["audio_role"] in {"guide", "both"}
+    ]
     semantic = {
+        "audio_encoder_scope_hash": digest(
+            [p["duration_frames"], p["chunk_frames"], full_guide]
+        )
+        if full_guide
+        else "none",
         "prompt": text,
         "images": images,
         "video": video,
@@ -352,6 +370,9 @@ def compile_project(project):
     )
     if reuse is not None:
         first = reuse["first_chunk"]
+        stop = max(
+            stop, min(reuse["stop_chunk"], (p["duration_frames"] + size - 1) // size)
+        )
     jobs = []
     for start in range(first, stop, 16):
         windows = [compile_window(p, i) for i in range(start, min(stop, start + 16))]

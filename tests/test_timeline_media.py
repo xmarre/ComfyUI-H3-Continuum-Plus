@@ -112,6 +112,57 @@ def test_audio_only_and_composition(movie, tmp_path):
     original = video_frames(movie, [Fraction(i, 24) for i in range(48)], 64, 64)
     exported = video_frames(output, [Fraction(i, 24) for i in range(48)], 64, 64)
     np.testing.assert_array_equal(original, exported)
+    np.testing.assert_array_equal(
+        audio_window(movie, "0", "2", 44100), audio_window(output, "0", "2", 44100)
+    )
+    replacement = tmp_path / "replacement.mkv"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=64x64:r=24:d=2",
+            "-c:v",
+            "ffv1",
+            "-threads",
+            "1",
+            str(replacement),
+        ],
+        check=True,
+    )
+    with replacement.open("rb") as file:
+        blue = store.assets.register(file, "blue.mkv")
+    p["assets"].append(blue)
+    p["tracks"].append(
+        {
+            "id": "replacement",
+            "role": "generated",
+            "clips": [
+                {
+                    "id": "new",
+                    "asset_id": blue["id"],
+                    "start": 12,
+                    "end": 36,
+                    "source_in": "0",
+                    "speed": "1",
+                    "padding": "error",
+                    "audio_role": "neither",
+                }
+            ],
+        }
+    )
+    mixed = export_project(validate(p), store, tmp_path / "mixed.mkv")
+    frames = video_frames(mixed, [Fraction(i, 24) for i in range(48)], 64, 64)
+    np.testing.assert_array_equal(frames[:12], original[:12])
+    np.testing.assert_array_equal(frames[36:], original[36:])
+    expected = video_frames(replacement, [Fraction(i, 24) for i in range(24)], 64, 64)
+    np.testing.assert_array_equal(frames[12:36], expected)
+    np.testing.assert_array_equal(
+        audio_window(mixed, "0", "2", 44100), audio_window(output, "0", "2", 44100)
+    )
 
 
 def test_cancel_leaves_no_partial_export(movie, tmp_path):
@@ -180,3 +231,116 @@ def test_playlist_import_cannot_read_external_media(movie, tmp_path):
         with pytest.raises(subprocess.CalledProcessError):
             store.register(source, "bad.m3u8")
     assert not list(store.root.iterdir())
+
+
+def test_two_hour_video_only_decodes_the_selected_short_window(tmp_path, monkeypatch):
+    import av
+
+    file = tmp_path / "long.mkv"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=64x64:r=1",
+            "-t",
+            "7200",
+            "-c:v",
+            "ffv1",
+            "-threads",
+            "1",
+            str(file),
+        ],
+        check=True,
+    )
+    original = av.open
+    decoded = []
+
+    class Traced:
+        def __init__(self, *args, **kwargs):
+            self.container = original(*args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.container.close()
+
+        @property
+        def streams(self):
+            return self.container.streams
+
+        def seek(self, *args, **kwargs):
+            return self.container.seek(*args, **kwargs)
+
+        def decode(self, *args, **kwargs):
+            for frame in self.container.decode(*args, **kwargs):
+                decoded.append(frame.pts)
+                yield frame
+
+    monkeypatch.setattr(av, "open", Traced)
+    frames = video_frames(
+        file, [Fraction(3600 * 24 + i, 24) for i in range(168)], 64, 64
+    )
+    assert frames.shape == (168, 64, 64, 3)
+    assert 1 < len(decoded) < 64  # requested window plus bounded GOP seek context
+
+
+def test_real_video_reference_materialization_has_exact_logical_windows(
+    movie, tmp_path
+):
+    import torch
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    from ComfyUI_H3_Continuum_Join.timeline.model import compile_project
+    from ComfyUI_H3_Continuum_Join.temporal import video_latent_t
+
+    store = ProjectStore(tmp_path / "store")
+    with movie.open("rb") as file:
+        asset = store.assets.register(file, "source.mkv")
+    p = blank_project()
+    p.update(
+        width=64, height=64, duration_frames=336, selection=[0, 336], assets=[asset]
+    )
+    p["tracks"] = [
+        {
+            "id": "guide",
+            "role": "video_guide",
+            "clips": [
+                {
+                    "id": "v",
+                    "asset_id": asset["id"],
+                    "start": 0,
+                    "end": 336,
+                    "source_in": "0",
+                    "speed": "1",
+                    "padding": "error",
+                }
+            ],
+        }
+    ]
+    compiled = compile_project(p)
+    provider = TimelineInputs(compiled["project"], compiled["jobs"][0], store)
+
+    class VAE:
+        def __init__(self):
+            self.inputs = []
+
+        def encode(self, frames):
+            self.inputs.append(frames.clone())
+            return torch.zeros(1, 24, video_latent_t(frames.shape[0]), 4, 4)
+
+    vae = VAE()
+    for index in (0, 1):
+        provider.materialize(index, video_vae=vae, audio_vae=None, width=64, height=64)
+    for index, frames in enumerate(vae.inputs):
+        assert frames.shape[0] == 175
+        expected = video_frames(
+            movie, [Fraction(index * 168 + i, 24) for i in range(168)], 64, 64
+        )
+        np.testing.assert_array_equal(
+            frames[:168].numpy(), expected.astype(np.float32) / 255
+        )
+        assert torch.equal(frames[168:], frames[167:168].expand(7, -1, -1, -1))

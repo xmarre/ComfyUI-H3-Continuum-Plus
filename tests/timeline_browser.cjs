@@ -101,11 +101,9 @@ const { chromium } = require("playwright");
       layout.video <= layout.nav + 2,
       "Preview must leave its transport controls visible",
     );
-    await page
-      .locator(".h3ts")
-      .screenshot({
-        path: process.env.H3_TIMELINE_SCREENSHOT || "/tmp/timeline-studio.png",
-      });
+    await page.locator(".h3ts").screenshot({
+      path: process.env.H3_TIMELINE_SCREENSHOT || "/tmp/timeline-studio.png",
+    });
     await page
       .locator(".h3ts")
       .getByRole("button", { name: "Close", exact: true })
@@ -140,19 +138,27 @@ const { chromium } = require("playwright");
         .callback(),
     );
     await page.locator(".h3ts").waitFor({ state: "visible" });
-    await page.evaluate(async () => {
+    const workflow = JSON.parse(
+      require("node:fs").readFileSync(
+        require("node:path").join(
+          __dirname,
+          "../examples/timeline/Timeline_Studio_Generate.json",
+        ),
+        "utf8",
+      ),
+    );
+    const samplerInputs = await page.evaluate(async (workflow) => {
       const app = window.comfyAPI.app.app;
-      await app.loadGraphData({
-        version: 0.4,
-        nodes: [],
-        links: [],
-        groups: [],
-        config: {},
-        extra: {},
-        last_node_id: 0,
-        last_link_id: 0,
-      });
-    });
+      await app.loadGraphData(workflow);
+      return (await app.graphToPrompt()).output["8"].inputs;
+    }, workflow);
+    assert.equal(samplerInputs.job_index, 0);
+    assert.equal(samplerInputs.base_seed, 20261017);
+    assert.equal(samplerInputs.continuity, "Strong — 39 frames");
+    assert.equal(
+      samplerInputs.continuation_method,
+      "Native Masked — exact continuation (Recommended)",
+    );
     assert.equal(await page.locator(".h3ts").count(), 0);
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);

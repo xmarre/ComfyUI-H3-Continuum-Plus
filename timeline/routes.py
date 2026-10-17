@@ -353,7 +353,7 @@ def register_routes():
         root.mkdir(exist_ok=True)
         output = root / (key + ".mp4")
         if not output.exists():
-            await asyncio.to_thread(
+            await _media_cpu(
                 export_project,
                 p,
                 store,

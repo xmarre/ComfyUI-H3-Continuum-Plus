@@ -100,6 +100,21 @@ def probe(path):
 
 
 class AssetStore:
+    _verified = {}
+    _verification_lock = threading.RLock()
+
+    @staticmethod
+    def _stamp(path):
+        s = path.stat()
+        return (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+
+    @classmethod
+    def _remember(cls, path, stamp):
+        with cls._verification_lock:
+            cls._verified[str(path)] = stamp
+            while len(cls._verified) > 512:
+                cls._verified.pop(next(iter(cls._verified)))
+
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -127,6 +142,7 @@ class AssetStore:
             info = probe(temporary)
             final = self.root / asset_id
             os.replace(temporary, final)
+            self._remember(final, self._stamp(final))
             return {
                 "id": asset_id,
                 "name": Path(name or "Media").name,
@@ -136,16 +152,22 @@ class AssetStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def verify(self, asset_id):
+    def verify(self, asset_id, *, cancel=check_cancel):
         path = self.path(asset_id)
+        stamp = self._stamp(path)
+        with self._verification_lock:
+            if self._verified.get(str(path)) == stamp:
+                return path
         h = hashlib.sha256()
         with path.open("rb") as stream:
             while block := stream.read(1024 * 1024):
+                cancel()
                 h.update(block)
-        if h.hexdigest() != asset_id:
+        if h.hexdigest() != asset_id or self._stamp(path) != stamp:
             raise ValueError(
                 "Registered asset content changed; relink it before rendering"
             )
+        self._remember(path, stamp)
         return path
 
 
@@ -182,6 +204,9 @@ def video_frames(
         future = next(iterator, None)
         for target in unique:
             cancel()
+            if target < origin and padding == "silence":
+                sampled[target] = np.zeros((height, width, 3), dtype=np.uint8)
+                continue
             while (
                 future is not None
                 and future.pts is not None
@@ -203,6 +228,9 @@ def video_frames(
                 duration = Fraction(chosen.duration or 0) * chosen.time_base
                 if not duration:
                     duration = 1 / (stream.average_rate or Fraction(24))
+                if target >= last_pts + duration and padding == "silence":
+                    sampled[target] = np.zeros((height, width, 3), dtype=np.uint8)
+                    continue
                 if target >= last_pts + duration and padding == "error":
                     raise ValueError(
                         "Video selection extends beyond source; choose Hold explicitly"
@@ -249,7 +277,7 @@ def audio_window(
         # Matroska can be quantized to milliseconds; seeking and time trimming
         # independently would introduce one-sample shifts at each window.
         # This path is bounded in RAM and never decodes the source video.
-        first = round((start - origin) * rate)
+        first = round(start * rate) - round(origin * rate)
         last = first + count
         channel_filter = (
             "pan=stereo|c0=c0|c1=c0,"
@@ -317,7 +345,7 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
         sa, sb = source_time(c, left), source_time(c, right)
         speed = rational(c["speed"])
         pcm = audio_window(
-            assets.path(c["asset_id"]),
+            assets.verify(c["asset_id"], cancel=cancel),
             min(sa, sb),
             max(sa, sb),
             rate,

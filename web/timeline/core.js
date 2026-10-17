@@ -51,6 +51,10 @@ export function trim(p, ids, edge, frame, ripple = false) {
     } else c.end = Math.max(c.start + 1, Math.min(p.duration_frames, frame));
     if (ripple) {
       const delta = c.end - c.start - (old.end - old.start);
+      if (edge === "start") {
+        c.start = old.start;
+        c.end = old.end + delta;
+      }
       for (const other of track.clips)
         if (other.id !== c.id && other.start >= old.end) {
           other.start += delta;
@@ -88,13 +92,20 @@ export function remove(p, ids, ripple = false) {
       .filter((c) => ids.includes(c.id))
       .sort((a, b) => b.start - a.start);
     track.clips = track.clips.filter((c) => !ids.includes(c.id));
-    if (ripple)
-      for (const c of removed)
+    if (ripple) {
+      const intervals = [];
+      for (const c of [...removed].sort((a, b) => a.start - b.start)) {
+        const last = intervals.at(-1);
+        if (last && c.start <= last[1]) last[1] = Math.max(last[1], c.end);
+        else intervals.push([c.start, c.end]);
+      }
+      for (const [start, end] of intervals.reverse())
         for (const next of track.clips)
-          if (next.start >= c.end) {
-            next.start -= c.end - c.start;
-            next.end -= c.end - c.start;
+          if (next.start >= end) {
+            next.start -= end - start;
+            next.end -= end - start;
           }
+    }
   }
 }
 export function paste(p, clipboard, frame) {
@@ -123,9 +134,11 @@ export class History {
     this.redoStack = [];
   }
   commit(fn) {
+    const candidate = clone(this.value);
+    fn(candidate);
     this.undoStack.push(clone(this.value));
     if (this.undoStack.length > 100) this.undoStack.shift();
-    fn(this.value);
+    this.value = candidate;
     this.redoStack = [];
   }
   undo() {

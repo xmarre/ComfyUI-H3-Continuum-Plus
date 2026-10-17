@@ -81,6 +81,7 @@ export class TimelineEditor {
         Math.max(0.2, ((innerWidth - 700) * 24) / this.p.duration_frames),
       );
     this.abort = new AbortController();
+    this.queuedIds = new Set(this.p.ui?.queuedPrompts || []);
     this.proxy = false;
     this.closed = false;
     this.editVersion = 0;
@@ -131,9 +132,15 @@ export class TimelineEditor {
       playhead: this.playhead,
       zoom: this.zoom,
       selected: [...this.selected],
+      queuedPrompts: [...this.queuedIds],
       scroll: this.scroller?.scrollLeft || 0,
     };
     this.widget.value = JSON.stringify(this.p);
+    this.node.title = "Timeline Studio · " + this.p.name;
+    this.node.__timelineSummary = [
+      `${(this.p.duration_frames / 24).toFixed(2)} s · 24 fps · ${this.p.assets.length} assets`,
+      `${this.p.chunk_frames} f chunks · render ${(this.p.selection[0] / 24).toFixed(2)}–${(this.p.selection[1] / 24).toFixed(2)} s`,
+    ];
     this.node.setDirtyCanvas?.(true, true);
   }
   async save() {
@@ -329,7 +336,10 @@ export class TimelineEditor {
         this.rangeB,
         button("Inspect inputs", () => this.guard(() => this.inspectInputs())),
         button("Queue selection", () => this.guard(() => this.queue())),
-        button("Cancel sampling", () => this.guard(() => this.api.interrupt())),
+        button("Reroll selection", () => this.guard(() => this.queue(true))),
+        button("Cancel sampling", () =>
+          this.guard(() => this.cancelSampling()),
+        ),
       ),
     );
     this.scroller = el("div", { class: "h3ts-scroll" });
@@ -1003,7 +1013,7 @@ export class TimelineEditor {
           edge
             ? trim(
                 p,
-                this.selected,
+                [c.id],
                 edge,
                 (edge === "start" ? c.start : c.end) + delta,
                 this.ripple.checked,
@@ -1311,9 +1321,10 @@ export class TimelineEditor {
     );
     return plan;
   }
-  async queue() {
+  async queue(reroll = false) {
     await this.save();
     const snapshot = clone(this.p);
+    snapshot.queued_batch_id = uid();
     const plan = await request(this.api, "/compile", {
       method: "POST",
       body: JSON.stringify(snapshot),
@@ -1346,11 +1357,60 @@ export class TimelineEditor {
       graphNode.widgets_values[0] = JSON.stringify(snapshot);
     for (let i = 0; i < plan.jobs.length; i++) {
       const payload = clone(frozen);
-      payload.output[String(sampler.id)].inputs.job_index = i;
-      await this.api.queuePrompt(-1, payload);
+      const actual = payload.output[String(sampler.id)].inputs;
+      actual.job_index = i;
+      if (reroll)
+        actual.regenerate_from =
+          i === 0
+            ? Math.max(
+                1,
+                Math.floor(snapshot.selection[0] / snapshot.chunk_frames) -
+                  plan.jobs[i].start_chunk +
+                  1,
+              )
+            : 1;
+      const serialized = payload.workflow?.nodes?.find(
+        (n) => n.id === sampler.id,
+      );
+      if (serialized?.widgets_values) {
+        for (const key of ["job_index", "regenerate_from"]) {
+          const index = sampler.widgets.findIndex((w) => w.name === key);
+          if (index >= 0) serialized.widgets_values[index] = actual[key];
+        }
+      }
+      const queued = await this.api.queuePrompt(-1, payload);
+      this.queuedIds.add(queued.prompt_id);
+      this.persistWidget();
     }
     this.message(
       `${plan.jobs.length} immutable job snapshot(s) queued. Connect decoded assembly to Save Take for review.`,
+    );
+  }
+  async cancelSampling() {
+    const response = await this.api.fetchApi("/queue");
+    if (!response.ok) throw new Error("Cannot read the sampling queue");
+    const queue = await response.json();
+    const pending = (queue.queue_pending || [])
+      .filter((row) => this.queuedIds.has(row[1]))
+      .map((row) => row[1]);
+    if (pending.length) {
+      const removed = await this.api.fetchApi("/queue", {
+        method: "POST",
+        body: JSON.stringify({ delete: pending }),
+      });
+      if (!removed.ok)
+        throw new Error("Could not cancel pending timeline jobs");
+    }
+    const active = (queue.queue_running || []).some((row) =>
+      this.queuedIds.has(row[1]),
+    );
+    if (active) await this.api.interrupt();
+    this.message(
+      active
+        ? "Timeline sampling cancellation requested"
+        : pending.length
+          ? "Pending timeline jobs cancelled"
+          : "No active job queued by this editor",
     );
   }
   async review() {

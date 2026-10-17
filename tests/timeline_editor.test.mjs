@@ -62,3 +62,33 @@ test("snapping threshold and left bound", () => {
   assert.equal(snap(180, [168], 3), 180);
   assert.equal(snap(-1, []), 0);
 });
+test("ripple left trim closes the cut without overlapping later footage", () => {
+  const p = project();
+  p.tracks[0].clips.push({
+    id: "next",
+    start: 336,
+    end: 504,
+    source_in: "0",
+    speed: "1",
+  });
+  trim(p, ["c"], "start", 192, true);
+  assert.deepEqual(
+    p.tracks[0].clips.map((c) => [c.start, c.end]),
+    [
+      [168, 312],
+      [312, 480],
+    ],
+  );
+  assert.equal(p.tracks[0].clips[0].source_in, "36");
+});
+test("failed edit leaves state and history untouched", () => {
+  const h = new History(project());
+  assert.throws(() =>
+    h.commit((p) => {
+      p.duration_frames = 1;
+      throw new Error("failed");
+    }),
+  );
+  assert.deepEqual(h.value, project());
+  assert.equal(h.undoStack.length, 0);
+});

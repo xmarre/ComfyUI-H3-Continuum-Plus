@@ -38,7 +38,9 @@ def take_path(store, project_id, take_id):
     return store.project_dir(project_id) / f"take-{take_id}.json"
 
 
-def stale_take(p, record, records, end_frame=None, check_selection=False):
+def stale_take(
+    p, record, records, end_frame=None, check_selection=False, ignore_selection=False
+):
     from .model import compile_window
 
     limit = len(record["indices"])
@@ -52,7 +54,7 @@ def stale_take(p, record, records, end_frame=None, check_selection=False):
     # A different accepted take can share a valid exact prefix but replace its
     # suffix. Compare immutable native chunk payload identities up to this cut.
     chosen = p.get("accepted", {}).get(str(record["indices"][0]))
-    if check_selection and chosen and chosen != record["id"]:
+    if check_selection and not ignore_selection and chosen and chosen != record["id"]:
         current = by_id.get(chosen)
         if current is None:
             return True
@@ -66,7 +68,13 @@ def stale_take(p, record, records, end_frame=None, check_selection=False):
         previous = by_id.get(parent)
         if previous is None or previous["indices"][0] >= record["indices"][0]:
             return True
-        if stale_take(p, previous, records, check_selection=True):
+        if stale_take(
+            p,
+            previous,
+            records,
+            check_selection=True,
+            ignore_selection=ignore_selection,
+        ):
             return True
     return False
 
@@ -135,6 +143,10 @@ class H3ContinuumTimelineSampler:
             "hidden": {"prompt": "PROMPT", "unique_id": "UNIQUE_ID"},
         }
 
+    @classmethod
+    def IS_CHANGED(cls, regenerate_from=0, **kwargs):
+        return float("nan") if int(regenerate_from) > 0 else False
+
     RETURN_TYPES = (
         "LATENT",
         "LATENT",
@@ -194,6 +206,10 @@ class H3ContinuumTimelineSampler:
         from ..constants import DIAGNOSTICS_FULL
 
         p = copy.deepcopy(timeline["project"])
+        if not 0 <= int(job_index) < len(timeline["jobs"]):
+            raise ValueError(
+                "Timeline job index is outside the compiled selection; use Queue selection or choose an existing job"
+            )
         job = copy.deepcopy(timeline["jobs"][int(job_index)])
         store = project_store()
         if job["requires_previous_job"] or job.get("resume_parent_take"):
@@ -290,11 +306,28 @@ class H3ContinuumTimelineSampler:
                 for r in all_takes
                 if r["indices"][-1] == job["start_chunk"] - 1
                 and r.get("status") == "sampled"
-                and not stale_take(p, r, all_takes, check_selection=True)
+                and not stale_take(
+                    p,
+                    r,
+                    all_takes,
+                    check_selection=True,
+                    ignore_selection=bool(p.get("queued_batch_id"))
+                    and r.get("batch_id") == p.get("queued_batch_id"),
+                )
             ]
-            parent = next(
-                (r for r in parents if r["id"] == parent_id),
-                parents[-1] if parents else None,
+            batch_parents = [
+                r
+                for r in parents
+                if p.get("queued_batch_id")
+                and r.get("batch_id") == p["queued_batch_id"]
+            ]
+            parent = (
+                batch_parents[-1]
+                if batch_parents
+                else next(
+                    (r for r in parents if r["id"] == parent_id),
+                    parents[-1] if parents else None,
+                )
             )
             if parent is None:
                 raise ValueError(
@@ -317,6 +350,7 @@ class H3ContinuumTimelineSampler:
         record = {
             "id": take_id,
             "project_id": p["project_id"],
+            "batch_id": p.get("queued_batch_id"),
             "job_index": int(job_index),
             "range": job["range"],
             "indices": [w["index"] for w in job["windows"]],
@@ -340,7 +374,11 @@ class H3ContinuumTimelineSampler:
             + "_"
             + str(job["start_chunk"])
             + "_"
-            + (parent["id"] if parent else "origin")
+            + (
+                (parent.get("chunk_hashes") or [parent["id"]])[-1][:16]
+                if parent
+                else "origin"
+            )
         )
         from contextlib import nullcontext
 
@@ -395,6 +433,7 @@ class H3ContinuumTimelineSampler:
                 )
             storage.finalize(session=new_session, report=report)
             record.update(storage_name=storage_name, revision_id=storage.revision_id)
+            record["sampling_contract"] = copy.deepcopy(storage.manifest["contract"])
             record["chunk_hashes"] = [
                 c["file_sha256"] for c in storage.manifest["chunks"]
             ]

@@ -772,10 +772,6 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     sequence_identity_hash=combine_driving_audio_identity(sequence_identity_hash,driving_audio_source)
     sequence_identity_hash=combine_reference_video_identity(sequence_identity_hash,reference_video_source)
     sequence_identity_hash=combine_timeline_video_identity(sequence_identity_hash,timeline_video_source)
-    if timeline_inputs is not None:
-        # Per-window audio identities already participate in prompt_hashes.
-        # A full-job PCM identity would unnecessarily invalidate accepted prefix.
-        sequence_identity_hash=visual_identity_hash
     current_model_fingerprint=model_fingerprint(model,extra_wrapper_keys=("h3_continuum_join.apply_model.v1",))
     if storage_controller is not None:
         storage_plan=continuation_storage_plan(plan,continuation_method)
@@ -787,7 +783,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         storage_plan["prompt_source_digest"]=str((plan.get("source") or {}).get("source_digest",""))
         storage_plan["timeline_video_adapter"]="physical_window_v1" if physical_timeline_video_enabled() else "legacy_nominal_chunk_v1"
         storage_plan=_terminal_storage_plan(storage_plan,enabled=terminal_merge_enabled,prompt_policy=terminal_prompt_policy)
-        stored_session=storage_controller.prepare(model=model,model_fingerprint_value=current_model_fingerprint,clip=clip,video_vae=video_vae,sampler=sampler,sigmas=sigmas,prompt_plan=storage_plan,width=width,height=height,chunk_seconds=chunk_seconds,continuity=continuity,audio_continuity=audio_continuity,base_seed=base_seed,reroll_from_chunk=reroll_from_chunk,reroll_nonce=reroll_nonce,first_frame_hash=assets.first_frame_hash,last_frame_hash=assets.last_frame_hash,identity_hash=sequence_identity_hash,strict_compatibility=strict_compatibility,existing_session=session,reference_contract=reference_assets.contract if reference_assets is not None else None,conditioning_mode=conditioning_mode,reference_audio_contract=reference_audio_source.contract if reference_audio_source is not None else None,reference_audio_vae=reference_audio_vae,driving_audio_contract=driving_audio_source.contract if driving_audio_source is not None and timeline_inputs is None else None,driving_audio_vae=driving_audio_vae,reference_video_contract=reference_video_source.contract if reference_video_source is not None else None,timeline_video_contract=timeline_video_source.contract if timeline_video_source is not None else None)
+        stored_session=storage_controller.prepare(model=model,model_fingerprint_value=current_model_fingerprint,clip=clip,video_vae=video_vae,sampler=sampler,sigmas=sigmas,prompt_plan=storage_plan,width=width,height=height,chunk_seconds=chunk_seconds,continuity=continuity,audio_continuity=audio_continuity,base_seed=base_seed,reroll_from_chunk=reroll_from_chunk,reroll_nonce=reroll_nonce,first_frame_hash=assets.first_frame_hash,last_frame_hash=assets.last_frame_hash,identity_hash=sequence_identity_hash,strict_compatibility=strict_compatibility,existing_session=session,reference_contract=reference_assets.contract if reference_assets is not None else None,conditioning_mode=conditioning_mode,reference_audio_contract=reference_audio_source.contract if reference_audio_source is not None else None,reference_audio_vae=reference_audio_vae,driving_audio_contract=driving_audio_source.contract if driving_audio_source is not None else None,driving_audio_vae=driving_audio_vae,reference_video_contract=reference_video_source.contract if reference_video_source is not None else None,timeline_video_contract=timeline_video_source.contract if timeline_video_source is not None else None)
         reroll_nonce=storage_controller.effective_reroll_nonce
         if stored_session is not None: session=stored_session
     accelerators=accelerator_summary(model)
@@ -918,7 +914,9 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         if timeline_inputs is not None:
             descriptor=timeline_inputs.annotate(descriptor,sequence_index)
         timeline_video_assets=invocation_video_assets
-        chunk_cache={} if timeline_inputs is not None else cache
+        chunk_cache=cache
+        if timeline_inputs is not None:
+            chunk_cache=timeline_inputs.conditioning_cache if invocation_video_source is None and invocation_voice_source is None else {}
         if timeline_video_source is not None:
             if physical_timeline_video_enabled():
                 from ..timeline_video import encode_timeline_video_physical
@@ -939,6 +937,14 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             include_first=include_first,include_last=include_last,reference_assets=invocation_references,
             reference_audio_assets=invocation_voice_assets,timeline_video_assets=timeline_video_assets,cache=chunk_cache,
         )
+        if timeline_inputs is not None and chunk_cache is timeline_inputs.conditioning_cache:
+            from .conditioning_lifecycle import bounded_cpu_conditioning
+            snapshot=bounded_cpu_conditioning(base_conditioning)
+            if snapshot is None:
+                chunk_cache.clear()
+            else:
+                chunk_cache[conditioning_key]=snapshot
+                while len(chunk_cache)>2:chunk_cache.pop(next(iter(chunk_cache)))
         actual_prefetch_hit = consumed_prefetch and conditioning_key in prefetched_keys
         LOG.info(
             "H3C-PT237 conditioning stage=normal chunk=%d prefetched_reused=%s "

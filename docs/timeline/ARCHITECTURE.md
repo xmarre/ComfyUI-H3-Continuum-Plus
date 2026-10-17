@@ -14,7 +14,7 @@ Track roles are retained, generated, video_guide, image_reference, audio and pro
 
 Generation identities include effective compiled text, ordered active images, selected video intervals and guide/reference audio inputs. Final audio has a separate identity. Actual reference hashes and presentation mappings enter the physical descriptor; the legacy encoder cache also includes that presentation for Timeline Studio requests. No UI/layout metadata is salted into sampling hashes.
 
-Native Run Storage provides model, encoder, VAE, sampler, sigma and per-chunk authentication, atomic chunk commits, locks and interruption recovery. Timeline's optional selected revision pins the causal alternative; existing callers retain ordinary longest-valid-prefix selection. A full PCM guide hash is not a global timeline identity because that would invalidate unrelated accepted prefix chunks. Its effective per-window selections participate in the causal chunk identities instead.
+Native Run Storage provides model, encoder, VAE, sampler, sigma and per-chunk authentication, atomic chunk commits, locks and interruption recovery. Timeline's optional selected revision pins the causal alternative; existing callers retain ordinary longest-valid-prefix selection. The full guide-encode identity remains global within a bounded native job, as in V3.4. Guide edits conservatively invalidate project sampling identities because physical windows overlap and a narrower Audio VAE dependency/phase contract is unproven. Final-only audio is excluded. Scheduled visual references remain per-window.
 
 Accepted-prefix comparisons include stored native chunk file identities. A different take may share an exact reusable prefix but have an incompatible suffix. Export checks only the causally relevant portion of a retained generated clip and its ancestors. It does not conflate a valid selectable alternative with validity under the currently accepted continuation lineage.
 
@@ -31,6 +31,8 @@ Reference media is materialized at the actual invocation, and conditioning cache
 ## Frontend
 
 `web/timeline/core.js` contains pure editing operations and undo history. `editor.js` provides the resizable editor. The ruler, clip filmstrips and waveform requests are limited to visible windows. `timeline_studio.js` registers the compact node and its lifecycle. Shortcuts are editor-scoped, typing is excluded, workflow switching disposes editors, cloning forks identity, and graph serialization carries the project widget.
+
+Each queue action has an immutable batch identity. Ordered jobs choose the predecessor from that batch, so interleaved projects or batches do not borrow the latest unrelated take. Native storage namespaces use parent chunk payload identity, allowing an equivalent reused parent to retain downstream caches.
 
 A queue action freezes the complete API graph once and clones that snapshot per bounded job. It does not repeatedly serialize a changing live graph. Save responses preserve newer local edits rather than restoring an older submitted snapshot.
 

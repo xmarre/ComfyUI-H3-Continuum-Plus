@@ -140,7 +140,30 @@ def test_references_materialize_at_actual_invocation_and_invalidate_suffix(
 
 
 def test_final_audio_only_changes_do_not_change_sampling_hash():
-    from .test_timeline_model import project
+    def project():
+        from ComfyUI_H3_Continuum_Join.timeline.model import validate
+
+        p = blank_project()
+        p["assets"] = [{"id": "a" * 64}]
+        p["tracks"] = [
+            {
+                "id": "video",
+                "role": "video_guide",
+                "clips": [
+                    {
+                        "id": "clip",
+                        "asset_id": "a" * 64,
+                        "start": 0,
+                        "end": 336,
+                        "source_in": "0",
+                        "speed": "1",
+                        "padding": "hold",
+                    }
+                ],
+            }
+        ]
+        return validate(p)
+
     from ComfyUI_H3_Continuum_Join.timeline.model import compile_window
 
     p = project()
@@ -152,3 +175,70 @@ def test_final_audio_only_changes_do_not_change_sampling_hash():
     b = compile_window(p, 0)
     assert a["generation_hash"] == b["generation_hash"]
     assert a["final_hash"] != b["final_hash"]
+
+
+@pytest.mark.parametrize("physical", ["0", "1"])
+def test_encoder_cache_reuses_identical_inputs_but_not_changed_references(
+    monkeypatch, physical
+):
+    from ComfyUI_H3_Continuum_Join.v2.physical_runtime import (
+        encode_physical_prompt_conditioning,
+        build_presentation_contract,
+    )
+    from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
+        make_physical_sample_descriptor,
+    )
+
+    monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_PROMPTS", physical)
+    assets = IdentityAssets(None, None, None, None, "none")
+    clip = Clip()
+    cache = {}
+    plan = make_prompt_plan(mode="Fixed", script="same text", chunks=3, chunk_seconds=7)
+    metadata = []
+    for i in range(3):
+        refs = None
+        if i == 2:
+            refs = ReferenceAssets(
+                (torch.zeros(1, 64, 64, 3),),
+                (torch.zeros(1, 24, 2, 4, 4),),
+                (digest("image"),),
+                digest("set"),
+                "Match Output",
+            )
+        presentation = build_presentation_contract(
+            assets=assets,
+            include_first=False,
+            include_last=False,
+            reference_assets=refs,
+        )
+        presentation["timeline_studio"] = {
+            "logical_range": [i * 168, (i + 1) * 168],
+            "generation_hash": digest(i),
+        }
+        d = make_physical_sample_descriptor(
+            group_id=f"chunk:{i + 1}",
+            logical_indices=(i,),
+            retained_before=i * 175,
+            context_frames=0,
+            total_frames=175,
+            target_duration_frames=504,
+            continuation_method=CONTINUATION_GUIDE,
+            initial_state_origin="sequence",
+            include_first=False,
+            include_last=False,
+            presentation_contract=presentation,
+        )
+        _, _, meta, _ = encode_physical_prompt_conditioning(
+            clip=clip,
+            plan=plan,
+            descriptor=d,
+            legacy_text="same text",
+            assets=assets,
+            include_first=False,
+            include_last=False,
+            reference_assets=refs,
+            cache=cache,
+        )
+        metadata.append(meta)
+    assert len(clip.inputs) == 2
+    assert metadata[0]["descriptor_digest"] != metadata[1]["descriptor_digest"]

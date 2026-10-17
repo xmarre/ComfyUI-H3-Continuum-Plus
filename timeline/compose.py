@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from fractions import Fraction
 from pathlib import Path
 import tempfile
@@ -34,7 +35,7 @@ def render_frames(
         a, b = max(start, c["start"]), min(end, c["end"])
         stamps = [source_time(c, f) for f in range(a, b)]
         frames = video_frames(
-            assets.path(c["asset_id"]),
+            assets.verify(c["asset_id"], cancel=cancel),
             stamps,
             width,
             height,
@@ -99,13 +100,23 @@ def export_project(
             if take_id and (
                 take_id not in by_id
                 or stale_take(
-                    p, by_id[take_id], records, end_frame=c["end"], check_selection=True
+                    p,
+                    by_id[take_id],
+                    records,
+                    end_frame=by_id[take_id].get(
+                        "output_range", by_id[take_id]["range"]
+                    )[0]
+                    + math.ceil(
+                        max(source_time(c, c["start"]), source_time(c, c["end"] - 1))
+                        * 24
+                        + 1
+                    ),
+                    check_selection=True,
                 )
             ):
                 raise ValueError(
                     "Selected generated footage has stale inputs or continuation; choose a valid take before export"
                 )
-    duration = p["duration_frames"]
     rate = int(
         p.get(
             "audio_sample_rate",

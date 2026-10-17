@@ -3,6 +3,20 @@ import { api } from "../../scripts/api.js";
 import { TimelineEditor } from "./timeline/editor.js";
 import { uid } from "./timeline/core.js";
 const editors = new Map();
+function summary(node) {
+  const w = node.widgets?.find((x) => x.name === "project_json");
+  if (!w) return;
+  try {
+    const p = JSON.parse(w.value);
+    node.title = "Timeline Studio · " + p.name;
+    node.__timelineSummary = [
+      `${(p.duration_frames / 24).toFixed(2)} s · 24 fps · ${p.assets.length} assets`,
+      `${p.chunk_frames} f chunks · render ${(p.selection[0] / 24).toFixed(2)}–${(p.selection[1] / 24).toFixed(2)} s`,
+    ];
+  } catch {
+    node.__timelineSummary = ["Open Timeline Studio to inspect project data"];
+  }
+}
 function independent(node) {
   const w = node.widgets?.find((x) => x.name === "project_json");
   if (!w) return;
@@ -13,6 +27,7 @@ function independent(node) {
   delete p.accepted_windows;
   delete p.rejected;
   p.takes = [];
+  p.ui = { ...p.ui, queuedPrompts: [] };
   for (const track of p.tracks)
     if (track.role === "generated") {
       track.role = "retained";
@@ -20,6 +35,7 @@ function independent(node) {
       for (const clip of track.clips) delete clip.take_id;
     }
   w.value = JSON.stringify(p);
+  summary(node);
 }
 const style = document.createElement("link");
 style.rel = "stylesheet";
@@ -31,7 +47,8 @@ app.registerExtension({
     if (nodeData.name !== "H3ContinuumTimelineStudio") return;
     const created = nodeType.prototype.onNodeCreated,
       removed = nodeType.prototype.onRemoved,
-      cloning = nodeType.prototype.clone;
+      cloning = nodeType.prototype.clone,
+      draw = nodeType.prototype.onDrawForeground;
     nodeType.prototype.onNodeCreated = function () {
       created?.apply(this, arguments);
       const w = this.widgets.find((x) => x.name === "project_json");
@@ -65,7 +82,17 @@ app.registerExtension({
           });
         }
       });
-      this.setSize([330, 100]);
+      this.setSize([330, 145]);
+    };
+    nodeType.prototype.onDrawForeground = function (ctx) {
+      draw?.apply(this, arguments);
+      if (this.flags?.collapsed) return;
+      ctx.save();
+      ctx.fillStyle = "#b7c6d6";
+      ctx.font = "11px sans-serif";
+      for (const [i, line] of (this.__timelineSummary || []).entries())
+        ctx.fillText(line, 10, this.size[1] - 30 + i * 16, this.size[0] - 20);
+      ctx.restore();
     };
     nodeType.prototype.onRemoved = function () {
       editors.get(this)?.close();
@@ -86,7 +113,11 @@ app.registerExtension({
       const p = JSON.parse(w.value);
       if (seen.has(p.project_id)) independent(node);
       seen.add(JSON.parse(w.value).project_id);
+      summary(node);
     }
+  },
+  loadedGraphNode(node) {
+    if (node.comfyClass === "H3ContinuumTimelineStudio") summary(node);
   },
   beforeConfigureGraph() {
     for (const editor of editors.values()) editor.close();

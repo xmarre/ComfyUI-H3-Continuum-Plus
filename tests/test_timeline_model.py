@@ -135,8 +135,8 @@ def test_selected_internal_chunk_includes_accepted_prefix_for_native_reuse():
         {"first_chunk": 0, "stop_chunk": 3, "take_id": "a" * 32, "parent_take": None}
     ]
     jobs = compile_project(p)["jobs"]
-    assert jobs[0]["range"] == [0, 336]
-    assert len(jobs[0]["windows"]) == 2
+    assert jobs[0]["range"] == [0, 504]
+    assert len(jobs[0]["windows"]) == 3
     assert jobs[0]["resume_take_id"] == "a" * 32
     assert jobs[0]["requires_previous_job"] is False
 
@@ -167,3 +167,48 @@ def test_take_alternatives_remain_selectable_but_old_causal_suffix_is_stale():
     assert not stale_take(p, base, records)  # valid selectable alternative
     assert not stale_take(p, base, records, end_frame=168, check_selection=True)
     assert stale_take(p, base, records, end_frame=504, check_selection=True)
+
+
+def test_new_batch_can_follow_its_immutable_parent_before_review_selection():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import (
+        stale_take,
+        H3ContinuumTimelineSampler,
+    )
+    import math
+
+    p = blank_project()
+    p["duration_frames"] = 168 * 17
+    p["selection"] = [0, p["duration_frames"]]
+    hashes = [compile_window(p, i)["generation_hash"] for i in range(17)]
+    a = {
+        "id": "a" * 32,
+        "indices": list(range(16)),
+        "input_hashes": hashes[:16],
+        "chunk_hashes": ["old"] * 16,
+        "parent_take": None,
+    }
+    b = {**a, "id": "b" * 32, "chunk_hashes": ["new"] * 16}
+    c = {
+        "id": "c" * 32,
+        "indices": [16],
+        "input_hashes": hashes[16:],
+        "chunk_hashes": ["child"],
+        "parent_take": b["id"],
+    }
+    p["accepted"] = {"0": a["id"]}
+    assert stale_take(p, c, [a, b, c])
+    assert not stale_take(p, c, [a, b, c], ignore_selection=True)
+    assert math.isnan(H3ContinuumTimelineSampler.IS_CHANGED(regenerate_from=2))
+    assert H3ContinuumTimelineSampler.IS_CHANGED(regenerate_from=0) is False
+
+
+def test_multiple_semantic_aliases_for_one_image_share_one_picture_slot():
+    p = project()
+    c = p["tracks"][1]["clips"][0]
+    c["alias"] = "Alice"
+    p["tracks"][1]["clips"].append({**c, "id": "other-name", "alias": "Lead"})
+    p["prompts"]["global"] = "@Alice is the @Lead"
+    result = compile_window(p, 0)
+    assert len(result["images"]) == 1
+    assert result["aliases"] == {"Alice": "<Picture 1>", "Lead": "<Picture 1>"}
+    assert result["prompt"] == "<Picture 1> is the <Picture 1>"
