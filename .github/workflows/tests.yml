@@ -106,6 +106,13 @@ jobs:
         run: |
           node --check web/project_id.js
           node --check web/v34_ui.js
+          node --check web/timeline_studio.js
+          node --check web/timeline/core.js
+          node --check web/timeline/editor.js
+          node --test tests/timeline_editor.test.mjs
+
+      - name: Install media test tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Compile Python
         run: python -m compileall -q .
