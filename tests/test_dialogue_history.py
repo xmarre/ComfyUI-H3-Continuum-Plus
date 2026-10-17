@@ -91,6 +91,9 @@ def test_boundary_history_respects_inner_intervals_and_author_override(monkeypat
     assert [item['utterance_continues_past_boundary'] for item in data['intervals']] == [False]
     assert data['intervals'][-1]['global_end'] == '7'
     assert 'utterance_continues_past_boundary' not in compiled.encoder_history
+    assert 'Authored dialogue context' not in compiled.encoder_history
+    assert '"intervals"' not in compiled.encoder_history
+    assert 'Current physical generation instructions' not in compiled.encoder_history
     assert 'Ongoing phrase.' not in compiled.encoder_history
 
 

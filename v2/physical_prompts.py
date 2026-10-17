@@ -605,8 +605,20 @@ def _body_for_atomic_interval(
 def _join_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     joined: list[dict[str, Any]] = []
     for segment in segments:
-        if (joined and segment["body"] and joined[-1]["body"] == segment["body"]
-                and joined[-1]["end"] == segment["start"]):
+        if (
+            joined
+            and joined[-1]["body"] == segment["body"]
+            and joined[-1]["end"] == segment["start"]
+            and (
+                bool(segment["body"])
+                or (
+                    joined[-1]["roles"] == segment["roles"]
+                    and joined[-1]["generation_classes"] == segment["generation_classes"]
+                    and joined[-1]["fallback_roles"] == segment["fallback_roles"]
+                    and joined[-1]["inherited_origins"] == segment["inherited_origins"]
+                )
+            )
+        ):
             joined[-1]["end"] = segment["end"]
             joined[-1]["sources"].extend(segment["sources"])
             joined[-1]["sources"] = sorted(set(joined[-1]["sources"]))
@@ -1008,8 +1020,8 @@ def compile_physical_prompt(
                 "level": "info",
                 "code": "H3C-PT219",
                 "message": (
-                    "replaced the final authored interval with a structural speech-free lead-out "
-                    "for one native-grid-overrun duration before the exact output endpoint"
+                    "retained a terminal lead-out interval without passing generated-control prose "
+                    "to audio/video conditioning; output silence is not guaranteed"
                 ),
                 "global_start": fraction_string(terminal_audio_guard_start),
                 "global_end": fraction_string(output_end),

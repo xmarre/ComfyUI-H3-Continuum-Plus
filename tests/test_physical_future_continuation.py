@@ -65,7 +65,7 @@ def test_two_chunk_preview_of_four_chunk_story_does_not_silence_future_dialogue(
     assert not any(item["code"] in ("H3C-PT217", "H3C-PT219") for item in compiled.diagnostics)
 
 
-def test_genuine_two_chunk_story_retains_terminal_speech_guard(monkeypatch):
+def test_genuine_two_chunk_story_retains_terminal_interval_without_control_text(monkeypatch):
     plan = _plan(
         "[0-7s]\nMary says hello.\n"
         "[7-14s]\nClark finishes his last sentence and remains silent."

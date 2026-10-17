@@ -26,7 +26,10 @@ The compiler resolves authored Timeline intervals intersecting the carried
 window from the preceding logical invocation. Outer chunk routing still selects
 only the current body for active generation. Native `<d>...</d>` dialogue and its
 surrounding speaker/delivery description enter a separate encoder history; the
-shared preamble supplies authored speaker definitions. No transcript is invented
+shared preamble supplies authored speaker definitions. Only authored script is
+encoded as history: interval timestamps, JSON wrappers, internal field names
+and contextual instructions remain in diagnostics and are never presented as
+Qwen language. No transcript is invented
 for an external State. An initial chunk or an overlap with no native dialogue
 uses ordinary encoding.
 
