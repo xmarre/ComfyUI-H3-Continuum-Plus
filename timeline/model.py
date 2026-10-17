@@ -142,6 +142,19 @@ def validate(project):
         end = integer(marker.get("end", frame + 1), "region end", 1)
         if not frame < end <= duration:
             raise ValueError("Marker or named region is outside the project")
+    for r in p.setdefault("accepted_windows", []):
+        if not isinstance(r, dict):
+            raise ValueError("Invalid accepted take window")
+        first = integer(r.get("first_chunk"), "accepted first chunk")
+        if integer(r.get("stop_chunk"), "accepted stop chunk", 1) <= first:
+            raise ValueError("Accepted take window must span at least one chunk")
+        take = r.get("take_id")
+        parent = r.get("parent_take")
+        if not (isinstance(take, str) and re.fullmatch(r"[0-9a-f]{32}", take)) or not (
+            parent is None
+            or (isinstance(parent, str) and re.fullmatch(r"[0-9a-f]{32}", parent))
+        ):
+            raise ValueError("Accepted take window requires take identifiers")
     p.setdefault("ui", {})
     return p
 

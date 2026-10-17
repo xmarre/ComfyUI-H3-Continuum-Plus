@@ -774,10 +774,8 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     sequence_identity_hash=combine_timeline_video_identity(sequence_identity_hash,timeline_video_source)
     current_model_fingerprint=model_fingerprint(model,extra_wrapper_keys=("h3_continuum_join.apply_model.v1",))
     if storage_controller is not None:
-        storage_plan=continuation_storage_plan(plan,continuation_method)
-        storage_plan=dict(storage_plan)
+        storage_plan=dict(continuation_storage_plan({**plan,"hashes":list(prompt_hashes)} if timeline_inputs is not None else plan,continuation_method))
         if timeline_inputs is not None:
-            storage_plan["hashes"] = prompt_hashes
             storage_plan["timeline_studio"] = {"contract": 1, "audio_guide": any(w["guide"] for w in timeline_inputs.windows)}
         storage_plan["physical_prompt_policy"]=PHYSICAL_COMPILER_VERSION if physical_candidate else LEGACY_COMPILER_VERSION
         storage_plan["prompt_source_digest"]=str((plan.get("source") or {}).get("source_digest",""))

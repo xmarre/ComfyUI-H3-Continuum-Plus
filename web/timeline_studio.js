@@ -17,6 +17,15 @@ function summary(node) {
     node.__timelineSummary = ["Open Timeline Studio to inspect project data"];
   }
 }
+function projectId(node) {
+  try {
+    return JSON.parse(
+      node.widgets?.find((x) => x.name === "project_json")?.value,
+    ).project_id;
+  } catch {
+    return null;
+  }
+}
 function independent(node) {
   const w = node.widgets?.find((x) => x.name === "project_json");
   if (!w) return;
@@ -97,6 +106,24 @@ app.registerExtension({
     nodeType.prototype.onRemoved = function () {
       editors.get(this)?.close();
       return removed?.apply(this, arguments);
+    };
+    const configured = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+      const result = configured?.apply(this, arguments);
+      // Pasting one clipboard twice restores the same serialized project.
+      const mine = projectId(this);
+      if (
+        mine &&
+        (this.graph?._nodes || []).some(
+          (n) =>
+            n !== this &&
+            n.comfyClass === "H3ContinuumTimelineStudio" &&
+            projectId(n) === mine,
+        )
+      )
+        independent(this);
+      summary(this);
+      return result;
     };
     nodeType.prototype.clone = function () {
       const copy = cloning?.apply(this, arguments);

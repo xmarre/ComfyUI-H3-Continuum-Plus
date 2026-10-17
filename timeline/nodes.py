@@ -27,7 +27,10 @@ def project_store():
 def takes(store, project_id):
     directory = store.project_dir(project_id)
     return sorted(
-        [json.loads(p.read_text()) for p in directory.glob("take-*.json")],
+        [
+            json.loads(p.read_text(encoding="utf-8"))
+            for p in directory.glob("take-*.json")
+        ],
         key=lambda r: r.get("created_ns", 0),
     )
 
@@ -572,7 +575,7 @@ class H3ContinuumTimelineTake:
         path = store.project_dir(record["project_id"]) / (
             "render-" + record["id"] + ".json"
         )
-        if path.exists() and json.loads(path.read_text()) != rendition:
+        if path.exists() and json.loads(path.read_text(encoding="utf-8")) != rendition:
             raise ValueError(
                 "This take already has a different rendered output; create a new take"
             )

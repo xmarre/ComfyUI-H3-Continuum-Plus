@@ -141,7 +141,9 @@ class AssetStore:
             asset_id = h.hexdigest()
             info = probe(temporary)
             final = self.root / asset_id
-            os.replace(temporary, final)
+            # Identical content is already registered; keep its stamp and handles.
+            if not final.is_file():
+                os.replace(temporary, final)
             self._remember(final, self._stamp(final))
             return {
                 "id": asset_id,
@@ -402,7 +404,9 @@ class ProjectStore:
         return p
 
     def read(self, project_id):
-        return json.loads((self.project_dir(project_id) / "project.json").read_text())
+        return json.loads(
+            (self.project_dir(project_id) / "project.json").read_text(encoding="utf-8")
+        )
 
     def save(self, project, expected_revision):
         from .model import validate
@@ -410,7 +414,11 @@ class ProjectStore:
         p = validate(project)
         with self._lock:
             file = self.project_dir(p["project_id"]) / "project.json"
-            old = json.loads(file.read_text()) if file.exists() else {"revision": 0}
+            old = (
+                json.loads(file.read_text(encoding="utf-8"))
+                if file.exists()
+                else {"revision": 0}
+            )
             if old["revision"] != expected_revision:
                 raise ValueError("Project was edited elsewhere; reload before saving")
             p["revision"] = expected_revision + 1

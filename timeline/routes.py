@@ -11,13 +11,21 @@ import uuid
 
 from aiohttp import web
 
-from .media import audio_window, run_process, video_frames
+from .media import MEDIA_FORMATS, audio_window, run_process, video_frames
 from .model import compile_project, validate
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
+
+
+def _request_cancel():
+    """Route media work never polls ComfyUI's execution interrupt flag.
+
+    ``throw_exception_if_processing_interrupted`` clears the flag it reads, so
+    an HTTP thread would otherwise swallow a sampling cancellation.
+    """
 
 
 async def _media_cpu(fn, *args, **kwargs):
@@ -134,6 +142,8 @@ def register_routes():
                         str(start),
                         "-protocol_whitelist",
                         "file,pipe",
+                        "-format_whitelist",
+                        MEDIA_FORMATS,
                         "-i",
                         str(file),
                         "-t",
@@ -152,6 +162,7 @@ def register_routes():
                         "+faststart",
                         str(temporary),
                     ],
+                    cancel=_request_cancel,
                 )
                 temporary.replace(output)
             finally:
@@ -165,7 +176,14 @@ def register_routes():
 
         path = project_store().assets.path(request.match_info["asset_id"])
         stamp = request.query.get("pts", "0")
-        pixels = await _media_cpu(video_frames, path, [stamp], 240, 136, padding="hold")
+        pixels = await _media_cpu(video_frames,
+            path,
+            [stamp],
+            240,
+            136,
+            padding="hold",
+            cancel=_request_cancel,
+        )
         data = io.BytesIO()
         Image.fromarray(pixels[0]).save(data, format="JPEG")
         return web.Response(body=data.getvalue(), content_type="image/jpeg")
@@ -177,7 +195,8 @@ def register_routes():
         path = project_store().assets.path(request.match_info["asset_id"])
         start = max(0, float(request.query.get("start", "0")))
         end = min(start + 60, float(request.query.get("end", str(start + 30))))
-        pcm = await _media_cpu(audio_window, path, str(start), str(end), 1000)
+        pcm = await _media_cpu(audio_window, path, str(start), str(end), 1000, cancel=_request_cancel
+        )
         peaks = np.max(np.abs(pcm), axis=0)
         return web.json_response(
             {
@@ -206,7 +225,7 @@ def register_routes():
                 {
                     **{k: v for k, v in r.items() if k != "project_snapshot"},
                     "stale": stale_take(p, r, records) if p else None,
-                    "rendition": json.loads(render.read_text())
+                    "rendition": json.loads(render.read_text(encoding="utf-8"))
                     if render.exists()
                     else None,
                 }
@@ -219,7 +238,7 @@ def register_routes():
         store = project_store()
         p = store.read(data["project_id"])
         record = json.loads(
-            take_path(store, p["project_id"], data["take_id"]).read_text()
+            take_path(store, p["project_id"], data["take_id"]).read_text(encoding="utf-8")
         )
         all_records = takes(store, p["project_id"])
         if data["action"] == "reject":
@@ -244,7 +263,7 @@ def register_routes():
                 (
                     store.project_dir(p["project_id"])
                     / ("render-" + record["id"] + ".json")
-                ).read_text()
+                ).read_text(encoding="utf-8")
             )
             asset = render["asset"]
             if asset["id"] not in {a["id"] for a in p["assets"]}:
@@ -347,7 +366,7 @@ def register_routes():
         scale = min(1, 640 / max(p["width"], p["height"]))
         p["width"] = max(32, round(p["width"] * scale / 32) * 32)
         p["height"] = max(32, round(p["height"] * scale / 32) * 32)
-        key = digest([p, start, stop])
+        key = digest([{k: v for k, v in p.items() if k != "ui"}, start, stop])
         store = project_store()
         root = store.root / "composition_previews"
         root.mkdir(exist_ok=True)
@@ -360,6 +379,7 @@ def register_routes():
                 output,
                 codec="h264",
                 render_range=(start, stop),
+                cancel=_request_cancel,
             )
         return web.json_response(
             {"url": _PREFIX + "/composition/" + key, "start": start, "end": stop}

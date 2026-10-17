@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--comfy-root", type=Path, required=True)
     parser.add_argument("--browser-test", type=Path)
     args = parser.parse_args()
+    args.comfy_root = args.comfy_root.resolve()
     base = "http://127.0.0.1:8199"
     # Honor local direct access even when the host's outbound proxy is enabled.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
