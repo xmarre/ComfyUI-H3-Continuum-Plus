@@ -63,7 +63,7 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v7"
+    assert compiled.compiler_version == "physical_timeline_text_v8"
     codes = {item["code"] for item in compiled.diagnostics}
     assert {"H3C-PT205", "H3C-PT206", "H3C-PT208", "H3C-PT217", "H3C-PT219"}.issubset(codes)
     assert "H3C-PT207" not in codes
@@ -75,21 +75,21 @@ def test_exact_native_masked_prefix_is_neutral_context_not_replayed_authored_con
     assert "gharial scene" not in compiled.text
     assert "Some endure. Others adapt." not in compiled.text
     assert "lizard first half" not in compiled.text
-    assert "Immutable carried continuation context" in compiled.text
+    assert "Immutable carried continuation context" not in compiled.text
 
     # Keep the decoded-media-validated 00422 behavior. New generation starts at
     # local 39/24 = 1.625s, still inside the authored 7-8s lizard continuation.
     # The protected part is neutral context; present only the remaining suffix of
     # that instruction to fresh generation. 00509 showed that preserving the body
     # from its authored 7.0s onset duplicates the lizard and delays the iguana cut.
-    assert "[0-1.625s]" in compiled.text
+    assert "[0-1.625s]" not in compiled.text
     assert "[1.625-2.333333s]\nlizard continuation" in compiled.text
     assert "[2.333333-4.333333s]\niguana" in compiled.text
     assert compiled.text.index("lizard continuation") < compiled.text.index("iguana")
     assert compiled.text.index("iguana") < compiled.text.index("turtle") < compiled.text.index("blue jay")
-    assert "[8.333333-8.708333s]" in compiled.text
-    assert "Terminal speech-free lead-out" in compiled.text
-    assert "Terminal latent-grid padding only" in compiled.text
+    assert "[8.333333-8.708333s]" not in compiled.text
+    assert "Terminal speech-free lead-out" not in compiled.text
+    assert "Terminal latent-grid padding only" not in compiled.text
     assert "Terminal audio completion contract" not in compiled.text
 
     intervals = list(compiled.contributing_intervals)
@@ -114,7 +114,7 @@ def test_guided_overlap_is_not_treated_as_exact_protected_context():
         candidate=True,
     )
 
-    assert compiled.compiler_version == "physical_timeline_text_v7"
+    assert compiled.compiler_version == "physical_timeline_text_v8"
     codes = {item["code"] for item in compiled.diagnostics}
     assert "H3C-PT206" not in codes
     assert "H3C-PT208" in codes
@@ -233,7 +233,7 @@ def test_terminal_native_grid_padding_is_not_authored_speech_in_00586_geometry()
     assert descriptor.global_start_frame == 289
     assert descriptor.global_end_frame == 515
     assert descriptor.retained_suffix_interval == (328, 515)
-    assert compiled.compiler_version == "physical_timeline_text_v7"
+    assert compiled.compiler_version == "physical_timeline_text_v8"
     codes = {item["code"] for item in compiled.diagnostics}
     assert {"H3C-PT206", "H3C-PT208", "H3C-PT217", "H3C-PT219"}.issubset(codes)
     terminal = next(item for item in compiled.diagnostics if item["code"] == "H3C-PT217")
@@ -266,9 +266,9 @@ def test_terminal_native_grid_padding_is_not_authored_speech_in_00586_geometry()
         "Narrator finishes the final sentence cleanly before the end."
     )
 
-    assert "[8.5-8.958333s]\nTerminal speech-free lead-out" in compiled.text
-    assert "[8.958333-9.416667s]" in compiled.text
-    assert "Terminal latent-grid padding only" in compiled.text
+    assert "[8.5-8.958333s]" not in compiled.text
+    assert "[8.958333-9.416667s]" not in compiled.text
+    assert "Terminal latent-grid padding only" not in compiled.text
 
     intervals = list(compiled.contributing_intervals)
     assert intervals[0]["global_start"] == "289/24"

@@ -18,26 +18,16 @@ from typing import Any, Iterable
 PHYSICAL_DESCRIPTOR_VERSION = 1
 COMPILED_PHYSICAL_PROMPT_VERSION = 1
 PHYSICAL_COMPILER_VERSION = "physical_timeline_text_v2"
-TERMINAL_PADDING_COMPILER_VERSION = "physical_timeline_text_v7"
+TERMINAL_PADDING_COMPILER_VERSION = "physical_timeline_text_v8"
 LEGACY_COMPILER_VERSION = "legacy_nominal_v1"
 PHYSICAL_PROMPT_ENV = "H3_CONTINUUM_PHYSICAL_PROMPTS"
 PHYSICAL_TIMELINE_VIDEO_ENV = "H3_CONTINUUM_PHYSICAL_TIMELINE_VIDEO"
 _RENDER_QUANTUM = Decimal("0.000001")
-_TERMINAL_AUDIO_LEADOUT_BODY = (
-    "Terminal speech-free lead-out. All speech, dialogue, narration, and vocalization are already "
-    "complete before this interval. Do not begin or continue any speech here. Continue the immediately "
-    "preceding visual action and non-speech ambience naturally through the exact output endpoint."
-)
-_TERMINAL_PADDING_CONTEXT_BODY = (
-    "Terminal latent-grid padding only. The final output ends before this interval and this interval "
-    "will be discarded. Do not begin, continue, or delay speech, dialogue, actions, or authored events "
-    "into this padding; complete all requested content before this interval begins."
-)
-_EXACT_PREFIX_FRESH_GAP_BODY = (
-    "Continuous transition of the existing shot and ongoing visual action. Preserve the same subject, "
-    "environment, camera, motion, and ambient sound only. Do not restart prior content, introduce "
-    "a new shot, or begin the next timed event early."
-)
+# Structural intervals remain in provenance but never enter H3's shared
+# audio/video text conditioning. The model can vocalize control prose.
+_TERMINAL_AUDIO_LEADOUT_BODY = ""
+_TERMINAL_PADDING_CONTEXT_BODY = ""
+_EXACT_PREFIX_FRESH_GAP_BODY = ""
 # Recovered 00418 production prompts use an outer bracket Timeline section with
 # strict bare range lines (for example ``7-8s:``) inside its body. V1 treated
 # those lines as opaque prose. V2 recognizes only this deliberately narrow,
@@ -615,7 +605,8 @@ def _body_for_atomic_interval(
 def _join_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     joined: list[dict[str, Any]] = []
     for segment in segments:
-        if joined and joined[-1]["body"] == segment["body"] and joined[-1]["end"] == segment["start"]:
+        if (joined and segment["body"] and joined[-1]["body"] == segment["body"]
+                and joined[-1]["end"] == segment["start"]):
             joined[-1]["end"] = segment["end"]
             joined[-1]["sources"].extend(segment["sources"])
             joined[-1]["sources"] = sorted(set(joined[-1]["sources"]))
@@ -655,6 +646,9 @@ def _render_segments(
     rendered: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     for segment in segments:
+        # Do not render synthetic, speech-free intervals as prompt timestamps.
+        if not segment["body"].strip() and "authored" not in segment.get("roles", ()):
+            continue
         local_start = segment["start"] - start
         local_end = segment["end"] - start
         if local_end <= local_start:
@@ -1007,9 +1001,8 @@ def compile_physical_prompt(
     if terminal_audio_guard_start is not None:
         local_guard_start = terminal_audio_guard_start - start
         local_output_end = output_end - start
-        # The speech-free lead-out is already a real timed interval. Do not also
-        # inject globally active natural-language control prose into the preamble:
-        # H3 can vocalize that prose at the beginning of the generated suffix.
+        # Retain the lead-out in provenance without injecting speech-control
+        # prose into H3's joint audio/video conditioning.
         diagnostics.append(
             {
                 "level": "info",
@@ -1039,9 +1032,9 @@ def compile_physical_prompt(
     for segment in segments:
         local_start = segment["start"] - start
         local_end = segment["end"] - start
-        if segment["body"] == _TERMINAL_AUDIO_LEADOUT_BODY:
+        if "terminal_audio_leadout" in segment["roles"]:
             terminal_role = "speech_free_leadout"
-        elif segment["body"] == _TERMINAL_PADDING_CONTEXT_BODY:
+        elif "terminal_padding" in segment["roles"]:
             terminal_role = "discarded_padding"
         else:
             terminal_role = None

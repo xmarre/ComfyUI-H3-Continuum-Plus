@@ -72,8 +72,11 @@ def test_genuine_two_chunk_story_retains_terminal_speech_guard(monkeypatch):
     )
     assert _has_authored_timeline_after_output(plan) is False
     compiled = _compile(monkeypatch, plan)
-    assert "Terminal speech-free lead-out" in compiled.text
-    assert "Terminal latent-grid padding only" in compiled.text
+    assert "Terminal speech-free lead-out" not in compiled.text
+    assert "Terminal latent-grid padding only" not in compiled.text
+    assert [item["terminal_role"] for item in compiled.contributing_intervals[-2:]] == [
+        "speech_free_leadout", "discarded_padding",
+    ]
     assert any(item["code"] == "H3C-PT219" for item in compiled.diagnostics)
     assert not any(item["code"] == "H3C-PT230" for item in compiled.diagnostics)
 

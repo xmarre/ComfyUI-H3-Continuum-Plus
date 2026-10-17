@@ -1,6 +1,5 @@
 """Transport tests; these do not establish trained-model speech quality."""
 import copy
-import json
 
 import pytest
 import torch
@@ -88,9 +87,10 @@ def test_boundary_history_respects_inner_intervals_and_author_override(monkeypat
     assert 'Too old.' not in compiled.encoder_history
     assert 'Future line.' not in compiled.encoder_history
     assert 'Future line.' in compiled.text
-    data = json.loads(compiled.encoder_history.splitlines()[1])
+    data = next(item for item in compiled.diagnostics if item['code'] == 'H3C-PT234')
     assert [item['utterance_continues_past_boundary'] for item in data['intervals']] == [False]
     assert data['intervals'][-1]['global_end'] == '7'
+    assert 'utterance_continues_past_boundary' not in compiled.encoder_history
     assert 'Ongoing phrase.' not in compiled.encoder_history
 
 
@@ -172,7 +172,7 @@ def test_crossing_utterance_preserves_authored_words_without_guessing_word_align
     got = compile_(p, descriptor())
     assert 'A sentence crosses the boundary.' in got.encoder_history
     assert 'A sentence crosses the boundary.' in got.text
-    data = json.loads(got.encoder_history.splitlines()[1])
+    data = next(item for item in got.diagnostics if item['code'] == 'H3C-PT234')
     assert data['intervals'][0]['utterance_continues_past_boundary'] is True
 
 
@@ -204,7 +204,7 @@ def test_ignored_overlapping_timeline_sections_do_not_duplicate_history(monkeypa
     p = plan('[0-10s]\n(S1) says <d>[English] Continuous line.</d>\n'
              '[6-7s]\nAn ignored overlapping instruction.\n[10-28s]\nWaves.')
     got = compile_(p, descriptor())
-    data = json.loads(got.encoder_history.splitlines()[1])
+    data = next(item for item in got.diagnostics if item['code'] == 'H3C-PT234')
     assert len(data['intervals']) == 1
     assert got.encoder_history.count('Continuous line.') == 1
     assert data['intervals'][0]['global_start'] == '17/3'
@@ -215,7 +215,7 @@ def test_separately_authored_repeated_lines_remain_distinct_history_events(monke
     monkeypatch.setenv(history.ENV, '1')
     p = plan('[0-6s]\n(S1) says <d>[English] Again.</d>\n'
              '[6-10s]\n(S1) says <d>[English] Again.</d>\n[10-28s]\nWaves.')
-    data = json.loads(compile_(p, descriptor()).encoder_history.splitlines()[1])
+    data = next(item for item in compile_(p, descriptor()).diagnostics if item['code'] == 'H3C-PT234')
     assert len(data['intervals']) == 2
 
 
