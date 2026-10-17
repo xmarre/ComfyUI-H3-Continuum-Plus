@@ -697,12 +697,17 @@ def _physical_settings(entries:list[dict[str,Any]],plan:dict[str,Any])->dict[str
     }
 
 
-def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,sigmas:torch.Tensor,first_frame:torch.Tensor|None,last_frame:torch.Tensor|None,prompt_plan:dict[str,Any],width:int,height:int,continuity:str,base_seed:int,audio_continuity:bool,exact_total_duration:bool,diagnostics_mode:str,reroll_from_chunk:int,reroll_nonce:int,strict_compatibility:bool,debug:bool,seam_correction:str=SEAM_CORRECTION_OFF,enable_preview:bool=True,session:dict[str,Any]|None=None,initial_state:dict[str,Any]|None=None,latent_only:bool=False,reference_assets=None,reference_audio_source=None,reference_audio_vae=None,driving_audio_source=None,driving_audio_vae=None,reference_video_source=None,timeline_video_source=None):
+def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,sigmas:torch.Tensor,first_frame:torch.Tensor|None,last_frame:torch.Tensor|None,prompt_plan:dict[str,Any],width:int,height:int,continuity:str,base_seed:int,audio_continuity:bool,exact_total_duration:bool,diagnostics_mode:str,reroll_from_chunk:int,reroll_nonce:int,strict_compatibility:bool,debug:bool,seam_correction:str=SEAM_CORRECTION_OFF,enable_preview:bool=True,session:dict[str,Any]|None=None,initial_state:dict[str,Any]|None=None,latent_only:bool=False,reference_assets=None,reference_audio_source=None,reference_audio_vae=None,driving_audio_source=None,driving_audio_vae=None,reference_video_source=None,timeline_video_source=None,timeline_inputs=None):
     from ..conditioning import detect_conditioning_mode, conditioning_mode_label
     from ..run_storage import get_active_run_storage
     storage_controller=get_active_run_storage()
     continuation_method=current_continuation_method()
     diagnostics_mode=normalize_diagnostics_mode(diagnostics_mode); plan=validate_prompt_plan(prompt_plan); chunks=int(plan["chunks"]); chunk_seconds=float(plan["chunk_seconds"]); prompts=list(plan["prompts"]); prompt_hashes=list(plan["hashes"]); width,height=int(width),int(height)
+    if timeline_inputs is not None:
+        # Schedule identity is separate from text. The native prefix validator
+        # therefore invalidates the causal suffix when only references change.
+        prompt_hashes = [hashlib.sha256((a+b).encode()).hexdigest()
+                         for a,b in zip(prompt_hashes,timeline_inputs.hashes)]
     physical_candidate=physical_prompt_compiler_enabled()
     _log_prompt_routing_receipt(plan, physical_candidate=physical_candidate)
     if continuation_method==CONTINUATION_NATIVE_MASKED: require_native_mask_support()
@@ -752,6 +757,8 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         continuation_method=continuation_method,
         continuity=continuity,
     )
+    if timeline_inputs is not None:
+        terminal_merge_enabled=False
     terminal_prompt=None; terminal_prompt_policy=None
     if terminal_merge_enabled:
         terminal_prompt,legacy_terminal_policy=_terminal_pair_prompt(prompts,pair_start=chunks-2,chunk_seconds=chunk_seconds)
@@ -767,8 +774,9 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     sequence_identity_hash=combine_timeline_video_identity(sequence_identity_hash,timeline_video_source)
     current_model_fingerprint=model_fingerprint(model,extra_wrapper_keys=("h3_continuum_join.apply_model.v1",))
     if storage_controller is not None:
-        storage_plan=continuation_storage_plan(plan,continuation_method)
-        storage_plan=dict(storage_plan)
+        storage_plan=dict(continuation_storage_plan({**plan,"hashes":list(prompt_hashes)} if timeline_inputs is not None else plan,continuation_method))
+        if timeline_inputs is not None:
+            storage_plan["timeline_studio"] = {"contract": 1, "audio_guide": any(w["guide"] for w in timeline_inputs.windows)}
         storage_plan["physical_prompt_policy"]=PHYSICAL_COMPILER_VERSION if physical_candidate else LEGACY_COMPILER_VERSION
         storage_plan["prompt_source_digest"]=str((plan.get("source") or {}).get("source_digest",""))
         storage_plan["timeline_video_adapter"]="physical_window_v1" if physical_timeline_video_enabled() else "legacy_nominal_chunk_v1"
@@ -791,16 +799,18 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             reuse_notes.append("saved terminal-merge entries do not match the active request; regenerated from the terminal pair boundary")
             if storage_controller is not None: storage_controller.reused_count=len(preserved)
     initial_frame_count=align_frame_count_up(int(round(chunk_seconds*FPS)))
-    preserved,physical_reuse_notes=_physical_reuse_prefix(
-        preserved,prompt_plan=plan,prompts=prompts,chunks=chunks,chunk_seconds=chunk_seconds,
-        width=width,height=height,continuity=continuity,continuation_method=continuation_method,
-        audio_continuity=audio_continuity,driving_audio_active=driving_audio_source is not None,
-        debug=debug,initial_frame_count=initial_frame_count,assets=assets,
-        reference_assets=reference_assets,reference_audio_source=reference_audio_source,
-        reference_video_source=reference_video_source,timeline_video_source=timeline_video_source,
-        initial_state_external=initial_state is not None,terminal_merge_enabled=terminal_merge_enabled,
-        terminal_prompt=terminal_prompt,terminal_prompt_policy=terminal_prompt_policy,
-    )
+    physical_reuse_notes=[]
+    if timeline_inputs is None:
+        preserved,physical_reuse_notes=_physical_reuse_prefix(
+            preserved,prompt_plan=plan,prompts=prompts,chunks=chunks,chunk_seconds=chunk_seconds,
+            width=width,height=height,continuity=continuity,continuation_method=continuation_method,
+            audio_continuity=audio_continuity,driving_audio_active=driving_audio_source is not None,
+            debug=debug,initial_frame_count=initial_frame_count,assets=assets,
+            reference_assets=reference_assets,reference_audio_source=reference_audio_source,
+            reference_video_source=reference_video_source,timeline_video_source=timeline_video_source,
+            initial_state_external=initial_state is not None,terminal_merge_enabled=terminal_merge_enabled,
+            terminal_prompt=terminal_prompt,terminal_prompt_policy=terminal_prompt_policy,
+        )
     reuse_notes.extend(physical_reuse_notes)
     if storage_controller is not None:
         storage_controller.reused_count=len(preserved)
@@ -875,23 +885,36 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     prefetched_descriptor = None
     for sequence_index in normal_indices:
         prompt=prompts[sequence_index]; prompt_hash_value=prompt_hashes[sequence_index]; effective_reroll_nonce=int(reroll_nonce) if int(reroll_from_chunk)>0 and sequence_index+1>=int(reroll_from_chunk) else 0; seed=derive_chunk_seed(base_seed,sequence_index,effective_reroll_nonce); video_context=None; audio_context=None; context_before=None
+        invocation_driving_active = driving_audio_source is not None and (timeline_inputs is None or timeline_inputs.guide_active(sequence_index))
         geometry=resolve_normal_geometry(
             previous_state=previous_state,sequence_index=sequence_index,chunks=chunks,chunk_seconds=chunk_seconds,
             retained_frames=retained_frames,width=width,height=height,continuity=continuity,
             continuation_method=continuation_method,audio_continuity=audio_continuity,
-            driving_audio_active=driving_audio_source is not None,debug=debug,initial_frame_count=initial_frame_count,
+            driving_audio_active=invocation_driving_active,debug=debug,initial_frame_count=initial_frame_count,
         )
         include_first=previous_state is None
         include_last=bool(last_frame is not None and geometry.is_final)
+        invocation_references = reference_assets
+        invocation_video_source = reference_video_source
+        invocation_voice_source = reference_audio_source
+        invocation_voice_assets = reference_audio_assets
+        invocation_video_assets = reference_video_assets
+        if timeline_inputs is not None:
+            invocation_references, invocation_video_source, invocation_video_assets, invocation_voice_source, invocation_voice_assets = timeline_inputs.materialize(
+                sequence_index, video_vae=video_vae, audio_vae=driving_audio_vae, width=width, height=height)
         descriptor=make_normal_descriptor(
             geometry=geometry,retained_before=retained_frames,target_duration_frames=target_duration_frames,
             continuation_method=continuation_method,initial_state_external=initial_state is not None and not entries,
             assets=assets,include_first=include_first,include_last=include_last,
-            reference_assets=reference_assets,reference_audio_source=reference_audio_source,
-            reference_video_source=reference_video_source,timeline_video_source=timeline_video_source,
+            reference_assets=invocation_references,reference_audio_source=invocation_voice_source,
+            reference_video_source=invocation_video_source,timeline_video_source=timeline_video_source,
         )
-        timeline_video_assets=reference_video_assets
+        if timeline_inputs is not None:
+            descriptor=timeline_inputs.annotate(descriptor,sequence_index)
+        timeline_video_assets=invocation_video_assets
         chunk_cache=cache
+        if timeline_inputs is not None:
+            chunk_cache=timeline_inputs.conditioning_cache if invocation_video_source is None and invocation_voice_source is None else {}
         if timeline_video_source is not None:
             if physical_timeline_video_enabled():
                 from ..timeline_video import encode_timeline_video_physical
@@ -908,17 +931,25 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         prefetched_descriptor = None
         encoding_started = time.perf_counter()
         base_conditioning,compiled,physical_meta,conditioning_key=encode_physical_prompt_conditioning(
-            clip=clip,plan=plan,descriptor=descriptor,legacy_text=prompt,assets=assets,
-            include_first=include_first,include_last=include_last,reference_assets=reference_assets,
-            reference_audio_assets=reference_audio_assets,timeline_video_assets=timeline_video_assets,cache=chunk_cache,
+            clip=clip,plan=timeline_inputs.invocation_plan(plan,sequence_index) if timeline_inputs is not None else plan,descriptor=descriptor,legacy_text=prompt,assets=assets,
+            include_first=include_first,include_last=include_last,reference_assets=invocation_references,
+            reference_audio_assets=invocation_voice_assets,timeline_video_assets=timeline_video_assets,cache=chunk_cache,
         )
+        if timeline_inputs is not None and chunk_cache is timeline_inputs.conditioning_cache:
+            from .conditioning_lifecycle import bounded_cpu_conditioning
+            snapshot=bounded_cpu_conditioning(base_conditioning)
+            if snapshot is None:
+                chunk_cache.clear()
+            else:
+                chunk_cache[conditioning_key]=snapshot
+                while len(chunk_cache)>2:chunk_cache.pop(next(iter(chunk_cache)))
         actual_prefetch_hit = consumed_prefetch and conditioning_key in prefetched_keys
         LOG.info(
             "H3C-PT237 conditioning stage=normal chunk=%d prefetched_reused=%s "
             "host_wall_s=%.3f",
             sequence_index + 1, actual_prefetch_hit, time.perf_counter() - encoding_started,
         )
-        if (not actual_prefetch_hit and timeline_video_source is None
+        if (timeline_inputs is None and not actual_prefetch_hit and timeline_video_source is None
                 and sequence_index + 1 in normal_indices):
             from .conditioning_lifecycle import bounded_cpu_conditioning, plan_next_geometry
             next_geometry = plan_next_geometry(
@@ -972,7 +1003,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             conditioning=attach_keyframes(base_conditioning,frame_count=geometry.total_frames,first_latent=assets.first_latent,last_latent=assets.last_latent if geometry.is_final else None)
         else:
             keyed_conditioning=attach_keyframes(base_conditioning,frame_count=geometry.total_frames,first_latent=None,last_latent=assets.last_latent if geometry.is_final else None)
-            carry_generated_audio=bool(audio_continuity) and driving_audio_source is None
+            carry_generated_audio=bool(audio_continuity) and not invocation_driving_active
             video_context,audio_context,grid_offset=select_context(previous_state,geometry.context_frames,include_audio=carry_generated_audio); context_before=context_fingerprint(video_context,audio_context)
             _log_continuation_source_receipt(
                 plan=plan,
@@ -987,6 +1018,8 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             else:
                 conditioning=prepare_conditioning(keyed_conditioning,video_context=video_context,audio_context=audio_context,audio_grid_offset=grid_offset,context_frames=geometry.context_frames,new_frame_count=geometry.total_frames,first_frame_policy=POLICY_REPLACE,preserve_last_frame=True)
         driving_audio_latent=slice_driving_audio_latent(driving_audio_assets,cumulative_retained_before=retained_frames,total_frames=int(chunk_plan["total_frames"]),trim_frames=int(chunk_plan["trim_frames"]),fps=FPS)
+        if timeline_inputs is not None and not timeline_inputs.guide_active(sequence_index):
+            driving_audio_latent=None
         conditioning=attach_driving_audio(conditioning,driving_audio_latent)
         log_physical_validation_manifest(physical_meta, conditioning)
         chunk_model=clone_model_for_chunk(model,strict=bool(strict_compatibility),debug=bool(debug),chunk_index=geometry.clip_index,context_frames=geometry.context_frames if geometry.continuation else None)
@@ -995,6 +1028,8 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         entry=make_chunk_entry(latent=sampled,plan=chunk_plan,prompt=prompt,prompt_hash=prompt_hash_value,seed=seed,context_frames=geometry.context_frames,motion_score=geometry.motion_score,reused=False); previous_state=entry_to_state(entry); entries.append(entry)
         _record_context_diagnostics(tracker=context_diagnostics,reports=sampling_reports,state=previous_state,continuity=continuity,reused=False,continuation_method=continuation_method,audio_continuity=audio_continuity,driving_audio_active=driving_audio_source is not None)
         if storage_controller is not None: storage_controller.commit_chunk(entry, position=sequence_index)
+        if timeline_inputs is not None:
+            timeline_inputs.checkpoint(entries,sequence_identity_hash,assets.first_frame_hash,assets.last_frame_hash)
         retained_frames+=geometry.net_frames
         presentation=descriptor.presentation_contract
         sampling_reports.append(
@@ -1007,6 +1042,9 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         )
         sampling_reports.append(f"chunk {sequence_index+1}/{chunks}: seed={seed}, frames={chunk_plan['total_frames']}, trim={chunk_plan['trim_frames']}, retained_total={retained_frames}, method={continuation_method}, context={geometry.context_frames} ({geometry.reason}), motion={geometry.motion_score:.6f}, "+(f"interop=emitted actual_prefix={CONTINUUM_ACTUAL_PREFIX_STEPS} consumer=not_observable" if context_before is not None else "interop=not_emitted"))
         del sampled,latent,conditioning,base_conditioning,chunk_model,chunk_cache
+        del invocation_references,invocation_video_source,invocation_video_assets,invocation_voice_source,invocation_voice_assets
+        if timeline_inputs is not None:
+            timeline_video_assets=None
         if timeline_video_source is not None and timeline_video_assets is not None: del timeline_video_assets
     if terminal_merge_pending:
         pair_start=chunks-2

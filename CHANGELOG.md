@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add Timeline Studio's compact project node and resizable editor, scoped image/video/audio conditions, typed native sampler facade, immutable takes, accepted-prefix reuse, bounded previews and composition/export.
+- Preserve existing V3.4 identifiers, widget ordering, native continuation and external accelerator ownership.
+- Route timed prompt regions through native physical re-basing; serve audio windows from a bounded whole-stream PCM cache; queue multi-job selections in order and give each reroll a fresh nonce; keep editor view state out of prompt inputs; scope guide-audio invalidation to each job.
+- Add real-media, editor-operation, ComfyUI HTTP/queue and browser verification plus importable workflows. Trained-H3 quality, AV phase and accelerator/performance qualification remain pending; no release version is assigned.
+
 ## 3.4.11
 
 Configure Continuum-Plus for publication under its maintainer-owned Comfy Registry identity, separate from the original H3 Continuum project.
