@@ -1,0 +1,84 @@
+"""Bounded composition of retained footage and selected rendered alternatives."""
+from __future__ import annotations
+
+from fractions import Fraction
+from pathlib import Path
+import tempfile
+import uuid
+import wave
+
+import numpy as np
+
+from .media import check_cancel, mix_audio, run_process, video_frames
+from .model import active_clips, rational, sample_boundary, source_time
+
+
+def render_frames(p, assets, start, end, width, height, *, roles=None, gap="black", cancel=check_cancel):
+    roles = roles or {"retained", "generated"}
+    count = end-start
+    output = np.zeros((count,height,width,3),dtype=np.uint8)
+    coverage = np.zeros(count,dtype=bool)
+    # Process one clip window at a time. Last track/clip owns overlapping pixels.
+    for _, c in active_clips(p,start,end,roles):
+        a,b=max(start,c["start"]),min(end,c["end"])
+        stamps = [source_time(c,f) for f in range(a,b)]
+        frames=video_frames(assets.path(c["asset_id"]),stamps,width,height,padding=c["padding"],cancel=cancel)
+        output[a-start:b-start]=frames
+        coverage[a-start:b-start]=True
+    if gap=="error" and not coverage.all():
+        raise ValueError("Video guidance has a gap; add footage or remove guidance for this chunk")
+    return output
+
+
+def write_video_frames(frames, path, fps=24):
+    """Lossless CPU take encoding with an explicit RGB -> GBR pixel format."""
+    import av
+    with av.open(str(path),"w",format="matroska") as container:
+        stream=container.add_stream("ffv1",rate=fps)
+        stream.width=frames.shape[2];stream.height=frames.shape[1];stream.pix_fmt="bgr0"
+        for i,pixels in enumerate(frames):
+            check_cancel()
+            frame=av.VideoFrame.from_ndarray(pixels,format="rgb24")
+            frame.pts=i;frame.time_base=Fraction(1,fps)
+            for packet in stream.encode(frame):container.mux(packet)
+        for packet in stream.encode():container.mux(packet)
+
+
+def export_project(p, store, output, *, codec="lossless", cancel=check_cancel):
+    """Stream a long composition in one-second CPU windows.
+
+    FFV1 + PCM is pixel/sample preserving after declared scaling/time sampling.
+    H.264/AAC is a distribution re-encode, never claimed bit exact.
+    """
+    import av
+    output=Path(output)
+    output.parent.mkdir(parents=True,exist_ok=True)
+    temp=output.with_name(output.stem+"-"+uuid.uuid4().hex+output.suffix)
+    duration=p["duration_frames"]
+    rate=48000
+    try:
+        with tempfile.TemporaryDirectory(prefix="h3-export-") as directory:
+            silent=Path(directory)/"video.mkv"
+            pcmfile=Path(directory)/"audio.wav"
+            with av.open(str(silent),"w",format="matroska") as container:
+                stream=container.add_stream("ffv1",rate=24)
+                stream.width=p["width"];stream.height=p["height"];stream.pix_fmt="bgr0"
+                with wave.open(str(pcmfile),"wb") as wav:
+                    wav.setnchannels(2);wav.setsampwidth(2);wav.setframerate(rate)
+                    for a in range(0,duration,24):
+                        cancel()
+                        b=min(a+24,duration)
+                        frames=render_frames(p,store.assets,a,b,p["width"],p["height"],cancel=cancel)
+                        for n,pixels in enumerate(frames,a):
+                            frame=av.VideoFrame.from_ndarray(pixels,format="rgb24")
+                            frame.pts=n;frame.time_base=Fraction(1,24)
+                            for packet in stream.encode(frame):container.mux(packet)
+                        pcm=mix_audio(p,store.assets,a,b,rate,"final",cancel=cancel)
+                        wav.writeframes((np.clip(pcm.T,-1,1)*32767).round().astype("<i2").tobytes())
+                for packet in stream.encode():container.mux(packet)
+            options=["-c:v","copy","-c:a","pcm_s16le"] if codec=="lossless" else ["-c:v","libx264","-crf","16","-pix_fmt","yuv420p","-c:a","aac","-b:a","192k"]
+            run_process(["ffmpeg","-v","error","-nostdin","-threads","1","-i",str(silent),"-i",str(pcmfile),"-map","0:v:0","-map","1:a:0",*options,str(temp)],cancel=cancel)
+        temp.replace(output)
+    finally:
+        temp.unlink(missing_ok=True)
+    return output

@@ -537,6 +537,8 @@ def encode_physical_prompt_conditioning(
     if not candidate:
         # Preserve PR #20's legacy conditioning-cache identity exactly.
         key: Any = (legacy_text, include_first_actual, include_last_actual)
+        if "timeline_studio" in descriptor.presentation_contract:
+            key += (presentation_digest(descriptor.presentation_contract),)
     else:
         key = (
             compiled.compiler_version,
