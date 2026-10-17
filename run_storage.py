@@ -616,6 +616,7 @@ def build_sampling_contract(
         conditioning_mode_uses_video_vae(conditioning_mode)
         or reference_video_contract is not None
         or timeline_video_contract is not None
+        or bool(prompt_plan.get("timeline_studio"))
     )
     if uses_video_vae:
         video_vae_value, video_vae_safe = _video_vae_signature(
@@ -628,7 +629,7 @@ def build_sampling_contract(
         audio_vae_value, audio_vae_safe = _audio_vae_signature(reference_audio_vae)
     else:
         audio_vae_value, audio_vae_safe = None, True
-    if driving_audio_contract is not None:
+    if driving_audio_contract is not None or bool(prompt_plan.get("timeline_studio")):
         driving_audio_vae_value, driving_audio_vae_safe = _audio_vae_signature(
             driving_audio_vae
         )

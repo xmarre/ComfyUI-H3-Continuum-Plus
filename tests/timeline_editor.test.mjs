@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {History,split,trim,move,remove,paste,snap,sourceAt} from '../web/timeline/core.js';
+const project=()=>({duration_frames:504,tracks:[{id:'a',clips:[{id:'c',start:168,end:336,source_in:'35',speed:'1'}]}]});
+test('split preserves noncontiguous source timestamps',()=>{const p=project();split(p,['c'],240);assert.equal(p.tracks[0].clips[1].source_in,'38');assert.equal(p.tracks[0].clips[0].end,240);});
+test('trim and slip preserve mapping',()=>{const p=project();trim(p,['c'],'start',192);assert.equal(sourceAt(p.tracks[0].clips[0],192),36);move(p,['c'],24,true);assert.equal(p.tracks[0].clips[0].start,192);assert.equal(sourceAt(p.tracks[0].clips[0],192),37);});
+test('undo restores source and clip identity; redo reapplies',()=>{const h=new History(project());h.commit(p=>split(p,['c'],240));h.undo();assert.deepEqual(h.value,project());h.redo();assert.equal(h.value.tracks[0].clips.length,2);});
+test('locked track stays immutable',()=>{const p=project();p.tracks[0].locked=true;const before=structuredClone(p);split(p,['c'],240);move(p,['c'],20);remove(p,['c'],true);assert.deepEqual(p,before);});
+test('copy/paste preserves relative positions',()=>{const p=project();const ids=paste(p,[['a',p.tracks[0].clips[0]]],336);assert.equal(ids.length,1);assert.equal(p.tracks[0].clips[1].start,336);assert.equal(p.tracks[0].clips[1].end,504);});
+test('snapping threshold and left bound',()=>{assert.equal(snap(170,[168],3),168);assert.equal(snap(180,[168],3),180);assert.equal(snap(-1,[]),0);});

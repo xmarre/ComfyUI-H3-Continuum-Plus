@@ -1019,6 +1019,8 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         entry=make_chunk_entry(latent=sampled,plan=chunk_plan,prompt=prompt,prompt_hash=prompt_hash_value,seed=seed,context_frames=geometry.context_frames,motion_score=geometry.motion_score,reused=False); previous_state=entry_to_state(entry); entries.append(entry)
         _record_context_diagnostics(tracker=context_diagnostics,reports=sampling_reports,state=previous_state,continuity=continuity,reused=False,continuation_method=continuation_method,audio_continuity=audio_continuity,driving_audio_active=driving_audio_source is not None)
         if storage_controller is not None: storage_controller.commit_chunk(entry, position=sequence_index)
+        if timeline_inputs is not None:
+            timeline_inputs.checkpoint(entries,sequence_identity_hash,assets.first_frame_hash,assets.last_frame_hash)
         retained_frames+=geometry.net_frames
         presentation=descriptor.presentation_contract
         sampling_reports.append(

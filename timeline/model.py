@@ -169,10 +169,14 @@ def compile_window(p, index):
                 a, b = i["range"]
                 text += f"\n[{float(Fraction(a-start,24)):.6f}-{float(Fraction(b-start,24)):.6f}s] {body}"
     text = re.sub(r"@([\w-]+)", lambda m: aliases.get(m[1], m[0]), text).strip()
-    guide = [i for i in inputs if i["audio_role"] in {"guide", "both"}]
+    def audio_identity(i):
+        return {k:v for k,v in i.items() if k not in {"audio_role", "role", "alias", "text", "override"}}
+    guide = [audio_identity(i) for i in inputs if i["audio_role"] in {"guide", "both"}]
     final = [i for i in inputs if i["audio_role"] in {"final", "both"}]
-    semantic = {"prompt": text, "images": images, "video": [i for i in inputs if i["role"] == "video_guide"],
-                "guide": guide, "voice": [i for i in inputs if i["audio_role"] == "reference"]}
+    images = [{"asset_id": i["asset_id"], "alias": i["alias"]} for i in images]
+    video = [{k:v for k,v in i.items() if k in {"asset_id","range","source","speed","padding"}} for i in inputs if i["role"] == "video_guide"]
+    semantic = {"prompt": text, "images": images, "video": video,
+                "guide": guide, "voice": [audio_identity(i) for i in inputs if i["audio_role"] == "reference"]}
     return {"index": index, "range": [start, end], **semantic, "aliases": aliases,
             "generation_hash": digest(semantic), "final_hash": digest(final)}
 

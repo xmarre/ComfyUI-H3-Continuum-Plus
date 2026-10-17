@@ -137,6 +137,11 @@ def video_frames(path, timestamps, width, height, *, padding="error", cancel=che
                 previous = future
                 future = next(iterator, None)
             chosen = previous or future
+            if previous is not None and future is not None and future.pts is not None:
+                before = Fraction(previous.pts) * previous.time_base
+                after = Fraction(future.pts) * future.time_base
+                if after-target < target-before:
+                    chosen = future
             if chosen is None:
                 raise ValueError("Source selection contains no decodable video")
             if future is None:
@@ -169,10 +174,18 @@ def audio_window(path, start, end, rate, *, channels=2, padding="silence", cance
         raise ValueError("Audio selection extends beyond the source stream")
     with tempfile.TemporaryDirectory(prefix="h3-audio-") as directory:
         output = Path(directory) / "window.f32"
-        # Async resampling fills a genuine stream-start offset with silence;
-        # it never derives the audio clock from the video's nominal frame rate.
-        filters = f"atrim=start={float(start):.12f}:end={float(end):.12f},asetpts=PTS-({float(start):.12f})/TB,aresample={rate}:async=1:first_pts=0,apad=whole_len={count},atrim=end_sample={count}"
-        run_process(["ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-seek_timestamp", "1", "-ss", str(float(max(origin, start - 1))), "-copyts", "-protocol_whitelist", "file,pipe", "-i", str(path), "-vn", "-af", filters, "-ac", str(channels), "-ar", str(rate), "-f", "f32le", str(output)], cancel=cancel)
+        # Decode audio sequentially up to the requested end, resample on the
+        # absolute stream sample grid, then select by samples. Packet PTS in
+        # Matroska can be quantized to milliseconds; seeking and time trimming
+        # independently would introduce one-sample shifts at each window.
+        # This path is bounded in RAM and never decodes the source video.
+        first = round((start-origin)*rate)
+        last = first+count
+        filters = f"aresample={rate}:async=1,atrim=start_sample={max(0,first)}:end_sample={max(0,last)},asetpts=PTS-STARTPTS"
+        if first < 0:
+            filters += f",adelay={-first}S:all=1"
+        filters += f",apad=whole_len={count},atrim=end_sample={count}"
+        run_process(["ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-protocol_whitelist", "file,pipe", "-i", str(path), "-t", str(float(Fraction(count,rate))), "-vn", "-af", filters, "-ac", str(channels), "-ar", str(rate), "-f", "f32le", str(output)], cancel=cancel)
         pcm = np.fromfile(output, dtype="<f4")
     pcm = pcm[:count * channels]
     if pcm.size < count * channels:
