@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import copy
+import re
 import torch
 
 from .media import check_cancel, mix_audio, video_frames
@@ -32,10 +33,25 @@ class TimelineInputs:
         if audio_vae is None:
             raise ValueError("Timeline audio guidance requires the H3 Audio VAE")
         rate = int(getattr(audio_vae, "audio_sample_rate", 32000))
-        a, b = self.job["range"]
+        a = self.offset
+        b = a + self.job["range"][1]-self.job["range"][0] + 34
         pcm = mix_audio(self.project, self.store.assets, a, b, rate, "guide")
         audio = {"waveform": torch.from_numpy(pcm)[None], "sample_rate": rate}
         return prepare_driving_audio_source(audio, audio_vae, target_frames=b-a, fps=24)
+
+    def invocation_plan(self, original, index):
+        if not self.windows[index].get("timed_prompt"):
+            return original
+        from ..v2.prompts import make_prompt_plan
+        def shift(match):
+            # Inner authored times are project absolute; physical compiler uses
+            # the native job clock. The source-media PTS remains independent.
+            return f"{max(0,float(match[1])-self.offset/24):.9f}-{max(0,float(match[2])-self.offset/24):.9f}s:"
+        rows=[]
+        for n,w in enumerate(self.windows,1):
+            body=re.sub(r"(?m)^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)s:",shift,w["prompt"])
+            rows.append(f"[Chunk {n}]\n{body or ' '} ")
+        return make_prompt_plan(mode="Timeline",script="\n".join(rows),chunks=len(rows),chunk_seconds=self.project["chunk_frames"]/24)
 
     def materialize(self, index, *, video_vae, audio_vae, width, height):
         from ..reference import prepare_reference_assets, encode_reference_latents, bundle_reference_images

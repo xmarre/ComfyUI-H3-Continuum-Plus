@@ -107,7 +107,7 @@ class AssetStore:
 
 
 def video_frames(path, timestamps, width, height, *, padding="error", cancel=check_cancel):
-    """Sample-and-hold on source PTS, including VFR and nonzero stream starts.
+    """Nearest source PTS with earlier-frame tie breaks, including VFR/offsets.
 
     The output sequence follows requested timestamps exactly. Reverse is an
     explicit source mapping; a bounded reverse window is retained locally.

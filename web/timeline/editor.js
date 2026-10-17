@@ -13,7 +13,7 @@ export async function request(api,path,options={}) {
 export class TimelineEditor {
     constructor({node,widget,api,app}) {
         this.node=node;this.widget=widget;this.api=api;this.app=app;
-        this.history=new History(JSON.parse(widget.value));this.selected=[];this.clipboard=[];this.playhead=this.p.ui?.playhead||0;
+        this.history=new History(JSON.parse(widget.value));this.serverRevision=this.p.revision||0;this.selected=[];this.clipboard=[];this.playhead=this.p.ui?.playhead||0;
         this.zoom=this.p.ui?.zoom||5;this.abort=new AbortController();this.proxy=false;this.closed=false;this.waveCache=new Map();
         this.root=el('dialog',{class:'h3ts',tabindex:'0','aria-label':'Continuum Timeline Studio'});
         this.root.addEventListener('cancel',e=>{e.preventDefault();this.close();});
@@ -26,8 +26,8 @@ export class TimelineEditor {
     async guard(fn){try{return await fn();}catch(e){if(e.name!=='AbortError')this.message(e.message,true);}}
     edit(fn){this.history.commit(fn);this.persistWidget();this.render();}
     persistWidget(){this.p.ui={...this.p.ui,playhead:this.playhead,zoom:this.zoom,scroll:this.scroller?.scrollLeft||0};this.widget.value=JSON.stringify(this.p);this.node.setDirtyCanvas?.(true,true);}
-    async save(){const saved=await request(this.api,'/project',{method:'POST',body:JSON.stringify({project:this.p,expected_revision:this.p.revision||0})});this.history.value=saved;this.persistWidget();this.message('Project saved · revision '+saved.revision);}
-    async reload(){const p=await request(this.api,'/project/'+this.p.project_id);this.history=new History(p);this.selected=[];this.render();this.persistWidget();this.message('Saved project loaded');}
+    async save(){const saved=await request(this.api,'/project',{method:'POST',body:JSON.stringify({project:this.p,expected_revision:this.serverRevision})});this.history.value=saved;this.serverRevision=saved.revision;this.persistWidget();this.message('Project saved · revision '+saved.revision);}
+    async reload(){const p=await request(this.api,'/project/'+this.p.project_id);this.history=new History(p);this.serverRevision=p.revision;this.selected=[];this.render();this.persistWidget();this.message('Saved project loaded');}
     build(){
         this.status=el('output',{class:'h3ts-status',text:'Ready · source timestamps and output frames are separate clocks'});
         this.title=el('input',{value:this.p.name,'aria-label':'Project name',onchange:e=>this.edit(p=>p.name=e.target.value)});
@@ -183,7 +183,7 @@ export class TimelineEditor {
         this.message(`${plan.jobs.length} immutable job snapshot(s) queued. Connect decoded assembly to Save Take for review.`);
     }
     async review(){await this.save();const records=await request(this.api,'/takes/'+this.p.project_id);this.inspector.replaceChildren(el('h3',{text:'Generated alternatives'}));for(const r of records){const rejected=this.p.rejected?.includes(r.id);const card=el('section',{class:'h3ts-take'},el('strong',{text:r.id.slice(0,8)}),el('p',{text:`${time(r.range[0])}–${time(r.range[1])} · ${r.stale?'STALE':r.status}${rejected?' · rejected':''}`}));if(r.rendition){card.append(button('Preview B',()=>{this.video.src=BASE+'/proxy/'+r.rendition.asset.id+'?duration=30';this.video.hidden=false;this.image.hidden=true;this.previewClip=null;this.video.play().catch(()=>{});}));if(!r.stale)card.append(button('Accept / select',()=>this.guard(()=>this.selectTake(r,'accept'))));card.append(button('Reject',()=>this.guard(()=>this.selectTake(r,'reject'))));}card.append(button('Inspect actual inputs',()=>{this.diagnostics.textContent=JSON.stringify(r.model_inputs||[],null,2);this.diagnostics.parentElement.open=true;}));this.inspector.append(card);}}
-    async selectTake(record,action){const p=await request(this.api,'/take/select',{method:'POST',body:JSON.stringify({project_id:this.p.project_id,take_id:record.id,action,expected_revision:this.p.revision||0})});this.history=new History(p);this.persistWidget();this.render();this.message(action==='accept'?'Take selected; dependent later choices invalidated':'Take rejected');}
+    async selectTake(record,action){const p=await request(this.api,'/take/select',{method:'POST',body:JSON.stringify({project_id:this.p.project_id,take_id:record.id,action,expected_revision:this.serverRevision})});this.history=new History(p);this.serverRevision=p.revision;this.persistWidget();this.render();this.message(action==='accept'?'Take selected; dependent later choices invalidated':'Take rejected');}
     async export(codec){await this.save();const result=await request(this.api,'/export',{method:'POST',body:JSON.stringify({project:this.p,codec})});this.exportId=result.id;this.message('Export running…');const poll=async()=>{if(this.closed)return;const status=await request(this.api,'/export/'+result.id);if(status.status==='running'){this.exportTimer=setTimeout(()=>this.guard(poll),1000);return;}this.message(status.status==='complete'?'Export saved: '+status.filename:status.error,status.status!=='complete');};await poll();}
     close(){if(this.closed)return;this.closed=true;this.persistWidget();this.abort.abort();this.resize.disconnect();clearTimeout(this.exportTimer);this.video.pause();this.video.removeAttribute('src');this.video.load();this.root.close();this.root.remove();this.onClose?.();}
 }

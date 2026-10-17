@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import time
 import json
 from pathlib import Path
 import tempfile
@@ -24,7 +25,7 @@ def project_store():
 
 def takes(store, project_id):
     directory = store.project_dir(project_id)
-    return [json.loads(p.read_text()) for p in sorted(directory.glob("take-*.json"))]
+    return sorted([json.loads(p.read_text()) for p in directory.glob("take-*.json")],key=lambda r:r.get('created_ns',0))
 
 
 def take_path(store, project_id, take_id):
@@ -101,23 +102,24 @@ class H3ContinuumTimelineSampler:
         for asset_id in {i['asset_id'] for w in job['windows'] for key in ('images','video','guide','voice') for i in w[key]}:
             store.assets.verify(asset_id)
         provider = TimelineInputs(p,job,store)
-        guide = provider.audio_source(audio_vae)
+        guide = None
         continuity = _normalize_v34_continuity(continuity)
         validate_native_masked_request(method=continuation_method,continuity=continuity,audio_continuity=True,
-                                      driving_audio_active=guide is not None,chunks=len(job['windows']))
+                                      driving_audio_active=all(provider.guide_active(i) for i in range(len(job['windows']))),chunks=len(job['windows']))
         plan = make_prompt_plan(mode="List",script=json.dumps([w['prompt'] for w in job['windows']]),
                                 chunks=len(job['windows']),chunk_seconds=p['chunk_frames']/24)
         # The existing Run Storage contract fingerprints model patches/weights,
         # CLIP, VAE, sampler and sigma bytes. Use it to qualify selected sessions.
         from ..run_storage import build_sampling_contract
+        from ..driving_audio import _tensor_sha256
         contract_plan = copy.deepcopy(plan)
-        contract_plan['timeline_studio']={'contract':1,'audio_guide':guide is not None}
+        contract_plan['timeline_studio']={'contract':1,'audio_guide':any(provider.guide_active(i) for i in range(len(job['windows'])))}
         contract, resume_safe, reasons = build_sampling_contract(model=model,model_fingerprint_value=model_fingerprint(model),
             clip=clip,video_vae=video_vae,sampler=sampler,sigmas=sigmas,prompt_plan=contract_plan,
             width=p['width'],height=p['height'],chunk_seconds=p['chunk_frames']/24,continuity=continuity,
             audio_continuity=True,base_seed=int(base_seed),reroll_from_chunk=0,reroll_nonce=0,
-            first_frame_hash=digest(first_frame.cpu().tolist()) if first_frame is not None else 'none',
-            last_frame_hash=digest(last_frame.cpu().tolist()) if last_frame is not None else 'none',strict_compatibility=False,
+            first_frame_hash=_tensor_sha256(first_frame) if first_frame is not None else 'none',
+            last_frame_hash=_tensor_sha256(last_frame) if last_frame is not None else 'none',strict_compatibility=False,
             driving_audio_vae=audio_vae)
         settings_hash=digest([contract['global'],continuation_method,job['start_chunk']])
         all_takes=takes(store,p['project_id'])
@@ -125,11 +127,10 @@ class H3ContinuumTimelineSampler:
         chosen=p.get('accepted',{}).get(str(job_index))
         previous=next((r for r in candidates if r['id']==chosen),candidates[-1] if candidates else None)
         session=None;initial=None;parent=None
-        if previous and resume_safe:
-            session=load_session(prefix=previous['session_prefix'],slot=1)
+        # Native Run Storage authenticates the selected revision's prefix.
         if job['requires_previous_job']:
             parent_id=p.get('accepted',{}).get(str(job_index-1))
-            parents=[r for r in all_takes if r['job_index']==job_index-1 and not stale_take(p,r,all_takes)]
+            parents=[r for r in all_takes if r['job_index']==job_index-1 and r.get('status')=='sampled' and not stale_take(p,r,all_takes)]
             parent=next((r for r in parents if r['id']==parent_id),parents[-1] if parents else None)
             if parent is None:
                 raise ValueError("This job needs the preceding job's valid continuation state; render jobs in order")
@@ -137,35 +138,38 @@ class H3ContinuumTimelineSampler:
                 session=None
             if session is None:
                 initial=entry_to_state(load_session(prefix=parent['session_prefix'],slot=1)['chunks'][-1])
+        provider.offset = parent.get('output_range',parent['range'])[1] if parent else job['range'][0]
+        guide = provider.audio_source(audio_vae)
         take_id=uuid.uuid4().hex
         prefix='timeline_'+p['project_id']+'_'+take_id
         record={'id':take_id,'project_id':p['project_id'],'job_index':int(job_index),'range':job['range'],
                 'indices':[w['index'] for w in job['windows']], 'input_hashes':provider.hashes,
                 'settings_hash':settings_hash,'parent_take':parent['id'] if parent else None,
-                'session_prefix':prefix,'snapshot_hash':timeline['snapshot_hash'],'status':'sampled',
+                'output_start':provider.offset,'created_ns':time.time_ns(),'session_prefix':prefix,'snapshot_hash':timeline['snapshot_hash'],'status':'sampled',
                 'operation':p['operation'],'selection':p['selection'],'project_snapshot':p}
-        # The native Session format is also a restart checkpoint after every
-        # completed chunk. It is never used unless its settings qualify.
-        def checkpoint(entries,identity_hash,first_frame_hash,last_frame_hash):
-            from ..v2.session import make_session
-            partial=make_session(chunks=entries,width=p['width'],height=p['height'],chunk_seconds=p['chunk_frames']/24,
-                identity_hash=identity_hash,model_fingerprint_value=model_fingerprint(model),
-                settings={'first_frame_hash':first_frame_hash,'last_frame_hash':last_frame_hash,'continuation_method':continuation_method})
-            save_session(partial,prefix=prefix,slot=1)
-            partial_record={**record,'status':'partial'}
-            store.atomic_json(take_path(store,p['project_id'],take_id),partial_record)
-        provider.checkpoint=checkpoint
+        from ..run_storage import run_storage_scope
+        storage_name = 'timeline_'+p['project_id']+'_'+str(job['start_chunk'])+'_'+(parent['id'] if parent else 'origin')
         from contextlib import nullcontext
         capture = capture_chunk_refine_state() if emit_refine_state else nullcontext([])
-        with continuation_method_scope(continuation_method),capture as captured:
-            entries,last_state,new_session,report=run_sequence(model=model,clip=clip,video_vae=video_vae,audio_vae=None,
-                sampler=sampler,sigmas=sigmas,first_frame=first_frame,last_frame=last_frame,prompt_plan=plan,
-                width=p['width'],height=p['height'],continuity=continuity,base_seed=int(base_seed)+job['start_chunk'],
-                audio_continuity=True,exact_total_duration=False,diagnostics_mode=DIAGNOSTICS_FULL,
-                reroll_from_chunk=int(regenerate_from),reroll_nonce=int(reroll_nonce),strict_compatibility=False,debug=False,
-                latent_only=True,session=session,initial_state=initial,driving_audio_source=guide,driving_audio_vae=audio_vae,timeline_inputs=provider)
+        with run_storage_scope(storage_name,prompt=prompt,unique_id=unique_id) as storage:
+            if previous and previous.get('storage_name') == storage_name:
+                storage.preferred_revision = previous.get('revision_id')
+            def checkpoint(entries,identity_hash,first_frame_hash,last_frame_hash):
+                partial_record={**record,'status':'partial','storage_name':storage_name,'revision_id':storage.revision_id}
+                store.atomic_json(take_path(store,p['project_id'],take_id),partial_record)
+            provider.checkpoint=checkpoint
+            with continuation_method_scope(continuation_method),capture as captured:
+                entries,last_state,new_session,report=run_sequence(model=model,clip=clip,video_vae=video_vae,audio_vae=None,
+                    sampler=sampler,sigmas=sigmas,first_frame=first_frame,last_frame=last_frame,prompt_plan=plan,
+                    width=p['width'],height=p['height'],continuity=continuity,base_seed=int(base_seed)+job['start_chunk'],
+                    audio_continuity=True,exact_total_duration=False,diagnostics_mode=DIAGNOSTICS_FULL,
+                    reroll_from_chunk=1 if emit_refine_state else int(regenerate_from),reroll_nonce=int(reroll_nonce),strict_compatibility=False,debug=False,
+                    latent_only=True,session=None,initial_state=initial,driving_audio_source=guide,driving_audio_vae=audio_vae,timeline_inputs=provider)
+            storage.finalize(session=new_session,report=report)
+            record.update(storage_name=storage_name,revision_id=storage.revision_id)
         save_session(new_session,prefix=prefix,slot=1)
-        record['model_inputs']=provider.manifests
+        record['model_inputs']=(previous.get('model_inputs',[])[:sum(bool(e.get('reused')) for e in entries)] if previous else [])+provider.manifests
+        record['output_range']=[provider.offset,provider.offset+sum(int(e['plan']['net_frames']) for e in entries)]
         record['reused_chunks']=sum(bool(e.get('reused')) for e in entries)
         store.atomic_json(take_path(store,p['project_id'],take_id),record)
         decode,assembly=prepare_physical_decode_entries(entries,chunk_seconds=p['chunk_frames']/24,preserve_final_frame=last_frame is not None,terminal_merged=False)
@@ -191,8 +195,8 @@ class H3ContinuumTimelineTake:
         from .compose import write_video_frames
         store=project_store();record=copy.deepcopy(take)
         # Exactly the requested job duration is placed into the output cut.
-        n=record['range'][1]-record['range'][0]
-        if images.shape[0]<n:raise ValueError('Decoded take is shorter than its logical render range')
+        n=record['output_range'][1]-record['output_range'][0]
+        if images.shape[0]<n:raise ValueError('Save Take requires the natural retained timeline from the assembler; select Natural retained timeline before saving')
         with tempfile.TemporaryDirectory(prefix='h3-take-') as directory:
             d=Path(directory);video=d/'video.mkv';sound=d/'audio.f32';output=d/'take.mkv'
             write_video_frames((images[:n].detach().cpu().clamp(0,1).numpy()*255).round().astype(np.uint8),video)
@@ -202,7 +206,7 @@ class H3ContinuumTimelineTake:
             pcm[:,:count].T.astype('<f4').tofile(sound)
             run_process(['ffmpeg','-v','error','-nostdin','-i',str(video),'-f','f32le','-ar',str(rate),'-ac',str(pcm.shape[0]),'-i',str(sound),'-c:v','copy','-c:a','pcm_f32le','-t',str(n/24),str(output)])
             with output.open('rb') as stream:asset=store.assets.register(stream,'Take '+record['id'][:8]+'.mkv')
-        rendition={'take_id':record['id'],'asset':asset,'range':record['range']}
+        rendition={'take_id':record['id'],'asset':asset,'range':record['output_range']}
         path=store.project_dir(record['project_id'])/('render-'+record['id']+'.json')
         if path.exists() and json.loads(path.read_text())!=rendition:
             raise ValueError('This take already has a different rendered output; create a new take')

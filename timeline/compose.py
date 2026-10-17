@@ -54,6 +54,16 @@ def export_project(p, store, output, *, codec="lossless", cancel=check_cancel):
     output=Path(output)
     output.parent.mkdir(parents=True,exist_ok=True)
     temp=output.with_name(output.stem+"-"+uuid.uuid4().hex+output.suffix)
+    # A retained render must never silently use stale generated footage.
+    from .nodes import stale_take, takes
+    records=takes(store,p["project_id"])
+    by_id={r["id"]:r for r in records}
+    for track in p["tracks"]:
+        if track.get("muted") or track["role"]!="generated":continue
+        for c in track["clips"]:
+            take_id=c.get("take_id")
+            if take_id and (take_id not in by_id or stale_take(p,by_id[take_id],records)):
+                raise ValueError("Selected generated footage has stale inputs or continuation; choose a valid take before export")
     duration=p["duration_frames"]
     rate=48000
     try:

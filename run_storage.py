@@ -1061,9 +1061,10 @@ class RunStorageController:
                 conditioning_mode_uses_video_vae(str(conditioning_mode))
                 or reference_video_contract is not None
                 or timeline_video_contract is not None
+                or bool(prompt_plan.get("timeline_studio"))
             ),
             require_reference_audio_vae=reference_audio_contract is not None,
-            require_audio_vae=driving_audio_contract is not None,
+            require_audio_vae=driving_audio_contract is not None or bool(prompt_plan.get("timeline_studio")),
         )
         contract, safe, reasons = build_sampling_contract(
             model=model, model_fingerprint_value=model_fingerprint_value,
@@ -1128,6 +1129,14 @@ class RunStorageController:
                     candidates.append(_read_json(path))
                 except Exception:
                     continue
+        preferred = getattr(self,"preferred_revision",None)
+        if preferred:
+            # Timeline take selection pins the immutable causal source. Do not
+            # substitute a longer prefix from a different alternative.
+            if not re.fullmatch(r"[0-9a-f]{16}",str(preferred)):
+                raise RunStorageError("Invalid selected Timeline revision identifier")
+            selected_path=self.revisions_root / preferred / "manifest.json"
+            candidates=[_read_json(selected_path)] if selected_path.is_file() and safe else []
         for candidate in candidates:
             schema = int(candidate.get("run_storage_schema_version", -1))
             if schema == RUN_STORAGE_SCHEMA_VERSION:

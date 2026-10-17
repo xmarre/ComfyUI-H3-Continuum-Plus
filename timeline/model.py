@@ -56,6 +56,8 @@ def validate(project):
         raise ValueError("H3 Timeline Studio output requires 24 fps")
     duration = integer(p.get("duration_frames"), "duration", 1)
     integer(p.get("chunk_frames"), "chunk length", 1)
+    if not 96 <= p["chunk_frames"] <= 360:
+        raise ValueError("Continuum chunk duration must be between 4 and 15 seconds")
     for key in ("width", "height"):
         if integer(p.get(key), key, 32) % 32:
             raise ValueError(f"Timeline {key} must be a multiple of 32")
@@ -131,7 +133,7 @@ def clip_input(p, t, c, start, end):
             "speed": str(rational(c["speed"])), "padding": c["padding"],
             "audio_role": c["audio_role"], "gain": str(rational(c.get("gain", 1))),
             "fade_in": c.get("fade_in", 0), "fade_out": c.get("fade_out", 0),
-            "clip_range": [c["start"], c["end"]], "alias": c.get("alias", assets.get(c.get("asset_id"), {}).get("alias", "")),
+            "clip_range": [c["start"], c["end"]], "alias": (c.get("alias") or assets.get(c.get("asset_id"), {}).get("alias", "")),
             "text": c.get("text", ""), "override": bool(c.get("override"))}
 
 
@@ -151,15 +153,36 @@ def compile_window(p, index):
     text = str(prompts.get("global", ""))
     # Reuse existing Fixed/List/Timeline parser, including permissive fallback.
     script = str(prompts.get("script", ""))
+    timed = False
     if script:
-        from ..v2.prompts import make_prompt_plan
-        # The existing parser has a 16-chunk API. Resolve only the local batch;
-        # timeline prompt clips provide unrestricted project-length authoring.
-        batch = index // 16
-        count = min(16, (p["duration_frames"] + size - 1) // size - batch * 16)
-        plan = make_prompt_plan(mode=prompts.get("mode", "Fixed"), script=script,
-                                chunks=count, chunk_seconds=size / 24)
-        text += "\n" + plan["prompts"][index % 16]
+        from ..v2.prompts import resolve_prompt_mode, parse_timeline_sections, timeline_preamble, _list_values
+        from ..constants import PROMPT_MODE_FIXED, PROMPT_MODE_LIST, PROMPT_MODE_TIMELINE
+        try:
+            mode = resolve_prompt_mode(prompts.get("mode", "Fixed"), script)
+            if mode == PROMPT_MODE_LIST:
+                values = _list_values(script)
+                text += "\n" + values[min(index, len(values)-1)]
+            elif mode == PROMPT_MODE_TIMELINE:
+                sections = parse_timeline_sections(script)
+                exact = [s for s in sections if (s["kind"] == "chunk" and s["index"] == index+1) or
+                         (s["kind"] == "time" and rational(s["start"]) == Fraction(start,24) and rational(s["end"]) == Fraction(end,24))]
+                selected = exact or [s for s in sections if s["kind"] == "time" and rational(s["start"]) < Fraction(end,24) and Fraction(start,24) < rational(s["end"])]
+                text += "\n" + timeline_preamble(script)
+                if exact:
+                    text += "\n" + exact[0]["body"]
+                elif selected:
+                    for section in selected:
+                        a,b=max(Fraction(start,24),rational(section["start"])),min(Fraction(end,24),rational(section["end"]))
+                        text += f"\n{float(a):.9f}-{float(b):.9f}s:\n{section['body']}"
+                else:
+                    preceding = [s for s in sections if (s["kind"]=="chunk" and s["index"]<=index+1) or (s["kind"]=="time" and rational(s["end"])<=Fraction(start,24))]
+                    text += "\n" + (preceding[-1] if preceding else sections[0])["body"]
+                timed = True
+            else:
+                text += "\n" + script
+        except (ValueError, TypeError, IndexError, KeyError):
+            # Same permissive opaque fallback as existing prompt plans.
+            text += "\n" + script
     for i in inputs:
         if i["role"] == "prompt":
             body = i["text"]
@@ -167,7 +190,8 @@ def compile_window(p, index):
                 text = str(prompts.get("global", "")) + "\n" + body
             else:
                 a, b = i["range"]
-                text += f"\n[{float(Fraction(a-start,24)):.6f}-{float(Fraction(b-start,24)):.6f}s] {body}"
+                text += f"\n{float(Fraction(a,24)):.9f}-{float(Fraction(b,24)):.9f}s:\n{body}"
+                timed = True
     text = re.sub(r"@([\w-]+)", lambda m: aliases.get(m[1], m[0]), text).strip()
     def audio_identity(i):
         return {k:v for k,v in i.items() if k not in {"audio_role", "role", "alias", "text", "override"}}
@@ -177,8 +201,8 @@ def compile_window(p, index):
     video = [{k:v for k,v in i.items() if k in {"asset_id","range","source","speed","padding"}} for i in inputs if i["role"] == "video_guide"]
     semantic = {"prompt": text, "images": images, "video": video,
                 "guide": guide, "voice": [audio_identity(i) for i in inputs if i["audio_role"] == "reference"]}
-    return {"index": index, "range": [start, end], **semantic, "aliases": aliases,
-            "generation_hash": digest(semantic), "final_hash": digest(final)}
+    return {"index": index, "range": [start, end], "timed_prompt": timed, **semantic, "aliases": aliases,
+            "generation_hash": digest(semantic), "final": final, "final_hash": digest(final)}
 
 
 def compile_project(project):

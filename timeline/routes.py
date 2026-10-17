@@ -136,14 +136,16 @@ def register_routes():
             selected=p.setdefault('accepted',{})
             # Selecting a different upstream take invalidates selected suffixes.
             old=selected.get(str(record['job_index']))
+            invalidated=[]
             if old!=record['id']:
                 for k in list(selected):
-                    if int(k)>record['job_index']:selected.pop(k)
+                    if int(k)>record['job_index']:invalidated.append(selected.pop(k))
             selected[str(record['job_index'])]=record['id']
             lane=next((t for t in p['tracks'] if t['id']=='accepted-takes'),None)
             if lane is None:
                 lane={'id':'accepted-takes','role':'generated','name':'Accepted takes','clips':[]};p['tracks'].append(lane)
-            a,b=record['range'];sa,sb=record['selection']
+            lane['clips']=[c for c in lane['clips'] if c.get('take_id') not in invalidated]
+            a,b=record.get('output_range',record['range']);sa,sb=record['selection']
             a,b=max(a,sa),min(b,sb)
             # Remove overlapping old generated clips, retaining their unedited sides.
             remaining=[]
@@ -154,8 +156,8 @@ def register_routes():
                     from .model import source_time
                     remaining.append({**c,'id':uuid.uuid4().hex,'start':b,'source_in':str(source_time(c,b))})
             remaining.append({'id':record['id'],'take_id':record['id'],'asset_id':asset['id'],'start':a,'end':b,
-                'source_in':str((a-record['range'][0])/24),'speed':'1','padding':'error',
-                'audio_role':'final' if not any(w['guide'] for w in compile_project(record['project_snapshot'])['jobs'][record['job_index']]['windows']) else 'neither'})
+                'source_in':str((a-record.get('output_range',record['range'])[0])/24),'speed':'1','padding':'error',
+                'audio_role':'neither' if any(w['final'] for w in compile_project(record['project_snapshot'])['jobs'][record['job_index']]['windows']) else 'final'})
             lane['clips']=remaining
         return web.json_response(store.save(p,data['expected_revision']))
 
