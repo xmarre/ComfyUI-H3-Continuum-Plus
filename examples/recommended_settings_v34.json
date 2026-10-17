@@ -2,7 +2,8 @@
   "h3_continuum_sampler_v34": {
     "continuation_method": "Native Masked — exact continuation (Recommended)",
     "continuity": "Strong — 39 frames",
-    "audio_continuity": true
+    "audio_continuity": true,
+    "conditioning_lookahead": true
   },
   "h3_continuum_assemble_seam_v34": {
     "audio_seam": "Auto",
@@ -13,5 +14,5 @@
   "h3_continuum_finalize_duration_v34": {
     "timeline_mode": "Preserve audible tail (recommended)"
   },
-  "notes": "Settings reference only; import the standard or Turbo JSON under examples/workflows as a ComfyUI graph. Existing saved graphs retain their selected modes."
+  "notes": "Settings reference only; the optional Qwen Lookahead (default true) applies to eligible adjacent fixed-geometry chunks. Import the standard or Turbo V3.4 JSON as a graph. Existing saved graphs retain selected settings."
 }

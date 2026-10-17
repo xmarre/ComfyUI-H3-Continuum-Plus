@@ -1,5 +1,12 @@
 # ComfyUI-H3-Continuum-Plus
 
+## v3.4.9 — coordinated release (17 October 2026)
+
+This release merges Continuum **#44/#46/#47** alongside **Flow v0.3.14**, **VDN-H3-Plus v1.5.10** and **Sol-H3 v0.1.11**. #47's `Qwen Lookahead` (default true, eligible fixed-geometry chunks only) retains one descriptor-checked, detached CPU conditioning result; logs `H3C-PT236` (prepared), `H3C-PT237` (consumed) confirm reuse. Use `H3C_CONDITIONING_LOOKAHEAD=0` to disable globally. #46's causal overlap-dialogue conditioning is **experimental**, not a demonstrated gibberish fix; use `H3C_CAUSAL_DIALOGUE_HISTORY=0` for comparison. #44 fixes delayed flash and Auto 3 tone-repair release edges but does not guarantee underlying model tone continuity. Existing standard/Turbo workflows preserve native masked continuation, strong 39-frame overlap, Auto audio, Auto 3 tone, and audible-tail-safe assembly. See [v3.4 settings](examples/recommended_settings_v34.json), [causal dialogue](docs/CAUSAL_DIALOGUE_HISTORY.md), and [Qwen lifecycle](docs/CONDITIONING_LIFECYCLE.md).
+
+**Publishing note:** GitHub release v3.4.9 is independent of the Comfy Registry. This Plus fork's `pyproject.toml` still declares the upstream registry `PublisherId=ukr8b3g-cmyk`; registry publishing is withheld pending an authorized publisher identity and credentials. No Keyless changes are included.
+
+
 > **Plus fork:** This is the `xmarre` maintained Plus fork of [ukr8b3g-cmyk/ComfyUI-H3-Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum). It preserves the upstream project's foundation while carrying additional features, integrations, fixes, and behavior that may intentionally diverge from upstream.
 
 Long-form MiniMax H3 video generation for ComfyUI with restartable chunks, persistent references, Driving Audio, Video Reference, seam correction, and optional Spectrum interoperability.
