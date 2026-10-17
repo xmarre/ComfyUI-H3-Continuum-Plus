@@ -181,7 +181,8 @@ export function placeAsset(p, asset, track, frame, duration) {
       ratio((asset.video || asset.audio || {}).start_time || 0),
     ),
     speed: "1",
-    padding: "error",
+    // Audio streams commonly end a few milliseconds before their video.
+    padding: track.role === "audio" ? "silence" : "error",
     audio_role: track.role === "audio" ? "final" : "neither",
     alias: asset.alias || "",
     name: asset.name,

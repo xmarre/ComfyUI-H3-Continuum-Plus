@@ -212,3 +212,21 @@ def test_multiple_semantic_aliases_for_one_image_share_one_picture_slot():
     assert len(result["images"]) == 1
     assert result["aliases"] == {"Alice": "<Picture 1>", "Lead": "<Picture 1>"}
     assert result["prompt"] == "<Picture 1> is the <Picture 1>"
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        "bad",
+        {"stop_chunk": 1, "take_id": "a" * 32},
+        {"first_chunk": -1, "stop_chunk": 1, "take_id": "a" * 32},
+        {"first_chunk": 2, "stop_chunk": 2, "take_id": "a" * 32},
+        {"first_chunk": 0, "stop_chunk": 1, "take_id": "../x"},
+        {"first_chunk": 0, "stop_chunk": 1, "take_id": "a" * 32, "parent_take": 3},
+    ],
+)
+def test_malformed_accepted_windows_are_rejected_as_contract_errors(window):
+    p = blank_project()
+    p["accepted_windows"] = [window]
+    with pytest.raises(ValueError):
+        compile_project(p)

@@ -192,10 +192,18 @@ def register_routes():
     async def waveform(request):
         import numpy as np
 
-        path = project_store().assets.path(request.match_info["asset_id"])
+        assets = project_store().assets
+        path = assets.path(request.match_info["asset_id"])
         start = max(0, float(request.query.get("start", "0")))
         end = min(start + 60, float(request.query.get("end", str(start + 30))))
-        pcm = await _media_cpu(audio_window, path, str(start), str(end), 1000, cancel=_request_cancel
+        pcm = await _media_cpu(
+            audio_window,
+            path,
+            str(start),
+            str(end),
+            1000,
+            cancel=_request_cancel,
+            cache=assets.pcm_cache,
         )
         peaks = np.max(np.abs(pcm), axis=0)
         return web.json_response(

@@ -62,7 +62,22 @@ def run_process(args, *, cancel=check_cancel):
                     proc.wait()
 
 
+_probe_cache = {}
+_probe_lock = threading.Lock()
+
+
+def _file_stamp(path):
+    st = Path(path).stat()
+    return (str(Path(path).resolve()), st.st_size, st.st_mtime_ns)
+
+
 def probe(path):
+    """ffprobe stream summary, memoized by file identity (path, size, mtime)."""
+    key = _file_stamp(path)
+    with _probe_lock:
+        cached = _probe_cache.get(key)
+    if cached is not None:
+        return json.loads(cached)
     result = subprocess.run(
         [
             "ffprobe",
@@ -96,7 +111,12 @@ def probe(path):
             rational(duration)
             - rational(data.get("format", {}).get("start_time", "0")),
         )
-    return {"duration": str(rational(duration)), "video": video, "audio": audio}
+    info = {"duration": str(rational(duration)), "video": video, "audio": audio}
+    with _probe_lock:
+        _probe_cache[key] = json.dumps(info)
+        while len(_probe_cache) > 256:
+            _probe_cache.pop(next(iter(_probe_cache)))
+    return info
 
 
 class AssetStore:
@@ -118,6 +138,7 @@ class AssetStore:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.pcm_cache = PcmCache(self.root.parent / "pcm_cache")
 
     def path(self, asset_id):
         if not re.fullmatch(r"[a-f0-9]{64}", str(asset_id)):
@@ -251,16 +272,144 @@ def video_frames(
     return np.stack([sampled[t] for t in requested])
 
 
+def _decode_audio_stream(path, info, rate, channels, output, *, limit, cancel):
+    """Decode the stream from its first sample onto the absolute output grid.
+
+    Output sample ``j`` is stream-origin time ``j / rate``. Packet PTS in
+    Matroska can be quantized to milliseconds; seeking and time trimming
+    independently would introduce one-sample shifts between windows, so the
+    stream is always decoded sequentially from its start and selected by
+    sample index. ``limit`` stops decoding after that many output samples.
+    """
+    channel_filter = (
+        "pan=stereo|c0=c0|c1=c0,"
+        if channels == 2 and int(info["audio"].get("channels", 2)) == 1
+        else ""
+    )
+    filters = channel_filter + f"aformat=sample_fmts=flt,aresample={rate}:async=1"
+    if limit is not None:
+        filters += f",atrim=end_sample={max(0, limit)}"
+    run_process(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-threads",
+            "1",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-format_whitelist",
+            MEDIA_FORMATS,
+            "-i",
+            str(path),
+            "-vn",
+            "-af",
+            filters,
+            "-ac",
+            str(channels),
+            "-ar",
+            str(rate),
+            "-f",
+            "f32le",
+            str(output),
+        ],
+        cancel=cancel,
+    )
+
+
+class PcmCache:
+    """Disk cache of whole decoded audio streams, one file per (media, rate).
+
+    The first window of a source pays one sequential decode; later windows are
+    memory-mapped slices, so long exports and waveform scrolling stay linear in
+    the requested duration. Least recently used files beyond ``limit_bytes``
+    are removed. ``H3_TIMELINE_PCM_CACHE_GB`` overrides the default 16 GiB.
+    """
+
+    _locks = {}
+    _guard = threading.Lock()
+
+    def __init__(self, root, limit_bytes=None):
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        if limit_bytes is None:
+            limit_bytes = int(
+                float(os.environ.get("H3_TIMELINE_PCM_CACHE_GB", "16")) * 1024**3
+            )
+        self.limit = limit_bytes
+
+    def _lock(self, name):
+        with self._guard:
+            return self._locks.setdefault(name, threading.Lock())
+
+    def stream(self, path, info, rate, channels, *, cancel):
+        identity = hashlib.sha256(
+            json.dumps([*_file_stamp(path), rate, channels, 1]).encode()
+        ).hexdigest()
+        file = self.root / (identity + ".f32")
+        with self._lock(identity):
+            if not file.is_file():
+                temporary = self.root / (identity + "-" + uuid.uuid4().hex + ".tmp")
+                try:
+                    _decode_audio_stream(
+                        path, info, rate, channels, temporary, limit=None, cancel=cancel
+                    )
+                    os.replace(temporary, file)
+                finally:
+                    temporary.unlink(missing_ok=True)
+                self._evict(keep=file)
+            else:
+                try:
+                    os.utime(file)
+                except OSError:
+                    pass
+        frames = file.stat().st_size // (4 * channels)
+        if not frames:
+            return np.zeros((0, channels), dtype=np.float32)
+        return np.memmap(file, dtype="<f4", mode="r", shape=(frames, channels))
+
+    def _evict(self, *, keep):
+        files = []
+        for entry in self.root.glob("*.f32"):
+            try:
+                st = entry.stat()
+            except OSError:
+                continue
+            files.append((st.st_mtime_ns, st.st_size, entry))
+        total = sum(size for _, size, _ in files)
+        for _, size, entry in sorted(files):
+            if total <= self.limit:
+                break
+            if entry == keep:
+                continue
+            try:
+                entry.unlink()
+                total -= size
+            except OSError:
+                continue  # Still mapped elsewhere (Windows); retry on a later eviction.
+
+
 def audio_window(
-    path, start, end, rate, *, channels=2, padding="silence", cancel=check_cancel
+    path,
+    start,
+    end,
+    rate,
+    *,
+    channels=2,
+    padding="silence",
+    cancel=check_cancel,
+    cache=None,
 ):
-    """Decode an exact absolute-PTS interval to a bounded PCM sample window."""
+    """Decode an exact absolute-PTS interval to a bounded PCM sample window.
+
+    With a :class:`PcmCache` the decoded stream is reused across calls.
+    Without one, only the stream prefix up to the window end is decoded.
+    """
     start, end = rational(start), rational(end)
     count = round(end * rate) - round(start * rate)
     if count <= 0:
         return np.zeros((channels, 0), dtype=np.float32)
-    # Seek near the window, retaining PTS for atrim. -seek_timestamp handles
-    # files whose first PTS is nonzero. Silence is an explicit missing-data policy.
     info = probe(path)
     if not info["audio"]:
         if padding != "silence":
@@ -272,61 +421,27 @@ def audio_window(
         or end > origin + rational(info["audio"].get("duration", info["duration"]))
     ):
         raise ValueError("Audio selection extends beyond the source stream")
-    with tempfile.TemporaryDirectory(prefix="h3-audio-") as directory:
-        output = Path(directory) / "window.f32"
-        # Decode audio sequentially up to the requested end, resample on the
-        # absolute stream sample grid, then select by samples. Packet PTS in
-        # Matroska can be quantized to milliseconds; seeking and time trimming
-        # independently would introduce one-sample shifts at each window.
-        # This path is bounded in RAM and never decodes the source video.
-        first = round(start * rate) - round(origin * rate)
-        last = first + count
-        channel_filter = (
-            "pan=stereo|c0=c0|c1=c0,"
-            if channels == 2 and int(info["audio"].get("channels", 2)) == 1
-            else ""
-        )
-        filters = (
-            channel_filter
-            + f"aformat=sample_fmts=flt,aresample={rate}:async=1,atrim=start_sample={max(0, first)}:end_sample={max(0, last)},asetpts=PTS-STARTPTS"
-        )
-        if first < 0:
-            filters += f",adelay={-first}S:all=1"
-        filters += f",apad=whole_len={count},atrim=end_sample={count}"
-        run_process(
-            [
-                "ffmpeg",
-                "-v",
-                "error",
-                "-nostdin",
-                "-threads",
-                "1",
-                "-protocol_whitelist",
-                "file,pipe",
-                "-format_whitelist",
-                MEDIA_FORMATS,
-                "-i",
-                str(path),
-                "-t",
-                str(float(Fraction(count, rate))),
-                "-vn",
-                "-af",
-                filters,
-                "-ac",
-                str(channels),
-                "-ar",
-                str(rate),
-                "-f",
-                "f32le",
-                str(output),
-            ],
-            cancel=cancel,
-        )
-        pcm = np.fromfile(output, dtype="<f4")
-    pcm = pcm[: count * channels]
-    if pcm.size < count * channels:
-        pcm = np.pad(pcm, (0, count * channels - pcm.size))
-    return pcm.reshape(-1, channels).T.copy()
+    first = round(start * rate) - round(origin * rate)
+    last = first + count
+    result = np.zeros((channels, count), dtype=np.float32)
+    if last <= 0:
+        return result
+    if cache is not None:
+        stream = cache.stream(path, info, rate, channels, cancel=cancel)
+        selected = np.asarray(stream[max(0, first) : last]).T
+    else:
+        with tempfile.TemporaryDirectory(prefix="h3-audio-") as directory:
+            output = Path(directory) / "window.f32"
+            _decode_audio_stream(
+                path, info, rate, channels, output, limit=last, cancel=cancel
+            )
+            pcm = np.fromfile(output, dtype="<f4")
+        frames = pcm.size // channels
+        selected = pcm[: frames * channels].reshape(-1, channels)[max(0, first) :].T
+    offset = max(0, -first)
+    n = min(selected.shape[1], count - offset)
+    result[:, offset : offset + n] = selected[:, :n]
+    return result
 
 
 def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
@@ -353,6 +468,7 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
             rate,
             padding=c["padding"],
             cancel=cancel,
+            cache=getattr(assets, "pcm_cache", None),
         )
         if speed < 0:
             pcm = pcm[:, ::-1]

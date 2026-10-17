@@ -13,6 +13,8 @@ import numpy as np
 from .media import check_cancel, mix_audio, run_process, video_frames
 from .model import active_clips, source_time
 
+AUDIO_BLOCK_FRAMES = 24 * 30
+
 
 def render_frames(
     p,
@@ -135,31 +137,34 @@ def export_project(
                 stream.width = p["width"]
                 stream.height = p["height"]
                 stream.pix_fmt = "bgr0"
-                with pcmfile.open("wb") as wav:
-                    for a in range(start, stop, 24):
-                        cancel()
-                        b = min(a + 24, stop)
-                        frames = render_frames(
-                            p,
-                            store.assets,
-                            a,
-                            b,
-                            p["width"],
-                            p["height"],
-                            cancel=cancel,
-                        )
-                        for n, pixels in enumerate(frames, a):
-                            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
-                            frame.pts = n - start
-                            frame.time_base = Fraction(1, 24)
-                            for packet in stream.encode(frame):
-                                container.mux(packet)
-                        pcm = mix_audio(
-                            p, store.assets, a, b, rate, "final", cancel=cancel
-                        )
-                        wav.write(pcm.T.astype("<f4").tobytes())
+                for a in range(start, stop, 24):
+                    cancel()
+                    b = min(a + 24, stop)
+                    frames = render_frames(
+                        p,
+                        store.assets,
+                        a,
+                        b,
+                        p["width"],
+                        p["height"],
+                        cancel=cancel,
+                    )
+                    for n, pixels in enumerate(frames, a):
+                        frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+                        frame.pts = n - start
+                        frame.time_base = Fraction(1, 24)
+                        for packet in stream.encode(frame):
+                            container.mux(packet)
                 for packet in stream.encode():
                     container.mux(packet)
+            # Mix boundaries are absolute sample indices; long blocks keep the
+            # number of cached-window reads small for long exports.
+            with pcmfile.open("wb") as wav:
+                for a in range(start, stop, AUDIO_BLOCK_FRAMES):
+                    cancel()
+                    b = min(a + AUDIO_BLOCK_FRAMES, stop)
+                    pcm = mix_audio(p, store.assets, a, b, rate, "final", cancel=cancel)
+                    wav.write(pcm.T.astype("<f4").tobytes())
             options = (
                 ["-c:v", "copy", "-c:a", "pcm_f32le"]
                 if codec == "lossless"

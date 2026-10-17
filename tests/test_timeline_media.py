@@ -344,3 +344,47 @@ def test_real_video_reference_materialization_has_exact_logical_windows(
             frames[:168].numpy(), expected.astype(np.float32) / 255
         )
         assert torch.equal(frames[168:], frames[167:168].expand(7, -1, -1, -1))
+
+
+def test_cached_audio_windows_match_sequential_decode_and_decode_once(
+    movie, tmp_path, monkeypatch
+):
+    import ComfyUI_H3_Continuum_Join.timeline.media as media
+
+    cache = media.PcmCache(tmp_path / "pcm")
+    calls = []
+    original = media._decode_audio_stream
+    monkeypatch.setattr(
+        media,
+        "_decode_audio_stream",
+        lambda *a, **k: calls.append(k["limit"]) or original(*a, **k),
+    )
+    windows = [("0", "7"), ("7", "14"), ("3.5", "10.25"), ("13.5", "15")]
+    for start, end in windows:
+        cached = audio_window(movie, start, end, 48000, cache=cache)
+        direct = audio_window(movie, start, end, 48000)
+        np.testing.assert_array_equal(cached, direct)
+    assert calls.count(None) == 1  # one full-stream decode serves every window
+
+
+def test_duplicate_import_keeps_registered_file_identity(movie, tmp_path):
+    store = AssetStore(tmp_path / "assets")
+    with movie.open("rb") as source:
+        first = store.register(source, "a.mkv")
+    before = store.path(first["id"]).stat()
+    with movie.open("rb") as source:
+        second = store.register(source, "b.mkv")
+    after = store.path(second["id"]).stat()
+    assert first["id"] == second["id"]
+    assert (before.st_ino, before.st_mtime_ns) == (after.st_ino, after.st_mtime_ns)
+    assert store.verify(first["id"]).is_file()
+
+
+def test_project_store_round_trips_non_ascii_text_as_utf8(tmp_path):
+    store = ProjectStore(tmp_path / "store")
+    p = blank_project()
+    p["prompts"]["global"] = "雨の中で微笑む · café"
+    store.save(p, 0)
+    raw = (store.project_dir(p["project_id"]) / "project.json").read_bytes()
+    assert "雨の中で微笑む".encode("utf-8") in raw
+    assert store.read(p["project_id"])["prompts"]["global"] == p["prompts"]["global"]
