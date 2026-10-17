@@ -139,6 +139,37 @@ def test_history_rows_removed_while_causal_effect_and_reference_rows_survive(opt
     assert tensor.untyped_storage().nbytes() == tensor.numel() * tensor.element_size()
 
 
+def test_continuum_control_vocabulary_never_enters_qwen_token_stream(monkeypatch):
+    monkeypatch.setenv(history.ENV, '1')
+    p = plan(
+        'Voice (S1) is low and calm.\n'
+        '[0-7s]\n(S1) says <d>[English] The first answer.</d>\n'
+        '[7-14s]\n(S1) says <d>[English] The second answer.</d>'
+    )
+    compiled = compile_(p, descriptor(exact=True))
+    clip = CausalClip()
+    history.encode_with_dialogue_history(
+        clip, compiled.text, compiled.encoder_history, {},
+    )
+    assert len(clip.calls) == 1
+    actual_qwen_text = ''.join(
+        chr(token) for token, _ in clip.calls[0]['qwen3vl_32b'][0]
+    )
+    assert actual_qwen_text == compiled.encoder_history + compiled.text
+    assert 'The first answer.' in actual_qwen_text
+    assert 'The second answer.' in actual_qwen_text
+    for leaked in (
+        'Immutable carried continuation context',
+        'Terminal speech-free lead-out',
+        'Terminal latent-grid padding only',
+        'Continuous transition of the existing shot',
+        'Authored dialogue context for the carried audio interval',
+        'utterance_continues_past_boundary',
+        'Current physical generation instructions follow',
+    ):
+        assert leaked not in actual_qwen_text
+
+
 def test_incompatible_tokenizer_and_missing_tags_fall_back_to_current_prompt():
     class OtherClip:
         def tokenize(self, text, **opts):
