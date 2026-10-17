@@ -148,10 +148,14 @@ class AssetStore:
             raise ValueError("Registered media is missing; import or relink it")
         return p
 
+    def upload_path(self):
+        """A fresh temporary path inside the store, on the assets' filesystem."""
+        return self.root / ("upload-" + uuid.uuid4().hex)
+
     def register(self, source, name=None):
         """Stream a file-like source into immutable content-addressed storage."""
         h = hashlib.sha256()
-        temporary = self.root / ("upload-" + uuid.uuid4().hex)
+        temporary = self.upload_path()
         try:
             with temporary.open("xb") as out:
                 while block := source.read(1024 * 1024):
@@ -159,21 +163,24 @@ class AssetStore:
                     out.write(block)
                 out.flush()
                 os.fsync(out.fileno())
-            asset_id = h.hexdigest()
-            info = probe(temporary)
-            final = self.root / asset_id
-            # Identical content is already registered; keep its stamp and handles.
-            if not final.is_file():
-                os.replace(temporary, final)
-            self._remember(final, self._stamp(final))
-            return {
-                "id": asset_id,
-                "name": Path(name or "Media").name,
-                "kind": "video" if info["video"] else "audio",
-                **info,
-            }
+            return self.adopt(temporary, h.hexdigest(), name)
         finally:
             temporary.unlink(missing_ok=True)
+
+    def adopt(self, temporary, asset_id, name=None):
+        """Register a complete upload written to :meth:`upload_path`."""
+        info = probe(temporary)
+        final = self.root / asset_id
+        # Identical content is already registered; keep its stamp and handles.
+        if not final.is_file():
+            os.replace(temporary, final)
+        self._remember(final, self._stamp(final))
+        return {
+            "id": asset_id,
+            "name": Path(name or "Media").name,
+            "kind": "video" if info["video"] else "audio",
+            **info,
+        }
 
     def verify(self, asset_id, *, cancel=check_cancel):
         path = self.path(asset_id)

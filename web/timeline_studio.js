@@ -36,7 +36,8 @@ function independent(node) {
   delete p.accepted_windows;
   delete p.rejected;
   p.takes = [];
-  p.ui = { ...p.ui, queuedPrompts: [] };
+  delete p.ui;
+  if (node.properties) delete node.properties.h3_timeline_view;
   for (const track of p.tracks)
     if (track.role === "generated") {
       track.role = "retained";

@@ -68,20 +68,29 @@ export class TimelineEditor {
     this.widget = widget;
     this.api = api;
     this.app = app;
-    this.history = new History(JSON.parse(widget.value));
-    this.history.value.ui ??= {};
+    const project = JSON.parse(widget.value);
+    // View state lives in node properties: it is saved with the workflow but
+    // never reaches the prompt, so scrolling cannot invalidate execution.
+    node.properties ??= {};
+    const view = {
+      ...(project.ui || {}),
+      ...(node.properties.h3_timeline_view || {}),
+    };
+    delete project.ui;
+    this.history = new History(project);
     this.serverRevision = this.p.revision || 0;
-    this.selected = this.p.ui?.selected || [];
+    this.selected = view.selected || [];
     this.clipboard = [];
-    this.playhead = this.p.ui?.playhead || 0;
+    this.playhead = view.playhead || 0;
+    this.previewMode = view.previewMode || "composed";
     this.zoom =
-      this.p.ui?.zoom ||
+      view.zoom ||
       Math.min(
         160,
         Math.max(0.2, ((innerWidth - 700) * 24) / this.p.duration_frames),
       );
     this.abort = new AbortController();
-    this.queuedIds = new Set(this.p.ui?.queuedPrompts || []);
+    this.queuedIds = new Set((view.queuedPrompts || []).slice(-64));
     this.proxy = false;
     this.closed = false;
     this.editVersion = 0;
@@ -103,7 +112,7 @@ export class TimelineEditor {
     this.root.showModal();
     this.build();
     this.render();
-    this.scroller.scrollLeft = this.p.ui?.scroll || 0;
+    this.scroller.scrollLeft = view.scroll || 0;
     this.root.focus();
   }
   get p() {
@@ -126,15 +135,22 @@ export class TimelineEditor {
     this.persistWidget();
     this.render();
   }
-  persistWidget() {
-    this.p.ui = {
-      ...this.p.ui,
+  persistView() {
+    this.node.properties.h3_timeline_view = {
       playhead: this.playhead,
       zoom: this.zoom,
       selected: [...this.selected],
-      queuedPrompts: [...this.queuedIds],
+      queuedPrompts: [...this.queuedIds].slice(-64),
       scroll: this.scroller?.scrollLeft || 0,
+      previewMode: this.previewMode,
     };
+  }
+  persistWidget() {
+    this.persistView();
+    // Undo snapshots carry the revision they were taken at; the server's
+    // current revision is authoritative for the next optimistic save.
+    this.p.revision = this.serverRevision;
+    delete this.p.ui;
     this.widget.value = JSON.stringify(this.p);
     this.node.title = "Timeline Studio · " + this.p.name;
     this.node.__timelineSummary = [
@@ -250,7 +266,7 @@ export class TimelineEditor {
       el("option", { value: "source", text: "A · original" }),
       el("option", { value: "generated", text: "B · generated" }),
     );
-    this.compare.value = this.p.ui?.previewMode || "composed";
+    this.compare.value = this.previewMode;
     this.compare.onchange = () => this.guard(() => this.preview());
     const center = el(
       "section",
@@ -347,8 +363,8 @@ export class TimelineEditor {
     this.scroller.append(this.timeline);
     this.root.append(this.scroller);
     this.scroller.addEventListener("scroll", () => {
-      this.drawTimeline();
-      this.persistWidget();
+      this.scheduleDraw();
+      this.persistView();
     });
     this.root.addEventListener("dragover", (e) => e.preventDefault());
     this.root.addEventListener("drop", (e) => {
@@ -388,7 +404,7 @@ export class TimelineEditor {
       ),
       details,
     );
-    this.resize = new ResizeObserver(() => this.drawTimeline());
+    this.resize = new ResizeObserver(() => this.scheduleDraw());
     this.resize.observe(this.scroller);
   }
   render() {
@@ -1064,30 +1080,59 @@ export class TimelineEditor {
     this.root.append(menu);
     menu.addEventListener("mouseleave", () => menu.remove());
   }
+  // Thumbnails and waveforms are requested on fixed grids so scrolling only
+  // adds new tiles and every URL stays cacheable.
   filmstrip(element, c, left, right) {
+    const step = 2 ** Math.max(0, Math.ceil(Math.log2((80 * 24) / this.zoom)));
     const visibleStart = Math.max(
       c.start,
-      Math.floor(((left - 180) * 24) / this.zoom),
+      Math.floor(((left - 180) * 24) / this.zoom / step) * step,
     );
     const visibleEnd = Math.min(
       c.end,
       Math.ceil(((right - 180) * 24) / this.zoom),
     );
-    const step = Math.max(1, Math.ceil((visibleEnd - visibleStart) / 5));
     for (let f = visibleStart; f < visibleEnd; f += step) {
-      const x = ((f - c.start) * this.zoom) / 24;
+      const tile = Math.max(f - (f % step), c.start);
+      const x = ((tile - c.start) * this.zoom) / 24;
       element.append(
         el("img", {
           class: "h3ts-filmstrip",
-          src: BASE + "/thumbnail/" + c.asset_id + "?pts=" + sourceAt(c, f),
+          src:
+            BASE +
+            "/thumbnail/" +
+            c.asset_id +
+            "?pts=" +
+            sourceAt(c, tile).toFixed(6),
           loading: "lazy",
           alt: "",
           style: `left:${x}px;width:${(step * this.zoom) / 24}px`,
         }),
       );
+      f = tile;
     }
   }
-  async waveform(element, c) {
+  waveTile(asset, start, end) {
+    const key = `${asset}:${start}:${end}`;
+    if (!this.waveCache.has(key)) {
+      const pending = request(
+        this.api,
+        `/waveform/${asset}?start=${start}&end=${end}`,
+        { signal: this.abort.signal },
+      ).catch((e) => {
+        this.waveCache.delete(key);
+        throw e;
+      });
+      this.waveCache.set(key, pending);
+      if (this.waveCache.size > 256)
+        this.waveCache.delete(this.waveCache.keys().next().value);
+    }
+    return this.waveCache.get(key);
+  }
+  waveform(element, c) {
+    const speed = ratio(c.speed || 1);
+    const pxPerSource = this.zoom / Math.abs(speed);
+    const span = 2 ** Math.min(5, Math.max(-3, Math.round(Math.log2(512 / pxPerSource))));
     const left = Math.max(
       c.start,
       Math.floor(((this.scroller.scrollLeft - 180) * 24) / this.zoom),
@@ -1099,40 +1144,45 @@ export class TimelineEditor {
           this.zoom,
       ),
     );
-    const sa = sourceAt(c, left),
-      sb = sourceAt(c, right);
-    const a = Math.min(sa, sb),
-      b = Math.min(a + 60, Math.max(sa, sb));
-    const key = `${c.asset_id}:${a}:${b}`;
-    let data = this.waveCache.get(key);
-    if (!data) {
-      try {
-        data = await request(
-          this.api,
-          `/waveform/${c.asset_id}?start=${Math.max(0, a)}&end=${Math.max(a + 0.1, b)}`,
-          { signal: this.abort.signal },
-        );
-        if (this.waveCache.size > 64)
-          this.waveCache.delete(this.waveCache.keys().next().value);
-        this.waveCache.set(key, data);
-      } catch {
-        return;
-      }
+    if (right <= left) return;
+    const sa = Math.min(sourceAt(c, left), sourceAt(c, right));
+    const sb = Math.max(sourceAt(c, left), sourceAt(c, right));
+    for (
+      let k = Math.max(0, Math.floor(sa / span));
+      k * span < sb;
+      k++
+    ) {
+      const start = k * span,
+        end = start + span;
+      // Timeline x of a source time inside this clip.
+      const at = (t) =>
+        (((t - ratio(c.source_in || 0)) / speed) * this.zoom);
+      const x = Math.min(at(start), at(end));
+      this.waveTile(c.asset_id, start, end)
+        .then((data) => {
+          if (!element.isConnected) return;
+          const canvas = el("canvas", {
+            width: String(data.peaks.length),
+            height: "25",
+            class: "h3ts-waveform",
+            style: `left:${x}px;width:${span * pxPerSource}px`,
+          });
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#9ee8c5";
+          const peaks = speed < 0 ? [...data.peaks].reverse() : data.peaks;
+          for (let i = 0; i < peaks.length; i++)
+            ctx.fillRect(i, 12 - peaks[i] * 12, 1, Math.max(1, peaks[i] * 24));
+          element.append(canvas);
+        })
+        .catch(() => {});
     }
-    if (!element.isConnected) return;
-    const canvas = el("canvas", {
-      width: "512",
-      height: "25",
-      class: "h3ts-waveform",
-      style: `left:${((left - c.start) * this.zoom) / 24}px;width:${((b - a) * this.zoom) / Math.abs(ratio(c.speed || 1))}px`,
+  }
+  scheduleDraw() {
+    if (this.drawPending) return;
+    this.drawPending = requestAnimationFrame(() => {
+      this.drawPending = 0;
+      if (!this.closed) this.drawTimeline();
     });
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#9ee8c5";
-    const peaks =
-      ratio(c.speed || 1) < 0 ? [...data.peaks].reverse() : data.peaks;
-    for (let i = 0; i < peaks.length; i++)
-      ctx.fillRect(i, 12 - peaks[i] * 12, 1, Math.max(1, peaks[i] * 24));
-    element.append(canvas);
   }
   async playComposition() {
     if (!this.video.paused) {
@@ -1166,7 +1216,7 @@ export class TimelineEditor {
   async preview(forceProxy = false) {
     this.compositionStart = null;
     const mode = this.compare.value;
-    this.p.ui.previewMode = mode;
+    this.previewMode = mode;
     const roles =
       mode === "source"
         ? ["retained"]
@@ -1232,7 +1282,7 @@ export class TimelineEditor {
     );
     this.drawPlayhead();
     this.guard(() => this.preview());
-    this.persistWidget();
+    this.persistView();
   }
   drawPlayhead() {
     if (this.playheadLine)
@@ -1245,7 +1295,7 @@ export class TimelineEditor {
   setZoom(z) {
     this.zoom = Math.max(0.1, Math.min(1000, z));
     this.drawTimeline();
-    this.persistWidget();
+    this.persistView();
   }
   copy() {
     this.clipboard = selectedClips(this.p, this.selected).map(([t, c]) => [
@@ -1274,6 +1324,9 @@ export class TimelineEditor {
     this.render();
   }
   key(e) {
+    // The editor is modal: no ComfyUI shortcut (queue, delete node, ...) may
+    // act on the graph behind it, including while typing in its fields.
+    e.stopPropagation();
     if (e.target.closest("input,textarea,select,[contenteditable=true]"))
       return;
     let handled = true;
@@ -1395,7 +1448,7 @@ export class TimelineEditor {
       // ahead of its predecessor.
       const queued = await this.api.queuePrompt(0, payload);
       this.queuedIds.add(queued.prompt_id);
-      this.persistWidget();
+      this.persistView();
     }
     this.message(
       `${plan.jobs.length} immutable job snapshot(s) queued. Connect decoded assembly to Save Take for review.`,
@@ -1531,6 +1584,7 @@ export class TimelineEditor {
     this.persistWidget();
     this.abort.abort();
     this.resize.disconnect();
+    cancelAnimationFrame(this.drawPending);
     clearTimeout(this.exportTimer);
     this.video.pause();
     this.video.removeAttribute("src");

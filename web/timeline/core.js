@@ -55,14 +55,17 @@ export function trim(p, ids, edge, frame, ripple = false) {
         c.start = old.start;
         c.end = old.end + delta;
       }
-      for (const other of track.clips)
-        if (other.id !== c.id && other.start >= old.end) {
-          other.start += delta;
-          other.end += delta;
-        }
+      // Ripple keeps every unlocked lane in sync with the edited one.
+      for (const lane of p.tracks)
+        if (!lane.locked)
+          for (const other of lane.clips)
+            if (other.id !== c.id && other.start >= old.end) {
+              other.start += delta;
+              other.end += delta;
+            }
       p.duration_frames = Math.max(
         p.duration_frames,
-        ...track.clips.map((x) => x.end),
+        ...p.tracks.flatMap((t) => t.clips.map((x) => x.end)),
       );
     }
   }
@@ -86,27 +89,28 @@ export function move(p, ids, delta, slip = false) {
   );
 }
 export function remove(p, ids, ripple = false) {
+  const removed = [];
   for (const track of p.tracks) {
     if (track.locked) continue;
-    const removed = track.clips
-      .filter((c) => ids.includes(c.id))
-      .sort((a, b) => b.start - a.start);
+    removed.push(...track.clips.filter((c) => ids.includes(c.id)));
     track.clips = track.clips.filter((c) => !ids.includes(c.id));
-    if (ripple) {
-      const intervals = [];
-      for (const c of [...removed].sort((a, b) => a.start - b.start)) {
-        const last = intervals.at(-1);
-        if (last && c.start <= last[1]) last[1] = Math.max(last[1], c.end);
-        else intervals.push([c.start, c.end]);
-      }
-      for (const [start, end] of intervals.reverse())
+  }
+  if (!ripple) return;
+  const intervals = [];
+  for (const c of removed.sort((a, b) => a.start - b.start)) {
+    const last = intervals.at(-1);
+    if (last && c.start <= last[1]) last[1] = Math.max(last[1], c.end);
+    else intervals.push([c.start, c.end]);
+  }
+  // Close each removed span on every unlocked lane, latest span first.
+  for (const [start, end] of intervals.reverse())
+    for (const track of p.tracks)
+      if (!track.locked)
         for (const next of track.clips)
           if (next.start >= end) {
             next.start -= end - start;
             next.end -= end - start;
           }
-    }
-  }
 }
 export function paste(p, clipboard, frame) {
   if (!clipboard.length) return [];

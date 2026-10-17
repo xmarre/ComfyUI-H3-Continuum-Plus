@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
-import tempfile
+import os
+import subprocess
 import threading
 import uuid
 
@@ -18,6 +20,34 @@ from .nodes import project_store, stale_take, take_path, takes
 _PREFIX = "/h3_continuum/timeline"
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
+# Registered media is content addressed, so derived views never change.
+_IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}
+
+
+def _prune(root, pattern, limit_bytes, keep):
+    """Keep a derived-media directory under ``limit_bytes``, oldest first."""
+    import re
+
+    entries = []
+    for path in root.glob(pattern):
+        if re.search(r"-[0-9a-f]{32}$", path.stem):
+            continue  # An in-progress render owned by another request.
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        entries.append((st.st_mtime_ns, st.st_size, path))
+    total = sum(size for _, size, _ in entries)
+    for _, size, path in sorted(entries):
+        if total <= limit_bytes:
+            break
+        if path == keep:
+            continue
+        try:
+            path.unlink()
+            total -= size
+        except OSError:
+            continue
 
 
 def _request_cancel():
@@ -85,14 +115,29 @@ def register_routes():
     @endpoint("post", "/import")
     async def ingest(request):
         # Browser File/Blob streaming and aiohttp chunks avoid whole-file RAM.
+        # Upload straight into the store: one copy on disk, hashed as it
+        # streams, never buffered whole in RAM or a separate temp volume.
         store = project_store()
-        with tempfile.TemporaryFile() as file:
-            async for chunk in request.content.iter_chunked(1024 * 1024):
-                file.write(chunk)
-            file.seek(0)
-            asset = await asyncio.to_thread(
-                store.assets.register, file, request.query.get("name", "Media")
-            )
+        temporary = store.assets.upload_path()
+        digest = hashlib.sha256()
+        try:
+            with temporary.open("xb") as file:
+                async for chunk in request.content.iter_chunked(1024 * 1024):
+                    digest.update(chunk)
+                    file.write(chunk)
+                file.flush()
+                os.fsync(file.fileno())
+            try:
+                asset = await asyncio.to_thread(
+                    store.assets.adopt,
+                    temporary,
+                    digest.hexdigest(),
+                    request.query.get("name", "Media"),
+                )
+            except subprocess.CalledProcessError as exc:
+                raise ValueError("Unsupported or unreadable media file") from exc
+        finally:
+            temporary.unlink(missing_ok=True)
         if asset.get("video") and (
             asset["video"].get("nb_frames") == "1"
             or asset["name"]
@@ -167,6 +212,7 @@ def register_routes():
                 temporary.replace(output)
             finally:
                 temporary.unlink(missing_ok=True)
+            _prune(root, "*.mp4", 4 * 1024**3, output)
         return web.FileResponse(output, headers={"Content-Type": "video/mp4"})
 
     @endpoint("get", "/thumbnail/{asset_id}")
@@ -186,7 +232,9 @@ def register_routes():
         )
         data = io.BytesIO()
         Image.fromarray(pixels[0]).save(data, format="JPEG")
-        return web.Response(body=data.getvalue(), content_type="image/jpeg")
+        return web.Response(
+            body=data.getvalue(), content_type="image/jpeg", headers=_IMMUTABLE
+        )
 
     @endpoint("get", "/waveform/{asset_id}")
     async def waveform(request):
@@ -214,7 +262,8 @@ def register_routes():
                     float(np.max(x)) if x.size else 0
                     for x in np.array_split(peaks, 512)
                 ],
-            }
+            },
+            headers=_IMMUTABLE,
         )
 
     @endpoint("get", "/takes/{project_id}")
@@ -391,6 +440,7 @@ def register_routes():
                 render_range=(start, stop),
                 cancel=_request_cancel,
             )
+            _prune(root, "*.mp4", 2 * 1024**3, output)
         return web.json_response(
             {"url": _PREFIX + "/composition/" + key, "start": start, "end": stop}
         )
@@ -420,6 +470,8 @@ def register_routes():
         active = sum(t["status"] == "running" for t in _tasks.values())
         if active >= 2:
             raise ValueError("Two exports are already running")
+        for finished in [k for k, v in _tasks.items() if v["status"] != "running"][:-16]:
+            _tasks.pop(finished, None)
         job = uuid.uuid4().hex
         event = threading.Event()
         output = Path(folder_paths.get_output_directory()) / (

@@ -451,6 +451,8 @@ def guide_scope_for(p, indices):
 
 def compile_project(project):
     p = validate(project)
+    # Editor view state is not part of the request-local plan or its identity.
+    p.pop("ui", None)
     size = p["chunk_frames"]
     a, b = p["selection"]
     # Selected intervals may cut inside a chunk. Render its complete causal
