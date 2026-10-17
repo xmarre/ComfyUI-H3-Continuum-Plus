@@ -2,15 +2,21 @@ name: Publish to Comfy registry
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-    paths:
-      - "pyproject.toml"
+    inputs:
+      tag:
+        description: Published GitHub release tag to publish
+        required: true
+        type: string
+  workflow_run:
+    workflows: [release]
+    types: [completed]
 
 permissions:
   contents: read
+
+concurrency:
+  group: continuum-registry-${{ inputs.tag || github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
 
 env:
   COMFY_CLI_VERSION: "1.13.0"
@@ -19,22 +25,102 @@ env:
 
 jobs:
   publish-node:
-    name: Publish Custom Node to registry
+    name: Publish xmarre H3 Continuum Plus
+    if: >-
+      github.repository_owner == 'xmarre' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main'
+        )
+      )
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'xmarre' && vars.H3_CONTINUUM_REGISTRY_PUBLISH_ENABLED == 'true' }}
     steps:
-      - name: Check out code
+      - name: Check out current release policy
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          submodules: true
+          ref: main
+
+      - name: Resolve published tag and check main is current
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${REQUESTED_TAG:-}" ]]; then
+            tag="${REQUESTED_TAG}"
+          else
+            version="$(python - <<'PY'
+          from pathlib import Path
+          import tomllib
+          print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])
+          PY
+          )"
+            tag="v${version}"
+          fi
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: ${tag}" >&2
+            exit 1
+          fi
+          is_draft="$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')"
+          if [[ "${is_draft}" != "false" ]]; then
+            echo "Release ${tag} has not been published" >&2
+            exit 1
+          fi
+          tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${tag}" --jq '.sha')"
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
+          if [[ "${tag_sha}" != "${main_sha}" ]]; then
+            echo "Release ${tag} does not point to current main; skipping stale publication."
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          echo "publish=true" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out published source
+        if: steps.release.outputs.publish == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Verify own Registry identity and version
+        if: steps.release.outputs.publish == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          REGISTRY_ACCESS_TOKEN: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import tomllib
+          p = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          if p["project"]["name"] != "comfyui-h3-continuum-plus":
+              raise SystemExit("Refusing Registry publish: unexpected node ID")
+          if p["tool"]["comfy"]["PublisherId"] != "xmarre":
+              raise SystemExit("Refusing Registry publish: unexpected PublisherId")
+          if p["project"]["urls"]["Repository"] != "https://github.com/xmarre/ComfyUI-H3-Continuum-Plus":
+              raise SystemExit("Refusing Registry publish: unexpected repository")
+          if "v" + p["project"]["version"] != os.environ["RELEASE_TAG"]:
+              raise SystemExit("Refusing Registry publish: tag/version mismatch")
+          if not os.environ.get("REGISTRY_ACCESS_TOKEN"):
+              raise SystemExit("Registry secret REGISTRY_ACCESS_TOKEN is not configured in this repository")
+          PY
 
       - name: Set up Python
+        if: steps.release.outputs.publish == 'true'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.10"
 
-      - name: Install verified Comfy CLI
+      - name: Install hash-verified Comfy CLI
+        if: steps.release.outputs.publish == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -42,47 +128,26 @@ jobs:
           wheel_dir="${RUNNER_TEMP}/h3-continuum-comfy-cli"
           python -m venv "${publish_env}"
           mkdir -p "${wheel_dir}"
-
           "${publish_env}/bin/python" -m pip download \
-            --disable-pip-version-check \
-            --no-deps \
-            --only-binary=:all: \
-            --dest "${wheel_dir}" \
-            "comfy-cli==${COMFY_CLI_VERSION}"
-
+            --disable-pip-version-check --no-deps --only-binary=:all: \
+            --dest "${wheel_dir}" "comfy-cli==${COMFY_CLI_VERSION}"
           wheel="${wheel_dir}/comfy_cli-${COMFY_CLI_VERSION}-py3-none-any.whl"
-          test -f "${wheel}"
           printf '%s  %s\n' "${COMFY_CLI_WHEEL_SHA256}" "${wheel}" | sha256sum --check --strict
-
           "${publish_env}/bin/python" -m pip install \
-            --disable-pip-version-check \
-            --only-binary=:all: \
-            --constraint "${COMFY_CLI_CONSTRAINTS}" \
-            "${wheel}"
-
+            --disable-pip-version-check --only-binary=:all: \
+            --constraint "${COMFY_CLI_CONSTRAINTS}" "${wheel}"
           echo "PUBLISH_COMFY=${publish_env}/bin/comfy" >> "${GITHUB_ENV}"
 
-      - name: Initialize Comfy CLI environment
+      - name: Initialize Comfy CLI
+        if: steps.release.outputs.publish == 'true'
         shell: bash
         run: "${PUBLISH_COMFY} --skip-prompt --no-enable-telemetry env"
 
-      - name: Check authorized registry publisher
-        env:
-          AUTHORIZED_PUBLISHER: ${{ vars.H3_CONTINUUM_AUTHORIZED_PUBLISHER_ID }}
-        shell: bash
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import tomllib
-          declared = tomllib.loads(Path("pyproject.toml").read_text())["tool"]["comfy"]["PublisherId"]
-          authorized = os.environ.get("AUTHORIZED_PUBLISHER", "").strip()
-          if not authorized or declared != authorized:
-              raise SystemExit(f"Refusing Comfy Registry push: PublisherId {declared!r} is not explicitly authorized.")
-          PY
-
-      - name: Publish Custom Node
+      - name: Publish released node to xmarre
+        if: steps.release.outputs.publish == 'true'
         env:
           REGISTRY_ACCESS_TOKEN: ${{ secrets.REGISTRY_ACCESS_TOKEN }}
         shell: bash
-        run: "${PUBLISH_COMFY} node publish --token \"${REGISTRY_ACCESS_TOKEN}\""
+        run: |
+          set -euo pipefail
+          "${PUBLISH_COMFY}" node publish --token "${REGISTRY_ACCESS_TOKEN}"
