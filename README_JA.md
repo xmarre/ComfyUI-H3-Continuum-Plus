@@ -1,10 +1,16 @@
-# ComfyUI-H3-Continuum-Plus 3.4.10
+# ComfyUI-H3-Continuum-Plus 3.4.11
 
 > **Plus フォーク:** これは `xmarre` が保守する [ukr8b3g-cmyk/ComfyUI-H3-Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum) の Plus フォークです。上流プロジェクトを基盤として維持しつつ、上流と意図的に異なる機能、統合、修正、挙動を含む場合があります。
 
-**V3.4 Stable (v3.4.10):** Driving Audio、Video Reference、Audio / Video Seam、Run Storageを含む安定版です。
+**V3.4 Stable (v3.4.11):** Driving Audio、Video Reference、Audio / Video Seam、Run Storageを含む安定版です。
 
 MiniMax H3を複数チャンクで連続生成し、直前チャンク末尾の**映像latent / 音声latentを直接**次チャンクへ継承するComfyUIカスタムノードです。チャンク間でVideo/Audio VAEのDecode→Encodeは行いません。
+
+## v3.4.11 更新 (2026-10-17)
+
+Plus フォークの Comfy Registry PublisherId を **`xmarre`** に変更し、上流とは別の公開 ID **`comfyui-h3-continuum-plus`** と表示名 **H3 Continuum Plus** を設定しました。元の作者 `ukr8b3g-cmyk` のクレジットは残します。成功した GitHub リリースのタグ・コミットと公開メタデータを確認した後、`xmarre` 発行の Registry API キー（GitHub Actions Secret `REGISTRY_ACCESS_TOKEN`）でのみ公開します。キーがない場合は Registry 公開に失敗し、GitHub リリースとは独立した状態になります。
+
+Runtime のノード ID と既存ワークフロー設定は変更しません。上流版と Plus 版を同じ ComfyUI 環境に同時インストールしないでください。旧 Registry ID からの自動移行はありません。
 
 ## v3.4.10 更新 (2026-10-17)
 
