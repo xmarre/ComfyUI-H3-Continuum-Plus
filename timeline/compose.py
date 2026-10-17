@@ -50,6 +50,12 @@ def render_frames(
         raise ValueError(
             "Video guidance has a gap; add footage or remove guidance for this chunk"
         )
+    if gap == "hold" and coverage.any() and not coverage.all():
+        # Uncovered guide frames repeat the nearest earlier covered frame, or
+        # the first covered frame before any coverage.
+        covered = np.flatnonzero(coverage)
+        source = covered[np.clip(np.searchsorted(covered, np.arange(count), "right") - 1, 0, None)]
+        output = output[source]
     return output
 
 

@@ -1355,30 +1355,45 @@ export class TimelineEditor {
     );
     if (graphNode?.widgets_values)
       graphNode.widgets_values[0] = JSON.stringify(snapshot);
+    // A reroll needs a fresh seed nonce; equal nonces reproduce the take.
+    const nonceWidget = sampler.widgets.find((w) => w.name === "reroll_nonce");
+    if (reroll && nonceWidget) {
+      nonceWidget.value = (Number(nonceWidget.value) || 0) + 1;
+      sampler.setDirtyCanvas?.(true, true);
+    }
     for (let i = 0; i < plan.jobs.length; i++) {
       const payload = clone(frozen);
       const actual = payload.output[String(sampler.id)].inputs;
+      const job = plan.jobs[i];
       actual.job_index = i;
-      if (reroll)
+      if (reroll) {
+        // A job continuing a stored parent state can only restart at its
+        // first chunk.
+        const resumes = job.requires_previous_job || job.resume_parent_take;
         actual.regenerate_from =
-          i === 0
+          i === 0 && !resumes
             ? Math.max(
                 1,
                 Math.floor(snapshot.selection[0] / snapshot.chunk_frames) -
-                  plan.jobs[i].start_chunk +
+                  job.start_chunk +
                   1,
               )
             : 1;
+        if (nonceWidget) actual.reroll_nonce = nonceWidget.value;
+      }
       const serialized = payload.workflow?.nodes?.find(
         (n) => n.id === sampler.id,
       );
       if (serialized?.widgets_values) {
-        for (const key of ["job_index", "regenerate_from"]) {
+        for (const key of ["job_index", "regenerate_from", "reroll_nonce"]) {
           const index = sampler.widgets.findIndex((w) => w.name === key);
-          if (index >= 0) serialized.widgets_values[index] = actual[key];
+          if (index >= 0 && key in actual)
+            serialized.widgets_values[index] = actual[key];
         }
       }
-      const queued = await this.api.queuePrompt(-1, payload);
+      // Number 0 appends in submission order; -1 would queue each later job
+      // ahead of its predecessor.
+      const queued = await this.api.queuePrompt(0, payload);
       this.queuedIds.add(queued.prompt_id);
       this.persistWidget();
     }

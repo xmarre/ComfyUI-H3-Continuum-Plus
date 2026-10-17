@@ -183,7 +183,7 @@ class TimelineInputs:
                 rw,
                 rh,
                 roles={"video_guide"},
-                gap="error",
+                gap="hold",
             )
             frames = torch.from_numpy(frames).float() / 255
             physical = align_frame_count_up(b - a)
@@ -218,7 +218,7 @@ class TimelineInputs:
             "job_offset": self.offset,
             "guide_source_windows": w["video"],
             "audio_guide": w["guide"],
-            "guide_padding": "hold last logical guide frame to native 17k+5 grid",
+            "guide_padding": "hold nearest guide frame across uncovered logical frames and to the native 17k+5 grid",
             "physical_output_range": [
                 descriptor.retained_before + self.offset,
                 descriptor.retained_before

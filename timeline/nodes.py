@@ -50,8 +50,10 @@ def stale_take(
     ranges = record.get("chunk_output_ranges", [])
     if end_frame is not None and ranges:
         limit = sum(a < end_frame for a, b in ranges)
+    scope = record.get("guide_scope")
     for index, old in zip(record["indices"][:limit], record["input_hashes"][:limit]):
-        if compile_window(p, index)["generation_hash"] != old:
+        window = compile_window(p, index, guide_scope=tuple(scope) if scope else None)
+        if window["generation_hash"] != old:
             return True
     by_id = {r["id"]: r for r in records}
     # A different accepted take can share a valid exact prefix but replace its
@@ -80,6 +82,22 @@ def stale_take(
         ):
             return True
     return False
+
+
+def retained_anchor(p, store, frame):
+    """First-frame anchor for Replace: the retained frame the take starts on."""
+    from .compose import render_frames
+    from .model import active_clips
+
+    if not active_clips(p, frame, frame + 1, {"retained"}):
+        return None, None
+    import torch
+
+    pixels = render_frames(
+        p, store.assets, frame, frame + 1, p["width"], p["height"], roles={"retained"}
+    )
+    note = f"Replace anchored the first generated frame to retained frame {frame}"
+    return torch.from_numpy(pixels).float() / 255, note
 
 
 class H3ContinuumTimelineStudio:
@@ -219,6 +237,13 @@ class H3ContinuumTimelineSampler:
             first_frame = None
         if int(job_index) != len(timeline["jobs"]) - 1:
             last_frame = None
+        anchor_note = None
+        if (
+            p["operation"] == "replace"
+            and first_frame is None
+            and not (job["requires_previous_job"] or job.get("resume_parent_take"))
+        ):
+            first_frame, anchor_note = retained_anchor(p, store, job["range"][0])
         for asset_id in {
             i["asset_id"]
             for w in job["windows"]
@@ -285,11 +310,13 @@ class H3ContinuumTimelineSampler:
             [contract["global"], continuation_method, job["start_chunk"]]
         )
         all_takes = takes(store, p["project_id"])
+        rejected = set(p.get("rejected", []))
         candidates = [
             r
             for r in all_takes
             if r["indices"][0] == job["start_chunk"]
             and r["settings_hash"] == settings_hash
+            and r["id"] not in rejected
         ]
         chosen = job.get("resume_take_id") or p.get("accepted", {}).get(
             str(job["start_chunk"])
@@ -358,6 +385,7 @@ class H3ContinuumTimelineSampler:
             "range": job["range"],
             "indices": [w["index"] for w in job["windows"]],
             "input_hashes": provider.hashes,
+            "guide_scope": job.get("guide_scope"),
             "settings_hash": settings_hash,
             "parent_take": parent["id"] if parent else None,
             "output_start": provider.offset,
@@ -490,6 +518,11 @@ class H3ContinuumTimelineSampler:
         )
         if reasons:
             report += "\nSession auto reuse disabled: " + "; ".join(reasons)
+        if anchor_note:
+            report += "\n" + anchor_note
+        for w in job["windows"]:
+            for warning in w.get("warnings", []):
+                report += "\nTimeline warning: " + warning
         return videos, audios, assembly, record, report, refine
 
 
@@ -618,7 +651,8 @@ class H3ContinuumTimelineExport:
             + uuid.uuid4().hex[:8]
             + (".mkv" if format == "lossless" else ".mp4")
         )
-        return (str(export_project(p, project_store(), path, codec=format)),)
+        output = str(export_project(p, project_store(), path, codec=format))
+        return {"ui": {"text": ["Timeline exported: " + Path(output).name]}, "result": (output,)}
 
 
 NODE_CLASS_MAPPINGS = {

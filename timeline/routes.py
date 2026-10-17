@@ -12,7 +12,7 @@ import uuid
 from aiohttp import web
 
 from .media import MEDIA_FORMATS, audio_window, run_process, video_frames
-from .model import compile_project, validate
+from .model import active_clips, compile_project, validate
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
@@ -331,12 +331,14 @@ def register_routes():
                     ),
                     "speed": "1",
                     "padding": "error",
+                    # Generated audio plays only where no authored final audio
+                    # covers the accepted span; previously accepted takes do
+                    # not count, they are replaced on this lane.
                     "audio_role": "neither"
                     if any(
-                        w["final"]
-                        for w in compile_project(record["project_snapshot"])["jobs"][
-                            record["job_index"]
-                        ]["windows"]
+                        c.get("audio_role") in {"final", "both"}
+                        for t, c in active_clips(p, a, b)
+                        if t["role"] != "generated"
                     )
                     else "final",
                 }

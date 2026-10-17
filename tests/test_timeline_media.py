@@ -388,3 +388,31 @@ def test_project_store_round_trips_non_ascii_text_as_utf8(tmp_path):
     raw = (store.project_dir(p["project_id"]) / "project.json").read_bytes()
     assert "雨の中で微笑む".encode("utf-8") in raw
     assert store.read(p["project_id"])["prompts"]["global"] == p["prompts"]["global"]
+
+
+def test_partial_video_guide_holds_nearest_frame_and_replace_anchor(movie, tmp_path):
+    from ComfyUI_H3_Continuum_Join.timeline.compose import render_frames
+    from ComfyUI_H3_Continuum_Join.timeline.model import compile_window
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import retained_anchor
+
+    store = ProjectStore(tmp_path / "store")
+    with movie.open("rb") as source:
+        asset = store.assets.register(source, "source.mkv")
+    p = blank_project()
+    p.update(width=64, height=64, duration_frames=336, selection=[0, 336], assets=[asset])
+    clip = {"id": "g", "asset_id": asset["id"], "start": 48, "end": 96, "padding": "hold"}
+    p["tracks"] = [{"id": "v", "role": "video_guide", "clips": [clip]}]
+    p = validate(p)
+    frames = render_frames(p, store.assets, 0, 168, 64, 64, roles={"video_guide"}, gap="hold")
+    guide = video_frames(movie, [Fraction(i, 24) for i in range(48)], 64, 64)
+    assert all(np.array_equal(frames[i], guide[0]) for i in range(48))
+    np.testing.assert_array_equal(frames[48:96], guide)
+    assert all(np.array_equal(frames[i], guide[-1]) for i in range(96, 168))
+    assert any("covers 48 of 168" in w for w in compile_window(p, 0)["warnings"])
+
+    p["tracks"] = [{"id": "r", "role": "retained", "clips": [{**clip, "start": 0, "end": 336}]}]
+    p = validate(p)
+    image, note = retained_anchor(p, store, 168)
+    expected = video_frames(movie, ["7"], 64, 64)[0]
+    np.testing.assert_array_equal((image[0].numpy() * 255).round().astype(np.uint8), expected)
+    assert note and retained_anchor(validate({**p, "tracks": []}), store, 168) == (None, None)

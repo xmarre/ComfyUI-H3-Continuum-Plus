@@ -207,7 +207,7 @@ def clip_input(p, t, c, start, end):
     }
 
 
-def compile_window(p, index):
+def compile_window(p, index, guide_scope=None):
     size = p["chunk_frames"]
     start, end = index * size, min((index + 1) * size, p["duration_frames"])
     active = active_clips(p, start, end)
@@ -384,18 +384,32 @@ def compile_window(p, index):
         for i in inputs
         if i["role"] == "video_guide"
     ]
-    # Guide encoding is full-context within each bounded native job. Until a
-    # smaller receptive-field/phase contract is proven on the actual H3 VAE,
-    # guide edits conservatively invalidate project sampling identities.
+    # Guide audio is encoded full-context over each bounded native job. Until
+    # a smaller receptive-field/phase contract is proven on the actual H3 VAE,
+    # a guide edit anywhere in that encoded scope invalidates the job's
+    # windows. Without a scope (records predating it) the scope is the project.
+    scope = guide_scope or (0, p["duration_frames"])
     full_guide = [
-        audio_identity(clip_input(p, t, c, 0, p["duration_frames"]))
-        for t, c in active_clips(p, 0, p["duration_frames"])
+        audio_identity(clip_input(p, t, c, *scope))
+        for t, c in active_clips(p, *scope)
         if c["audio_role"] in {"guide", "both"}
     ]
-    semantic = {
-        "audio_encoder_scope_hash": digest(
-            [p["duration_frames"], p["chunk_frames"], full_guide]
+    if guide_scope is None:
+        scope_identity = [p["duration_frames"], p["chunk_frames"], full_guide]
+    else:
+        scope_identity = [list(scope), p["chunk_frames"], full_guide]
+    covered = sorted(tuple(i["range"]) for i in inputs if i["role"] == "video_guide")
+    cursor, gaps = start, 0
+    for a, b in covered:
+        gaps += max(0, a - cursor)
+        cursor = max(cursor, b)
+    gaps += max(0, end - cursor)
+    if covered and gaps:
+        warnings.append(
+            f"Video guidance covers {end - start - gaps} of {end - start} frames in chunk {index + 1}; uncovered frames hold the nearest guide frame"
         )
+    semantic = {
+        "audio_encoder_scope_hash": digest(scope_identity)
         if full_guide
         else "none",
         "prompt": text,
@@ -418,6 +432,21 @@ def compile_window(p, index):
         "final": final,
         "final_hash": digest(final),
     }
+
+
+# Native drift between logical and actual job starts is below one H3 grid
+# step (17 frames); the encoder mix also extends 34 frames past the job.
+GUIDE_SCOPE_MARGIN = 64
+
+
+def guide_scope_for(p, indices):
+    size = p["chunk_frames"]
+    a = indices[0] * size
+    b = min(p["duration_frames"], (indices[-1] + 1) * size)
+    return (
+        max(0, a - GUIDE_SCOPE_MARGIN),
+        min(p["duration_frames"], b + GUIDE_SCOPE_MARGIN),
+    )
 
 
 def compile_project(project):
@@ -444,10 +473,13 @@ def compile_project(project):
         )
     jobs = []
     for start in range(first, stop, 16):
-        windows = [compile_window(p, i) for i in range(start, min(stop, start + 16))]
+        indices = range(start, min(stop, start + 16))
+        scope = guide_scope_for(p, indices)
+        windows = [compile_window(p, i, guide_scope=scope) for i in indices]
         jobs.append(
             {
                 "start_chunk": start,
+                "guide_scope": list(scope),
                 "range": [windows[0]["range"][0], windows[-1]["range"][1]],
                 "windows": windows,
                 "chain": f"{p['project_id']}:{first}",

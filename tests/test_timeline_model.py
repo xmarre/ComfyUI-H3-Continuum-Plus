@@ -230,3 +230,32 @@ def test_malformed_accepted_windows_are_rejected_as_contract_errors(window):
     p["accepted_windows"] = [window]
     with pytest.raises(ValueError):
         compile_project(p)
+
+
+def test_guide_audio_edit_outside_a_job_scope_keeps_its_takes_valid():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import stale_take
+
+    p = blank_project()
+    p["duration_frames"] = 168 * 20
+    p["selection"] = [0, 168 * 20]
+    p["assets"] = [{"id": A}]
+    guide = {"id": "g", "asset_id": A, "start": 168 * 18, "end": 168 * 19, "audio_role": "guide"}
+    p["tracks"] = [{"id": "a", "role": "audio", "clips": [guide]}]
+    p = validate(p)
+    jobs = compile_project(p)["jobs"]
+    first = {
+        "id": "a" * 32,
+        "indices": [w["index"] for w in jobs[0]["windows"]],
+        "input_hashes": [w["generation_hash"] for w in jobs[0]["windows"]],
+        "guide_scope": jobs[0]["guide_scope"],
+        "parent_take": None,
+    }
+    later = copy.deepcopy(p)
+    later["tracks"][0]["clips"][0]["gain"] = "1/2"  # edit inside job 2 only
+    assert not stale_take(validate(later), first, [first])
+    near = copy.deepcopy(p)
+    near["tracks"][0]["clips"][0].update(start=168 * 16, end=168 * 17)
+    assert stale_take(validate(near), first, [first])  # within the encoder margin
+    legacy = {k: v for k, v in first.items() if k != "guide_scope"}
+    legacy["input_hashes"] = [compile_window(p, i)["generation_hash"] for i in legacy["indices"]]
+    assert stale_take(validate(later), legacy, [legacy])  # unscoped records stay conservative
