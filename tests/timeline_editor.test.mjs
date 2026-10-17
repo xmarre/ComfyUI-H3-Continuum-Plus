@@ -94,13 +94,25 @@ test("failed edit leaves state and history untouched", () => {
 });
 test("ripple delete keeps unlocked lanes in sync and respects locks", () => {
   const p = project();
-  p.tracks[0].clips.push({ id: "n", start: 336, end: 504, source_in: "0", speed: "1" });
+  p.tracks[0].clips.push({
+    id: "n",
+    start: 336,
+    end: 504,
+    source_in: "0",
+    speed: "1",
+  });
   p.tracks.push(
     { id: "prompt", clips: [{ id: "p", start: 400, end: 450 }] },
     { id: "locked", locked: true, clips: [{ id: "l", start: 400, end: 450 }] },
   );
   remove(p, ["c"], true);
-  assert.deepEqual(p.tracks[0].clips.map((c) => [c.start, c.end]), [[168, 336]]);
-  assert.deepEqual([p.tracks[1].clips[0].start, p.tracks[1].clips[0].end], [232, 282]);
+  assert.deepEqual(
+    p.tracks[0].clips.map((c) => [c.start, c.end]),
+    [[168, 336]],
+  );
+  assert.deepEqual(
+    [p.tracks[1].clips[0].start, p.tracks[1].clips[0].end],
+    [232, 282],
+  );
   assert.equal(p.tracks[2].clips[0].start, 400);
 });

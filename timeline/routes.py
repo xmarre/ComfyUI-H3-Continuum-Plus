@@ -114,9 +114,8 @@ def register_routes():
 
     @endpoint("post", "/import")
     async def ingest(request):
-        # Browser File/Blob streaming and aiohttp chunks avoid whole-file RAM.
-        # Upload straight into the store: one copy on disk, hashed as it
-        # streams, never buffered whole in RAM or a separate temp volume.
+        # Stream straight into the store: one copy on disk, hashed as it
+        # arrives, never buffered whole in RAM or on a separate temp volume.
         store = project_store()
         temporary = store.assets.upload_path()
         digest = hashlib.sha256()
@@ -222,7 +221,8 @@ def register_routes():
 
         path = project_store().assets.path(request.match_info["asset_id"])
         stamp = request.query.get("pts", "0")
-        pixels = await _media_cpu(video_frames,
+        pixels = await _media_cpu(
+            video_frames,
             path,
             [stamp],
             240,
@@ -295,7 +295,9 @@ def register_routes():
         store = project_store()
         p = store.read(data["project_id"])
         record = json.loads(
-            take_path(store, p["project_id"], data["take_id"]).read_text(encoding="utf-8")
+            take_path(store, p["project_id"], data["take_id"]).read_text(
+                encoding="utf-8"
+            )
         )
         all_records = takes(store, p["project_id"])
         if data["action"] == "reject":
@@ -470,7 +472,9 @@ def register_routes():
         active = sum(t["status"] == "running" for t in _tasks.values())
         if active >= 2:
             raise ValueError("Two exports are already running")
-        for finished in [k for k, v in _tasks.items() if v["status"] != "running"][:-16]:
+        for finished in [k for k, v in _tasks.items() if v["status"] != "running"][
+            :-16
+        ]:
             _tasks.pop(finished, None)
         job = uuid.uuid4().hex
         event = threading.Event()

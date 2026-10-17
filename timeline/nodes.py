@@ -652,7 +652,10 @@ class H3ContinuumTimelineExport:
             + (".mkv" if format == "lossless" else ".mp4")
         )
         output = str(export_project(p, project_store(), path, codec=format))
-        return {"ui": {"text": ["Timeline exported: " + Path(output).name]}, "result": (output,)}
+        return {
+            "ui": {"text": ["Timeline exported: " + Path(output).name]},
+            "result": (output,),
+        }
 
 
 NODE_CLASS_MAPPINGS = {

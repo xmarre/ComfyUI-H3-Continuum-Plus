@@ -399,20 +399,37 @@ def test_partial_video_guide_holds_nearest_frame_and_replace_anchor(movie, tmp_p
     with movie.open("rb") as source:
         asset = store.assets.register(source, "source.mkv")
     p = blank_project()
-    p.update(width=64, height=64, duration_frames=336, selection=[0, 336], assets=[asset])
-    clip = {"id": "g", "asset_id": asset["id"], "start": 48, "end": 96, "padding": "hold"}
+    p.update(
+        width=64, height=64, duration_frames=336, selection=[0, 336], assets=[asset]
+    )
+    clip = {
+        "id": "g",
+        "asset_id": asset["id"],
+        "start": 48,
+        "end": 96,
+        "padding": "hold",
+    }
     p["tracks"] = [{"id": "v", "role": "video_guide", "clips": [clip]}]
     p = validate(p)
-    frames = render_frames(p, store.assets, 0, 168, 64, 64, roles={"video_guide"}, gap="hold")
+    frames = render_frames(
+        p, store.assets, 0, 168, 64, 64, roles={"video_guide"}, gap="hold"
+    )
     guide = video_frames(movie, [Fraction(i, 24) for i in range(48)], 64, 64)
     assert all(np.array_equal(frames[i], guide[0]) for i in range(48))
     np.testing.assert_array_equal(frames[48:96], guide)
     assert all(np.array_equal(frames[i], guide[-1]) for i in range(96, 168))
     assert any("covers 48 of 168" in w for w in compile_window(p, 0)["warnings"])
 
-    p["tracks"] = [{"id": "r", "role": "retained", "clips": [{**clip, "start": 0, "end": 336}]}]
+    p["tracks"] = [
+        {"id": "r", "role": "retained", "clips": [{**clip, "start": 0, "end": 336}]}
+    ]
     p = validate(p)
     image, note = retained_anchor(p, store, 168)
     expected = video_frames(movie, ["7"], 64, 64)[0]
-    np.testing.assert_array_equal((image[0].numpy() * 255).round().astype(np.uint8), expected)
-    assert note and retained_anchor(validate({**p, "tracks": []}), store, 168) == (None, None)
+    np.testing.assert_array_equal(
+        (image[0].numpy() * 255).round().astype(np.uint8), expected
+    )
+    assert note and retained_anchor(validate({**p, "tracks": []}), store, 168) == (
+        None,
+        None,
+    )

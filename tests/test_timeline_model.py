@@ -239,7 +239,13 @@ def test_guide_audio_edit_outside_a_job_scope_keeps_its_takes_valid():
     p["duration_frames"] = 168 * 20
     p["selection"] = [0, 168 * 20]
     p["assets"] = [{"id": A}]
-    guide = {"id": "g", "asset_id": A, "start": 168 * 18, "end": 168 * 19, "audio_role": "guide"}
+    guide = {
+        "id": "g",
+        "asset_id": A,
+        "start": 168 * 18,
+        "end": 168 * 19,
+        "audio_role": "guide",
+    }
     p["tracks"] = [{"id": "a", "role": "audio", "clips": [guide]}]
     p = validate(p)
     jobs = compile_project(p)["jobs"]
@@ -257,5 +263,9 @@ def test_guide_audio_edit_outside_a_job_scope_keeps_its_takes_valid():
     near["tracks"][0]["clips"][0].update(start=168 * 16, end=168 * 17)
     assert stale_take(validate(near), first, [first])  # within the encoder margin
     legacy = {k: v for k, v in first.items() if k != "guide_scope"}
-    legacy["input_hashes"] = [compile_window(p, i)["generation_hash"] for i in legacy["indices"]]
-    assert stale_take(validate(later), legacy, [legacy])  # unscoped records stay conservative
+    legacy["input_hashes"] = [
+        compile_window(p, i)["generation_hash"] for i in legacy["indices"]
+    ]
+    assert stale_take(
+        validate(later), legacy, [legacy]
+    )  # unscoped records stay conservative

@@ -409,9 +409,7 @@ def compile_window(p, index, guide_scope=None):
             f"Video guidance covers {end - start - gaps} of {end - start} frames in chunk {index + 1}; uncovered frames hold the nearest guide frame"
         )
     semantic = {
-        "audio_encoder_scope_hash": digest(scope_identity)
-        if full_guide
-        else "none",
+        "audio_encoder_scope_hash": digest(scope_identity) if full_guide else "none",
         "prompt": text,
         "segments": segments,
         "images": images,

@@ -1132,7 +1132,8 @@ export class TimelineEditor {
   waveform(element, c) {
     const speed = ratio(c.speed || 1);
     const pxPerSource = this.zoom / Math.abs(speed);
-    const span = 2 ** Math.min(5, Math.max(-3, Math.round(Math.log2(512 / pxPerSource))));
+    const span =
+      2 ** Math.min(5, Math.max(-3, Math.round(Math.log2(512 / pxPerSource))));
     const left = Math.max(
       c.start,
       Math.floor(((this.scroller.scrollLeft - 180) * 24) / this.zoom),
@@ -1147,16 +1148,11 @@ export class TimelineEditor {
     if (right <= left) return;
     const sa = Math.min(sourceAt(c, left), sourceAt(c, right));
     const sb = Math.max(sourceAt(c, left), sourceAt(c, right));
-    for (
-      let k = Math.max(0, Math.floor(sa / span));
-      k * span < sb;
-      k++
-    ) {
+    for (let k = Math.max(0, Math.floor(sa / span)); k * span < sb; k++) {
       const start = k * span,
         end = start + span;
       // Timeline x of a source time inside this clip.
-      const at = (t) =>
-        (((t - ratio(c.source_in || 0)) / speed) * this.zoom);
+      const at = (t) => ((t - ratio(c.source_in || 0)) / speed) * this.zoom;
       const x = Math.min(at(start), at(end));
       this.waveTile(c.asset_id, start, end)
         .then((data) => {

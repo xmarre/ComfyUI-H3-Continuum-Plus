@@ -68,7 +68,9 @@ const { chromium } = require("playwright");
       beforeView,
     );
     assert.ok(
-      await page.evaluate(() => h3TestNode.properties.h3_timeline_view?.zoom > 0),
+      await page.evaluate(
+        () => h3TestNode.properties.h3_timeline_view?.zoom > 0,
+      ),
     );
     // Select source clip, split at frame 24 with the keyboard, undo and redo.
     await page.locator(".h3ts-clip").first().click();
@@ -229,13 +231,10 @@ const { chromium } = require("playwright");
     await page.waitForFunction(() =>
       document.querySelector(".h3ts-status").textContent.includes("queued"),
     );
-    assert.deepEqual(
-      await page.evaluate(() => window.__h3Queued),
-      [
-        [0, 0, 1],
-        [0, 1, 1],
-      ],
-    );
+    assert.deepEqual(await page.evaluate(() => window.__h3Queued), [
+      [0, 0, 1],
+      [0, 1, 1],
+    ]);
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);
     console.log(
