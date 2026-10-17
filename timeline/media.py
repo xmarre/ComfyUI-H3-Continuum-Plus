@@ -3,6 +3,7 @@
 PyAV selects video by absolute presentation timestamp. Only requested frames
 are retained; no source movie is materialized as a full IMAGE batch.
 """
+
 from __future__ import annotations
 
 from fractions import Fraction
@@ -21,10 +22,14 @@ import numpy as np
 
 from .model import rational, sample_boundary, source_time
 
+# Excludes playlist demuxers that can dereference editor-supplied local paths.
+MEDIA_FORMATS = "mov,matroska,avi,wav,flac,mp3,ogg,aac,image2,png_pipe,jpeg_pipe,webp_pipe,bmp_pipe,gif,apng,mxf,mpeg,mpegts,asf"
+
 
 def check_cancel():
     try:
         import comfy.model_management
+
         comfy.model_management.throw_exception_if_processing_interrupted()
     except ImportError:
         pass
@@ -33,7 +38,9 @@ def check_cancel():
 def run_process(args, *, cancel=check_cancel):
     """Bounded stderr and cancellation with no shell or pipe deadlock."""
     with tempfile.TemporaryFile() as errors:
-        proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors)
+        proc = subprocess.Popen(
+            args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors
+        )
         try:
             while proc.poll() is None:
                 cancel()
@@ -42,7 +49,9 @@ def run_process(args, *, cancel=check_cancel):
                 errors.seek(0, 2)
                 size = errors.tell()
                 errors.seek(max(0, size - 4000))
-                raise ValueError("Media process failed: " + errors.read().decode(errors="replace"))
+                raise ValueError(
+                    "Media process failed: " + errors.read().decode(errors="replace")
+                )
         finally:
             if proc.poll() is None:
                 proc.terminate()
@@ -54,12 +63,39 @@ def run_process(args, *, cancel=check_cancel):
 
 
 def probe(path):
-    result = subprocess.run(["ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-show_streams", "-show_format", "-of", "json", str(path)], capture_output=True, check=True, timeout=30)
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-format_whitelist",
+            MEDIA_FORMATS,
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
     data = json.loads(result.stdout)
     streams = data.get("streams", [])
     video = next((s for s in streams if s["codec_type"] == "video"), None)
     audio = next((s for s in streams if s["codec_type"] == "audio"), None)
-    duration = (video or audio or {}).get("duration", data.get("format", {}).get("duration", "0"))
+    duration = (video or audio or {}).get(
+        "duration", data.get("format", {}).get("duration", "0")
+    )
+    if not (video or audio or {}).get("duration"):
+        # Container duration can include a positive absolute timestamp offset.
+        duration = max(
+            rational(0),
+            rational(duration)
+            - rational(data.get("format", {}).get("start_time", "0")),
+        )
     return {"duration": str(rational(duration)), "video": video, "audio": audio}
 
 
@@ -91,7 +127,12 @@ class AssetStore:
             info = probe(temporary)
             final = self.root / asset_id
             os.replace(temporary, final)
-            return {"id": asset_id, "name": Path(name or "Media").name, "kind": "video" if info["video"] else "audio", **info}
+            return {
+                "id": asset_id,
+                "name": Path(name or "Media").name,
+                "kind": "video" if info["video"] else "audio",
+                **info,
+            }
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -102,23 +143,31 @@ class AssetStore:
             while block := stream.read(1024 * 1024):
                 h.update(block)
         if h.hexdigest() != asset_id:
-            raise ValueError("Registered asset content changed; relink it before rendering")
+            raise ValueError(
+                "Registered asset content changed; relink it before rendering"
+            )
         return path
 
 
-def video_frames(path, timestamps, width, height, *, padding="error", cancel=check_cancel):
+def video_frames(
+    path, timestamps, width, height, *, padding="error", cancel=check_cancel
+):
     """Nearest source PTS with earlier-frame tie breaks, including VFR/offsets.
 
     The output sequence follows requested timestamps exactly. Reverse is an
     explicit source mapping; a bounded reverse window is retained locally.
     """
     import av
+
     if not timestamps:
         return np.empty((0, height, width, 3), dtype=np.uint8)
     requested = [rational(t) for t in timestamps]
     unique = sorted(set(requested))
     sampled = {}
-    with av.open(str(path), options={"protocol_whitelist": "file,pipe"}) as container:
+    with av.open(
+        str(path),
+        options={"protocol_whitelist": "file,pipe", "format_whitelist": MEDIA_FORMATS},
+    ) as container:
         if not container.streams.video:
             raise ValueError("Selected media has no video stream")
         stream = container.streams.video[0]
@@ -133,14 +182,19 @@ def video_frames(path, timestamps, width, height, *, padding="error", cancel=che
         future = next(iterator, None)
         for target in unique:
             cancel()
-            while future is not None and future.pts is not None and Fraction(future.pts) * future.time_base <= target:
+            while (
+                future is not None
+                and future.pts is not None
+                and Fraction(future.pts) * future.time_base <= target
+            ):
+                cancel()
                 previous = future
                 future = next(iterator, None)
             chosen = previous or future
             if previous is not None and future is not None and future.pts is not None:
                 before = Fraction(previous.pts) * previous.time_base
                 after = Fraction(future.pts) * future.time_base
-                if after-target < target-before:
+                if after - target < target - before:
                     chosen = future
             if chosen is None:
                 raise ValueError("Source selection contains no decodable video")
@@ -150,13 +204,26 @@ def video_frames(path, timestamps, width, height, *, padding="error", cancel=che
                 if not duration:
                     duration = 1 / (stream.average_rate or Fraction(24))
                 if target >= last_pts + duration and padding == "error":
-                    raise ValueError("Video selection extends beyond source; choose Hold explicitly")
+                    raise ValueError(
+                        "Video selection extends beyond source; choose Hold explicitly"
+                    )
             # One RGB frame per requested output timestamp, independent of movie duration.
-            sampled[target] = chosen.reformat(width=width, height=height, format="rgb24").to_ndarray()
+            scale = min(width / chosen.width, height / chosen.height)
+            fw, fh = (
+                max(1, round(chosen.width * scale)),
+                max(1, round(chosen.height * scale)),
+            )
+            rgb = chosen.reformat(width=fw, height=fh, format="rgb24").to_ndarray()
+            fitted = np.zeros((height, width, 3), dtype=np.uint8)
+            x, y = (width - fw) // 2, (height - fh) // 2
+            fitted[y : y + fh, x : x + fw] = rgb
+            sampled[target] = fitted
     return np.stack([sampled[t] for t in requested])
 
 
-def audio_window(path, start, end, rate, *, channels=2, padding="silence", cancel=check_cancel):
+def audio_window(
+    path, start, end, rate, *, channels=2, padding="silence", cancel=check_cancel
+):
     """Decode an exact absolute-PTS interval to a bounded PCM sample window."""
     start, end = rational(start), rational(end)
     count = round(end * rate) - round(start * rate)
@@ -170,7 +237,10 @@ def audio_window(path, start, end, rate, *, channels=2, padding="silence", cance
             raise ValueError("Selected audio route has no source audio stream")
         return np.zeros((channels, count), dtype=np.float32)
     origin = rational(info["audio"].get("start_time", "0"))
-    if padding == "error" and (start < origin or end > origin + rational(info["audio"].get("duration", info["duration"]))):
+    if padding == "error" and (
+        start < origin
+        or end > origin + rational(info["audio"].get("duration", info["duration"]))
+    ):
         raise ValueError("Audio selection extends beyond the source stream")
     with tempfile.TemporaryDirectory(prefix="h3-audio-") as directory:
         output = Path(directory) / "window.f32"
@@ -179,15 +249,51 @@ def audio_window(path, start, end, rate, *, channels=2, padding="silence", cance
         # Matroska can be quantized to milliseconds; seeking and time trimming
         # independently would introduce one-sample shifts at each window.
         # This path is bounded in RAM and never decodes the source video.
-        first = round((start-origin)*rate)
-        last = first+count
-        filters = f"aresample={rate}:async=1,atrim=start_sample={max(0,first)}:end_sample={max(0,last)},asetpts=PTS-STARTPTS"
+        first = round((start - origin) * rate)
+        last = first + count
+        channel_filter = (
+            "pan=stereo|c0=c0|c1=c0,"
+            if channels == 2 and int(info["audio"].get("channels", 2)) == 1
+            else ""
+        )
+        filters = (
+            channel_filter
+            + f"aformat=sample_fmts=flt,aresample={rate}:async=1,atrim=start_sample={max(0, first)}:end_sample={max(0, last)},asetpts=PTS-STARTPTS"
+        )
         if first < 0:
             filters += f",adelay={-first}S:all=1"
         filters += f",apad=whole_len={count},atrim=end_sample={count}"
-        run_process(["ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-protocol_whitelist", "file,pipe", "-i", str(path), "-t", str(float(Fraction(count,rate))), "-vn", "-af", filters, "-ac", str(channels), "-ar", str(rate), "-f", "f32le", str(output)], cancel=cancel)
+        run_process(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
+                "-threads",
+                "1",
+                "-protocol_whitelist",
+                "file,pipe",
+                "-format_whitelist",
+                MEDIA_FORMATS,
+                "-i",
+                str(path),
+                "-t",
+                str(float(Fraction(count, rate))),
+                "-vn",
+                "-af",
+                filters,
+                "-ac",
+                str(channels),
+                "-ar",
+                str(rate),
+                "-f",
+                "f32le",
+                str(output),
+            ],
+            cancel=cancel,
+        )
         pcm = np.fromfile(output, dtype="<f4")
-    pcm = pcm[:count * channels]
+    pcm = pcm[: count * channels]
     if pcm.size < count * channels:
         pcm = np.pad(pcm, (0, count * channels - pcm.size))
     return pcm.reshape(-1, channels).T.copy()
@@ -196,38 +302,63 @@ def audio_window(path, start, end, rate, *, channels=2, padding="silence", cance
 def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
     """Deterministic sample-grid mix. Route is guide, final or reference."""
     from .model import active_clips
+
     a, b = sample_boundary(start, rate), sample_boundary(end, rate)
-    mix = np.zeros((2, b-a), dtype=np.float32)
-    routes = {"guide": {"guide", "both"}, "final": {"final", "both"}, "reference": {"reference"}}[route]
+    mix = np.zeros((2, b - a), dtype=np.float32)
+    routes = {
+        "guide": {"guide", "both"},
+        "final": {"final", "both"},
+        "reference": {"reference"},
+    }[route]
     for _, c in active_clips(p, start, end):
         if c["audio_role"] not in routes:
             continue
         left, right = max(start, c["start"]), min(end, c["end"])
         sa, sb = source_time(c, left), source_time(c, right)
         speed = rational(c["speed"])
-        pcm = audio_window(assets.path(c["asset_id"]), min(sa, sb), max(sa, sb), rate, padding=c["padding"], cancel=cancel)
+        pcm = audio_window(
+            assets.path(c["asset_id"]),
+            min(sa, sb),
+            max(sa, sb),
+            rate,
+            padding=c["padding"],
+            cancel=cancel,
+        )
         if speed < 0:
             pcm = pcm[:, ::-1]
         n = sample_boundary(right, rate) - sample_boundary(left, rate)
         if speed != 1:
             # Explicit pitch-changing retime. No hidden stretch or pitch correction.
             pos = np.arange(n) * float(abs(speed))
-            pcm = np.stack([np.interp(pos, np.arange(pcm.shape[1]), channel, left=0, right=0) for channel in pcm])
+            pcm = np.stack(
+                [
+                    np.interp(pos, np.arange(pcm.shape[1]), channel, left=0, right=0)
+                    for channel in pcm
+                ]
+            )
         pcm = pcm[:, :n]
         if pcm.shape[1] < n:
-            pcm = np.pad(pcm, ((0,0),(0,n-pcm.shape[1])))
+            pcm = np.pad(pcm, ((0, 0), (0, n - pcm.shape[1])))
         absolute = np.arange(sample_boundary(left, rate), sample_boundary(right, rate))
         envelope = np.ones(n)
-        for fade, distance in ((c.get("fade_in",0), absolute-sample_boundary(c["start"],rate)), (c.get("fade_out",0), sample_boundary(c["end"],rate)-absolute)):
+        for fade, distance in (
+            (c.get("fade_in", 0), absolute - sample_boundary(c["start"], rate)),
+            (c.get("fade_out", 0), sample_boundary(c["end"], rate) - absolute),
+        ):
             if fade:
-                envelope *= np.clip(distance / max(1, round(float(rational(fade))*rate)), 0, 1)
-        offset = sample_boundary(left,rate)-a
-        mix[:, offset:offset+n] += pcm * envelope * float(rational(c.get("gain",1)))
+                envelope *= np.clip(
+                    distance / max(1, round(float(rational(fade)) * rate)), 0, 1
+                )
+        offset = sample_boundary(left, rate) - a
+        mix[:, offset : offset + n] += (
+            pcm * envelope * float(rational(c.get("gain", 1)))
+        )
     return np.clip(mix, -1, 1)
 
 
 class ProjectStore:
     """Optimistic project saves and immutable job/take records, atomic on disk."""
+
     _lock = threading.RLock()
 
     def __init__(self, root):
@@ -247,6 +378,7 @@ class ProjectStore:
 
     def save(self, project, expected_revision):
         from .model import validate
+
         p = validate(project)
         with self._lock:
             file = self.project_dir(p["project_id"]) / "project.json"

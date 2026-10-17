@@ -685,7 +685,7 @@ def build_sampling_contract(
     if graph_authoritative:
         global_contract["upstream_graph"] = dict(upstream_graph_contract)
     if prompt_plan.get("timeline_studio"):
-        global_contract["timeline_studio"] = dict(prompt_plan["timeline_studio"])
+        global_contract["timeline_studio"] = {"contract": 1}
         global_contract["video_vae"] = video_vae_value
         global_contract["timeline_audio_vae"] = driving_audio_vae_value if driving_audio_vae is not None else None
     if uses_video_vae:

@@ -2,50 +2,168 @@ import copy
 import io
 from fractions import Fraction
 import pytest
-from ComfyUI_H3_Continuum_Join.timeline.model import blank_project, compile_project, compile_window, sample_boundary, validate
+from ComfyUI_H3_Continuum_Join.timeline.model import (
+    blank_project,
+    compile_project,
+    compile_window,
+    sample_boundary,
+    validate,
+)
 
-A, B = 'a'*64, 'b'*64
+A, B = "a" * 64, "b" * 64
+
 
 def project():
-    p=blank_project()
-    p['assets']=[{'id':A,'alias':'Alice'},{'id':B,'alias':'Bob'}]
-    p['tracks']=[{'id':'v','role':'video_guide','clips':[{'id':'v1','asset_id':A,'start':0,'end':336,'source_in':'0','speed':'1','padding':'hold'}]},
-                 {'id':'refs','role':'image_reference','clips':[{'id':'a','asset_id':A,'start':0,'end':336},{'id':'b','asset_id':B,'start':336,'end':504}]}]
-    p['prompts']['global']='@Alice sees @Bob'
+    p = blank_project()
+    p["assets"] = [{"id": A, "alias": "Alice"}, {"id": B, "alias": "Bob"}]
+    p["tracks"] = [
+        {
+            "id": "v",
+            "role": "video_guide",
+            "clips": [
+                {
+                    "id": "v1",
+                    "asset_id": A,
+                    "start": 0,
+                    "end": 336,
+                    "source_in": "0",
+                    "speed": "1",
+                    "padding": "hold",
+                }
+            ],
+        },
+        {
+            "id": "refs",
+            "role": "image_reference",
+            "clips": [
+                {"id": "a", "asset_id": A, "start": 0, "end": 336},
+                {"id": "b", "asset_id": B, "start": 336, "end": 504},
+            ],
+        },
+    ]
+    p["prompts"]["global"] = "@Alice sees @Bob"
     return validate(p)
 
+
 def test_exact_selections_and_aliases():
-    p=project()
-    a,b,c=[compile_window(p,i) for i in range(3)]
-    assert a['video'][0]['source']==['0','7']
-    assert b['video'][0]['source']==['7','14']
-    assert c['video']==[]
-    assert a['aliases']=={'Alice':'<Picture 1>'}
-    assert c['aliases']=={'Bob':'<Picture 1>'}
+    p = project()
+    a, b, c = [compile_window(p, i) for i in range(3)]
+    assert a["video"][0]["source"] == ["0", "7"]
+    assert b["video"][0]["source"] == ["7", "14"]
+    assert c["video"] == []
+    assert a["aliases"] == {"Alice": "<Picture 1>"}
+    assert c["aliases"] == {"Bob": "<Picture 1>"}
+
 
 def test_causal_metadata_and_audio_identity():
-    p=project()
-    old=[compile_window(p,i)['generation_hash'] for i in range(3)]
-    p['name']='Changed title';p['ui']={'zoom':3};p['tracks'][0]['hidden']=True
-    assert old==[compile_window(p,i)['generation_hash'] for i in range(3)]
-    p['tracks'][1]['clips'][1]['asset_id']=A
-    assert old[:2]==[compile_window(p,i)['generation_hash'] for i in range(2)]
-    assert old[2]!=compile_window(p,2)['generation_hash']
+    p = project()
+    old = [compile_window(p, i)["generation_hash"] for i in range(3)]
+    p["name"] = "Changed title"
+    p["ui"] = {"zoom": 3}
+    p["tracks"][0]["hidden"] = True
+    assert old == [compile_window(p, i)["generation_hash"] for i in range(3)]
+    p["tracks"][1]["clips"][1]["asset_id"] = A
+    assert old[:2] == [compile_window(p, i)["generation_hash"] for i in range(2)]
+    assert old[2] != compile_window(p, 2)["generation_hash"]
+
 
 def test_sample_boundaries_no_drift():
-    for rate in (44100,48000):
-        assert sum(sample_boundary(i+1,rate)-sample_boundary(i,rate) for i in range(1001))==sample_boundary(1001,rate)
+    for rate in (44100, 48000):
+        assert sum(
+            sample_boundary(i + 1, rate) - sample_boundary(i, rate) for i in range(1001)
+        ) == sample_boundary(1001, rate)
+
 
 def test_long_project_short_selection():
-    p=blank_project();p['duration_frames']=2*3600*24;p['selection']=[3600*24,3600*24+168]
-    plan=compile_project(p)
-    assert len(plan['jobs'])==1
-    assert len(plan['jobs'][0]['windows'])==2
-    p['selection']=[0,168*33]
-    assert [len(j['windows']) for j in compile_project(p)['jobs']]==[16,16,1]
+    p = blank_project()
+    p["duration_frames"] = 2 * 3600 * 24
+    p["selection"] = [3600 * 24, 3600 * 24 + 168]
+    plan = compile_project(p)
+    assert len(plan["jobs"]) == 1
+    assert len(plan["jobs"][0]["windows"]) == 2
+    p["selection"] = [0, 168 * 33]
+    assert [len(j["windows"]) for j in compile_project(p)["jobs"]] == [16, 16, 1]
+
 
 def test_invalid_contracts():
-    p=project();p['tracks'][0]['clips'][0]['start']=-1
-    with pytest.raises(ValueError):validate(p)
-    p=project();p['project_id']='../escape'
-    with pytest.raises(ValueError):validate(p)
+    p = project()
+    p["tracks"][0]["clips"][0]["start"] = -1
+    with pytest.raises(ValueError):
+        validate(p)
+    p = project()
+    p["project_id"] = "../escape"
+    with pytest.raises(ValueError):
+        validate(p)
+
+
+def test_recreate_derives_only_visual_guidance_and_supports_audio_only_spans():
+    p = project()
+    p["operation"] = "recreate"
+    p["tracks"][0]["role"] = "retained"
+    a = compile_window(p, 0)
+    assert a["video"][0]["source"] == ["0", "7"]
+    assert a["guide"] == []
+    p["tracks"][0]["clips"][0]["guide_disabled"] = True
+    assert compile_window(p, 0)["video"] == []
+
+
+def test_long_prompt_list_and_exact_timeline_headers():
+    p = blank_project()
+    p["duration_frames"] = 168 * 33
+    p["selection"] = [0, 168 * 33]
+    p["prompts"] = {
+        "mode": "List",
+        "script": __import__("json").dumps([f"chunk {i}" for i in range(33)]),
+        "global": "shared",
+    }
+    assert compile_window(p, 20)["prompt"] == "shared\nchunk 20"
+    p["prompts"] = {
+        "mode": "Timeline",
+        "script": "preamble\n[0-7s]\nONLY_A\n[7-14s]\nONLY_B",
+        "global": "global",
+    }
+    assert "ONLY_B" not in compile_window(p, 0)["prompt"]
+    assert "ONLY_A" not in compile_window(p, 1)["prompt"]
+    p["prompts"]["script"] = "[broken timeline"
+    assert "[broken timeline" in compile_window(p, 0)["prompt"]
+
+
+def test_selected_internal_chunk_includes_accepted_prefix_for_native_reuse():
+    p = blank_project()
+    p["selection"] = [168, 336]
+    p["accepted_windows"] = [
+        {"first_chunk": 0, "stop_chunk": 3, "take_id": "a" * 32, "parent_take": None}
+    ]
+    jobs = compile_project(p)["jobs"]
+    assert jobs[0]["range"] == [0, 336]
+    assert len(jobs[0]["windows"]) == 2
+    assert jobs[0]["resume_take_id"] == "a" * 32
+    assert jobs[0]["requires_previous_job"] is False
+
+
+def test_take_alternatives_remain_selectable_but_old_causal_suffix_is_stale():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import stale_take
+
+    p = blank_project()
+    windows = [compile_window(p, i) for i in range(3)]
+    base = {
+        "id": "a" * 32,
+        "indices": [0, 1, 2],
+        "input_hashes": [w["generation_hash"] for w in windows],
+        "chunk_hashes": ["prefix", "old-second", "old-third"],
+        "chunk_output_ranges": [[0, 175], [175, 328], [328, 515]],
+        "parent_take": None,
+    }
+    alternative = {
+        **base,
+        "id": "b" * 32,
+        "indices": [0, 1],
+        "input_hashes": base["input_hashes"][:2],
+        "chunk_hashes": ["prefix", "new-second"],
+        "chunk_output_ranges": [[0, 175], [175, 345]],
+    }
+    p["accepted"] = {"0": alternative["id"]}
+    records = [base, alternative]
+    assert not stale_take(p, base, records)  # valid selectable alternative
+    assert not stale_take(p, base, records, end_frame=168, check_selection=True)
+    assert stale_take(p, base, records, end_frame=504, check_selection=True)
