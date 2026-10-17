@@ -1,10 +1,16 @@
-# ComfyUI-H3-Continuum-Plus 3.4.8
+# ComfyUI-H3-Continuum-Plus 3.4.9
 
 > **Plus フォーク:** これは `xmarre` が保守する [ukr8b3g-cmyk/ComfyUI-H3-Continuum](https://github.com/ukr8b3g-cmyk/ComfyUI-H3-Continuum) の Plus フォークです。上流プロジェクトを基盤として維持しつつ、上流と意図的に異なる機能、統合、修正、挙動を含む場合があります。
 
-**V3.4 Stable (v3.4.8):** Driving Audio、Video Reference、Audio / Video Seam、Run Storageを含む安定版です。
+**V3.4 Stable (v3.4.9):** Driving Audio、Video Reference、Audio / Video Seam、Run Storageを含む安定版です。
 
 MiniMax H3を複数チャンクで連続生成し、直前チャンク末尾の**映像latent / 音声latentを直接**次チャンクへ継承するComfyUIカスタムノードです。チャンク間でVideo/Audio VAEのDecode→Encodeは行いません。
+
+## v3.4.9 更新 (2026-10-17)
+
+今回のPlusリリースには #44（遅延フラッシュとAuto 3の補正終了処理）、#46（実験的な対話履歴のQwen因果エンコード）、#47（隣接チャンクのQwen事前エンコード）が含まれます。#47の「Qwen Lookahead」は対象となる固定形状の連続チャンクで既定有効です。`H3C_CONDITIONING_LOOKAHEAD=0` で無効化できます。#46は境界での台詞の乱れを修正したことが未実証で、`H3C_CAUSAL_DIALOGUE_HISTORY=0` で比較可能です。Auto 3は限定的な実験的補正であり、元の生成結果の色ずれを必ず解決するものではありません。
+
+対応バージョン: Flow v0.3.14 / Sol-H3 v0.1.11 / VDN-H3-Plus v1.5.10。Keylessの変更は含まれません。Comfy Registryへの公開には上流PublisherIdの権限確認が必要です。
 
 ## V3.4 Stable
 

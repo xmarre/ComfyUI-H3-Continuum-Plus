@@ -150,6 +150,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         shell: bash
         run: |
+          current_main="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq '.sha')"
+          if [[ "${RELEASE_SHA}" != "${current_main}" ]]; then
+            echo "Skipping stale tested Continuum release commit ${RELEASE_SHA}; current main ${current_main}."
+            exit 0
+          fi
+
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists; leaving it unchanged."
             exit 0

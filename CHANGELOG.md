@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.4.9
+
+Coordinated continuation release for VDN-H3-Plus v1.5.10, Sol-H3 v0.1.11 and Flow-Aligned Regenerate v0.3.14.
+
+- **#44:** extend decoded seam evidence to delayed single-frame flashes, and fix bounded Auto 3 tone-affine release so a corrected segment fades out rather than ending at a hard cutoff. Auto 3 is still a guarded **experimental post-decode** photometric repair; it cannot guarantee that a checkpoint-induced exposure step or lost detail will be fixed.
+- **#46:** experiment with causal Qwen overlap-dialogue history: history participates in prompt encoding but its rows are removed before H3 conditioning. The candidate is not proven to eliminate boundary gibberish. Set `H3C_CAUSAL_DIALOGUE_HISTORY=0` for a controlled disabled comparison; no training-model or latent continuity assumptions have changed.
+- **#47:** bounded, descriptor-checked adjacent Qwen conditioning lookahead with at most 256 MiB of detached CPU conditioning. It is enabled by default only for eligible fixed-geometry continuations and can be disabled via the advanced `Qwen Lookahead` input or `H3C_CONDITIONING_LOOKAHEAD=0`. Owner 02181 logs show `H3C-PT236 status=prepared` and `H3C-PT237 prefetched_reused=True`, confirming actual reuse rather than just a configured toggle. This moves encoding earlier; it does not remove Qwen work.
+
+V3.4 standard/Turbo example workflows preserve native masked continuation, 39-frame strong context, audio seam Auto, video seam Auto 3 and Preserve audible tail. The optional Qwen Lookahead defaults to on for eligible clips. Saved node widget values remain user-owned.
+
+The Plus GitHub source repository is `xmarre`, but current `[tool.comfy].PublisherId` still identifies the original upstream publisher (`ukr8b3g-cmyk`). GitHub releases and archives are independent of registry publication. Registry pushes are gated until an authorized registry publisher identity is explicitly configured; this release does **not** assume that the fork owns the upstream registry listing. All Keyless PRs are excluded.
+
+### Companion versions
+
+- [Flow-Aligned Regenerate v0.3.14](https://github.com/xmarre/MiniMax-H3-Flow-Aligned-Regenerate/releases/tag/v0.3.14) — #102, #103, #105, #107, #108
+- [Sol-H3 v0.1.11](https://github.com/xmarre/ComfyUI-Sol-H3/releases/tag/v0.1.11) — #41
+- [VDN-H3-Plus v1.5.10](https://github.com/xmarre/ComfyUI-VDN-H3-Plus/releases/tag/v1.5.10) — #41–#44
+
+
 ## 3.4.8
 
 Align the V3.4 assembler's new-node defaults, maintained standard/Turbo
