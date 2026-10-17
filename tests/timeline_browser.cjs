@@ -52,7 +52,24 @@ const { chromium } = require("playwright");
         .querySelector(".h3ts-diagnostics")
         .textContent.includes("generation_hash"),
     );
+    const beforeView = await page.evaluate(
+      () => h3TestNode.widgets.find((w) => w.name === "project_json").value,
+    );
     await page.getByRole("button", { name: "+ Zoom", exact: true }).click();
+    await page.evaluate(() => {
+      document.querySelector(".h3ts-scroll").scrollLeft = 40;
+      document.querySelector(".h3ts-scroll").dispatchEvent(new Event("scroll"));
+    });
+    // View state must not change the serialized prompt input.
+    assert.equal(
+      await page.evaluate(
+        () => h3TestNode.widgets.find((w) => w.name === "project_json").value,
+      ),
+      beforeView,
+    );
+    assert.ok(
+      await page.evaluate(() => h3TestNode.properties.h3_timeline_view?.zoom > 0),
+    );
     // Select source clip, split at frame 24 with the keyboard, undo and redo.
     await page.locator(".h3ts-clip").first().click();
     await page.evaluate(() => {
@@ -160,13 +177,72 @@ const { chromium } = require("playwright");
       "Native Masked — exact continuation (Recommended)",
     );
     assert.equal(await page.locator(".h3ts").count(), 0);
+    // Pasting one clipboard twice must still give independent projects.
+    const pastedIds = await page.evaluate(() => {
+      const app = window.comfyAPI.app.app;
+      const studio = app.graph._nodes.find(
+        (n) => n.comfyClass === "H3ContinuumTimelineStudio",
+      );
+      app.canvas.copyToClipboard([studio]);
+      app.canvas.pasteFromClipboard();
+      app.canvas.pasteFromClipboard();
+      return app.graph._nodes
+        .filter((n) => n.comfyClass === "H3ContinuumTimelineStudio")
+        .map(
+          (n) =>
+            JSON.parse(n.widgets.find((w) => w.name === "project_json").value)
+              .project_id,
+        );
+    });
+    assert.equal(pastedIds.length, 3);
+    assert.equal(new Set(pastedIds).size, 3);
+    // Multi-job reroll: jobs queue in order, appended, with a fresh nonce.
+    await page.evaluate(() => {
+      const app = window.comfyAPI.app.app;
+      const api = window.comfyAPI.api.api;
+      const sampler = app.graph._nodes.find(
+        (n) => n.comfyClass === "H3ContinuumTimelineSampler",
+      );
+      const link = sampler.inputs.find((i) => i.name === "timeline").link;
+      const studio = app.graph.getNodeById(app.graph.links[link].origin_id);
+      for (const n of app.graph._nodes.filter(
+        (n) => n.comfyClass === "H3ContinuumTimelineStudio" && n !== studio,
+      ))
+        app.graph.remove(n);
+      const widget = studio.widgets.find((w) => w.name === "project_json");
+      const p = JSON.parse(widget.value);
+      p.duration_frames = 168 * 17;
+      p.selection = [0, 168 * 17];
+      widget.value = JSON.stringify(p);
+      window.__h3Queued = [];
+      api.queuePrompt = async (number, payload) => {
+        const inputs = payload.output[String(sampler.id)].inputs;
+        window.__h3Queued.push([number, inputs.job_index, inputs.reroll_nonce]);
+        return { prompt_id: "test-" + window.__h3Queued.length };
+      };
+      studio.widgets.find((w) => w.name === "Open Timeline Studio").callback();
+    });
+    await page.locator(".h3ts").waitFor({ state: "visible" });
+    await page
+      .getByRole("button", { name: "Reroll selection", exact: true })
+      .click();
+    await page.waitForFunction(() =>
+      document.querySelector(".h3ts-status").textContent.includes("queued"),
+    );
+    assert.deepEqual(
+      await page.evaluate(() => window.__h3Queued),
+      [
+        [0, 0, 1],
+        [0, 1, 1],
+      ],
+    );
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);
     console.log(
       JSON.stringify({
         browser: "real ComfyUI",
         editor:
-          "open/split/undo/redo/save/reload/typing/close/workflow disposal passed",
+          "open/split/undo/redo/save/reload/typing/view-state/close/paste identity/queue order/workflow disposal passed",
         pageErrors: errors,
       }),
     );
