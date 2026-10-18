@@ -271,6 +271,30 @@ def main():
             )
             assert lossless_bytes.startswith(b"\\x1a\\x45\\xdf\\xa3")
 
+            # New source-size contract: the HTTP route resolves verified native
+            # geometry and exposes it in both job creation and status.
+            source_job = request(
+                "/h3_continuum/timeline/export",
+                {
+                    "project": project, "codec": "lossless",
+                    "resolution": "source",
+                    "selected_clip_ids": ["source"],
+                    "render_range": list(project["selection"]),
+                },
+            )
+            assert (source_job["resolution"], source_job["width"], source_job["height"]) == (
+                "source", 64, 64,
+            )
+            for _ in range(100):
+                source_status = request(
+                    "/h3_continuum/timeline/export/" + source_job["id"]
+                )
+                if source_status["status"] != "running":
+                    break
+                time.sleep(0.1)
+            assert source_status["status"] == "complete", source_status
+            assert (source_status["width"], source_status["height"]) == (64, 64)
+
             delivered = request(
                 "/h3_continuum/timeline/export",
                 {
