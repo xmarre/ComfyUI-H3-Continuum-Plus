@@ -80,3 +80,42 @@ test("Server rejection never causes a managed upload fallback", async () => {
   );
   assert.equal(attempts, 1);
 });
+
+test("Bundled sandbox preload exposes only native link and cancellation", async () => {
+  const fs = require("node:fs");
+  const vm = require("node:vm");
+  const path = require("node:path");
+  const script = fs.readFileSync(path.join(__dirname, "preload.cjs"), "utf8");
+  let bridge;
+  const sandbox = {
+    require(id) {
+      if (id === "electron") {
+        return {
+          contextBridge: {
+            exposeInMainWorld(key, value) {
+              assert.equal(key, "h3NativeMedia");
+              bridge = value;
+            },
+          },
+          webUtils: {
+            getPathForFile: () => "D:\\Movies\\movie.mkv",
+          },
+        };
+      }
+      throw new Error("Sandbox preload loaded forbidden module: " + id);
+    },
+    fetch: async (path, options) => {
+      assert.equal(path, "/h3_continuum/timeline/link");
+      assert.deepEqual(JSON.parse(options.body), {path: "/mnt/d/Movies/movie.mkv"});
+      return { ok: true, json: async () => ({ storage: "linked", id: "ok" }) };
+    },
+    AbortController,
+    console,
+    setTimeout,
+    clearTimeout,
+  };
+  vm.runInNewContext(script, sandbox, { filename: "preload.cjs" });
+  assert.deepEqual(Object.keys(bridge).sort(), ["cancelLink", "linkFile"]);
+  const result = await bridge.linkFile({ name: "movie.mkv" }, "real");
+  assert.equal(result.id, "ok");
+});

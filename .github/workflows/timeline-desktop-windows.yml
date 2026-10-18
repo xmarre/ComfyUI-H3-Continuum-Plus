@@ -23,7 +23,7 @@ jobs:
       - name: Install native wrapper dependencies
         working-directory: desktop/timeline-native
         run: npm install --no-audit --no-fund
-      - name: Verify path bridge and cancellation contracts
+      - name: Verify bundled sandbox preload and native-path contract
         working-directory: desktop/timeline-native
         run: npm test
       - name: Package unsigned Windows portable wrapper
