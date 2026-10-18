@@ -1,6 +1,6 @@
 """No-scan runtime compatibility and duplicate frontend registration tests."""
 
-from ComfyUI_H3_Continuum_Join.timeline.routes import (
+from ComfyUI_H3_Continuum_Join.timeline.protocol import (
     NATIVE_PATH_CONTRACT,
     native_runtime_manifest,
 )
