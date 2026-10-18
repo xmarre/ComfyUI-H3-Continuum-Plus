@@ -127,12 +127,20 @@ export function refreshProjectWidgets(node, syncDimensions = false) {
     chunks: selectionChunks(p),
     chunk_seconds: p.chunk_frames / 24,
   };
-  if (syncDimensions || !node.properties.h3_timeline_dimensions_initialized) {
+  const canvasChanged =
+    node.__timelineProjectCanvas &&
+    (node.__timelineProjectCanvas[0] !== p.width ||
+      node.__timelineProjectCanvas[1] !== p.height);
+  if (
+    (syncDimensions && canvasChanged) ||
+    !node.properties.h3_timeline_dimensions_initialized
+  ) {
     for (const name of ["width", "height"])
       if (!node.inputs?.some((i) => i.name === name && i.link != null))
         values[name] = p[name];
     node.properties.h3_timeline_dimensions_initialized = true;
   }
+  node.__timelineProjectCanvas = [p.width, p.height];
   for (const [name, value] of Object.entries(values)) {
     const widget = node.widgets?.find((w) => w.name === name);
     if (widget) widget.value = value;
@@ -149,7 +157,8 @@ export function installProjectWidgets(node) {
       {
         min: 1,
         max: 65536,
-        step: 1,
+        step: 10,
+        step2: 1,
         precision: 0,
         tooltip:
           "Selected logical chunks in Timeline Studio. Editing this control changes the project's render out; long selections are queued in bounded jobs.",
@@ -162,6 +171,7 @@ export function installProjectWidgets(node) {
         min: 4,
         max: 15,
         step: 1,
+        step2: 0.1,
         precision: 3,
         tooltip:
           "Timeline Studio chunk length in seconds, quantized to the 24 fps output frame grid.",
@@ -188,6 +198,7 @@ export function installProjectWidgets(node) {
     const callback = widget.callback;
     widget.callback = function (value, ...args) {
       callback?.call(this, value, ...args);
+      node.properties.h3_timeline_dimensions_initialized = true;
       samplerStudio(node)?.__timelineEditProject?.((p) => {
         p[name] = Number(value);
       });

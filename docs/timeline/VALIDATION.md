@@ -2,7 +2,7 @@
 
 ## Executed evidence
 
-The standalone Python suite passes **573 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **13 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
+The standalone Python suite passes **575 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **17 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
 
 The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10, 3.11, 3.12 and 3.13, including publisher-toolchain verification. Final commit checks are authoritative on the implementation PR.
 
@@ -71,6 +71,8 @@ A valid input manifest, correct tensor shape or passing CI does not establish vi
 
 ## Native sampler parity regression coverage
 
-Twelve public-facade CPU tests check the native control inventory, storage Off versus compatible resume, size-contract invalidation, persistent/scoped picture numbering, persistent/scoped video precedence, project-clock Driving Audio and final-copy identity, permissive connected prompt formats including project windows after chunk 16, request-local Qwen lookahead order/equivalence, and exact refinement capture after a cached run. The trained encoders and sampler are fixtures; routing, sequence geometry, Run Storage, session files and take records run through the implementation.
+Fourteen public-facade CPU tests check the native control inventory, storage Off versus compatible resume, size-contract invalidation, persistent/scoped picture numbering, persistent/scoped video precedence, project-clock Driving Audio and final-copy identity, permissive connected prompt formats including project windows after chunk 16, request-local Qwen lookahead order/equivalence, and exact refinement capture after a cached run. The trained encoders and sampler are fixtures; routing, sequence geometry, Run Storage, session files and take records run through the implementation.
 
 The real frontend additionally round-trips audio continuity, both reference sizes, Qwen lookahead and storage Off; migrates a seven-widget sampler without shifting seeds/boundaries/nonces; and verifies Core seed increment occurs once after a two-job Studio batch. The actual server checks all eight image sockets and the appended audio output in object_info.
+
+Sampler layout checks also assert V3.4 widget order, contiguous references, incoming link slot integrity, graph-connected width/height/seed round-trips, and timing-control edits reaching the actual project compiler. Native CPU tests verify requested latent dimensions, cache invalidation on dimension changes and rejection of a different-resolution continuation parent. Real take-review HTTP checks cover adoption of resolved canvas dimensions and preservation of a later explicit canvas edit. A frontend regression check also preserves explicit sampler dimensions when Studio opens without a canvas change.

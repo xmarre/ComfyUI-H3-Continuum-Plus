@@ -5,6 +5,7 @@ import {
   changeTiming,
   migrateSamplerWorkflow,
   orderSampler,
+  refreshProjectWidgets,
 } from "../web/timeline/sampler_layout.js";
 import {
   History,
@@ -103,6 +104,36 @@ test("legacy sampler values migrate by name and inherit their connected project 
     prompt_mode: "Auto",
   });
   assert.equal(sampler.widgets_values_named.width, 1024);
+});
+test("opening Studio preserves explicit sampler dimensions while an actual canvas edit synchronizes unlinked widgets", () => {
+  const p = { width: 768, height: 512, chunk_frames: 168, selection: [0, 504] };
+  const projectWidget = { name: "project_json", value: JSON.stringify(p) };
+  const studio = {
+    comfyClass: "H3ContinuumTimelineStudio",
+    widgets: [projectWidget],
+  };
+  const node = {
+    properties: { h3_timeline_dimensions_initialized: true },
+    inputs: [{ name: "timeline", link: 1 }],
+    graph: { links: { 1: { origin_id: 7 } }, getNodeById: () => studio },
+    widgets: [
+      { name: "width", value: 960 },
+      { name: "height", value: 704 },
+    ],
+  };
+  refreshProjectWidgets(node);
+  refreshProjectWidgets(node, true);
+  assert.deepEqual(
+    node.widgets.map((w) => w.value),
+    [960, 704],
+  );
+  p.width = 1024;
+  projectWidget.value = JSON.stringify(p);
+  refreshProjectWidgets(node, true);
+  assert.deepEqual(
+    node.widgets.map((w) => w.value),
+    [1024, 512],
+  );
 });
 test("sampler timing controls edit the actual project selection and frame-grid chunk length", () => {
   const p = { chunk_frames: 168, selection: [0, 504], duration_frames: 504 };

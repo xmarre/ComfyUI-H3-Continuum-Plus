@@ -116,6 +116,8 @@ def main():
                         for i in range(1, 9)
                     )
                     assert "driving_audio" in schema["optional"]
+                    assert schema["optional"]["width"][0] == "INT"
+                    assert schema["optional"]["height"][0] == "INT"
                     assert schema["required"]["base_seed"][1]["control_after_generate"]
                     assert "driving_audio" in registered[node]["output_name"]
             assert any("timeline_studio.js" in u for u in request("/extensions"))
@@ -266,6 +268,8 @@ def main():
                 "status": "sampled",
                 "guide_scope": compiled["jobs"][0]["guide_scope"],
                 "input_hashes": [compiled["jobs"][0]["windows"][0]["generation_hash"]],
+                "source_canvas": [64, 64],
+                "generation_size": [96, 64],
             }
             (project_dir / f"take-{take_id}.json").write_text(
                 json.dumps(record), encoding="utf-8"
@@ -287,6 +291,7 @@ def main():
                     },
                 )
                 if action == "accept":
+                    assert [reviewed["width"], reviewed["height"]] == [96, 64]
                     assert take_id not in reviewed.get("rejected", [])
                     generated = next(
                         t for t in reviewed["tracks"] if t["role"] == "generated"
@@ -295,6 +300,22 @@ def main():
                     assert generated["clips"][0]["audio_role"] == "final"
                 else:
                     assert take_id in reviewed["rejected"]
+            # A canvas edit made after the frozen sampling request is retained.
+            reviewed["width"] = 128
+            edited = request(
+                "/h3_continuum/timeline/project",
+                {"project": reviewed, "expected_revision": reviewed["revision"]},
+            )
+            preserved = request(
+                "/h3_continuum/timeline/take/select",
+                {
+                    "project_id": project["project_id"],
+                    "take_id": take_id,
+                    "action": "accept",
+                    "expected_revision": edited["revision"],
+                },
+            )
+            assert preserved["width"] == 128
             print(
                 json.dumps(
                     {

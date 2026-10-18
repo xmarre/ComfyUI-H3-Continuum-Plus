@@ -173,6 +173,8 @@ const { chromium } = require("playwright");
     }, workflow);
     assert.equal(samplerInputs.job_index, 0);
     assert.equal(samplerInputs.base_seed, 20261017);
+    assert.equal(samplerInputs.width, 768);
+    assert.equal(samplerInputs.height, 512);
     assert.equal(samplerInputs.audio_continuity, true);
     assert.equal(samplerInputs.run_storage, "Save + Auto Resume");
     assert.equal(samplerInputs.reference_size, "Match Output");
@@ -189,6 +191,33 @@ const { chromium } = require("playwright");
       const sampler = app.graph.getNodeById(8);
       const names = sampler.inputs.map((input) => input.name);
       const outputNames = sampler.outputs.map((output) => output.name);
+      const widgetNames = sampler.widgets.map((widget) => widget.name);
+      for (const [name, value] of [
+        ["chunks", 2],
+        ["chunk_seconds", 5],
+        ["width", 960],
+        ["height", 704],
+      ]) {
+        const widget = sampler.widgets.find((w) => w.name === name);
+        widget.value = value;
+        widget.callback(value);
+      }
+      const studio = app.graph._nodes.find(
+        (n) => n.comfyClass === "H3ContinuumTimelineStudio",
+      );
+      const project = JSON.parse(
+        studio.widgets.find((w) => w.name === "project_json").value,
+      );
+      const compiled = await (
+        await window.comfyAPI.api.api.fetchApi(
+          "/h3_continuum/timeline/compile",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(project),
+          },
+        )
+      ).json();
       const set = (name, value) => {
         sampler.widgets.find((w) => w.name === name).value = value;
       };
@@ -202,6 +231,7 @@ const { chromium } = require("playwright");
       const roundtrip = (await app.graphToPrompt()).output["8"].inputs;
       // The first released PR schema stored just seven sampler widgets.
       const old = structuredClone(workflow);
+      delete old.nodes.find((n) => n.id === 8).widgets_values_named;
       old.nodes.find((n) => n.id === 8).widgets_values = [
         0,
         123,
@@ -214,7 +244,15 @@ const { chromium } = require("playwright");
       await app.loadGraphData(old);
       const migrated = (await app.graphToPrompt()).output["8"].inputs;
       await app.loadGraphData(workflow);
-      return { names, outputNames, roundtrip, migrated };
+      return {
+        names,
+        outputNames,
+        widgetNames,
+        project,
+        compiled,
+        roundtrip,
+        migrated,
+      };
     }, workflow);
     for (const name of [
       "reference_image_1",
@@ -226,6 +264,23 @@ const { chromium } = require("playwright");
     ])
       assert.ok(parity.names.includes(name), name);
     assert.ok(parity.outputNames.includes("driving_audio"));
+    assert.deepEqual(parity.widgetNames.slice(0, 8), [
+      "prompt_mode",
+      "chunks",
+      "chunk_seconds",
+      "width",
+      "height",
+      "continuity",
+      "base_seed",
+      "control_after_generate",
+    ]);
+    assert.equal(parity.project.width, 960);
+    assert.equal(parity.project.height, 704);
+    assert.equal(parity.project.chunk_frames, 120);
+    assert.deepEqual(parity.project.selection, [0, 240]);
+    assert.equal(parity.compiled.jobs[0].windows.length, 2);
+    assert.equal(parity.roundtrip.width, 960);
+    assert.equal(parity.roundtrip.height, 704);
     assert.equal(parity.roundtrip.audio_continuity, false);
     assert.equal(parity.roundtrip.reference_size, "Max Identity");
     assert.equal(parity.roundtrip.video_reference_size, "Balanced - 0.6 MP");
@@ -234,6 +289,8 @@ const { chromium } = require("playwright");
     assert.equal(parity.migrated.base_seed, 123);
     assert.equal(parity.migrated.regenerate_from, 2);
     assert.equal(parity.migrated.reroll_nonce, 17);
+    assert.equal(parity.migrated.width, 768);
+    assert.equal(parity.migrated.height, 512);
     const references = await page.evaluate(async () => {
       const app = window.comfyAPI.app.app;
       const sampler = app.graph.getNodeById(8);
@@ -247,18 +304,69 @@ const { chromium } = require("playwright");
         image.connect(0, sampler, slot);
         await new Promise(queueMicrotask);
       }
+      const dimensionNodes = {};
+      for (const [name, value] of [
+        ["width", 1024],
+        ["height", 768],
+        ["base_seed", 123],
+      ]) {
+        const integer = LiteGraph.createNode("PrimitiveInt");
+        app.graph.add(integer);
+        integer.widgets.find((w) => w.name === "value").value = value;
+        const slot = sampler.inputs.findIndex((input) => input.name === name);
+        if (slot < 0) throw new Error(`Missing numeric input ${name}`);
+        integer.connect(0, sampler, slot);
+        dimensionNodes[name] = String(integer.id);
+        await new Promise(queueMicrotask);
+      }
       const serialized = app.graph.serialize();
       await app.loadGraphData(serialized);
-      return app.graph
-        .getNodeById(8)
-        .inputs.filter((input) => input.name.startsWith("reference_image_"))
-        .map((input) => [input.name, input.link != null]);
+      const restored = app.graph.getNodeById(8);
+      const prompt = await app.graphToPrompt();
+      return {
+        references: restored.inputs
+          .filter((input) => input.name.startsWith("reference_image_"))
+          .map((input) => [input.name, input.link != null]),
+        names: restored.inputs.map((input) => input.name),
+        dimensionNodes,
+        inputs: prompt.output["8"].inputs,
+        slotTargetsValid: restored.inputs.every(
+          (input, slot) =>
+            input.link == null ||
+            app.graph.links[input.link].target_slot === slot,
+        ),
+      };
     });
-    assert.equal(references.length, 8);
+    assert.equal(references.references.length, 8);
     assert.deepEqual(
-      references.slice(2).map(([, connected]) => connected),
+      references.references.slice(2).map(([, connected]) => connected),
       Array(6).fill(true),
     );
+    assert.deepEqual(references.names.slice(7, 20), [
+      "first_frame",
+      "last_frame",
+      ...Array.from({ length: 8 }, (_, i) => `reference_image_${i + 1}`),
+      "reference_video_1",
+      "driving_audio",
+      "audio_vae",
+    ]);
+    assert.ok(references.slotTargetsValid);
+    for (const name of ["width", "height", "base_seed"])
+      assert.deepEqual(references.inputs[name], [
+        references.dimensionNodes[name],
+        0,
+      ]);
+    await page.evaluate(() => {
+      const app = window.comfyAPI.app.app;
+      app.canvas.ds.scale = 0.85;
+      app.canvas.ds.offset = [-380, 70];
+      app.canvas.setDirty(true, true);
+    });
+    await page.waitForTimeout(100);
+    await page.screenshot({
+      path: "/tmp/timeline-sampler-layout.png",
+      clip: { x: 320, y: 30, width: 450, height: 940 },
+    });
     await page.evaluate(async (workflow) => {
       const app = window.comfyAPI.app.app;
       await app.loadGraphData(workflow);

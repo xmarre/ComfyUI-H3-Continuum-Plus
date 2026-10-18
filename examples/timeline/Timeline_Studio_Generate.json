@@ -169,13 +169,13 @@
       "properties": {
         "Node name for S&R": "BasicScheduler"
       },
-      "widgets_values": ["simple", 19, 1.0]
+      "widgets_values": ["simple", 19, 1]
     },
     {
       "id": 8,
       "type": "H3ContinuumTimelineSampler",
       "pos": [770, 30],
-      "size": [370, 650],
+      "size": [420, 850],
       "flags": {},
       "order": 7,
       "mode": 0,
@@ -201,11 +201,6 @@
           "link": 5
         },
         {
-          "name": "audio_vae",
-          "type": "VAE",
-          "link": 6
-        },
-        {
           "name": "sampler",
           "type": "SAMPLER",
           "link": 7
@@ -214,6 +209,11 @@
           "name": "sigmas",
           "type": "SIGMAS",
           "link": 8
+        },
+        {
+          "name": "sequence_prompt",
+          "type": "STRING",
+          "link": null
         },
         {
           "name": "first_frame",
@@ -251,9 +251,9 @@
           "link": null
         },
         {
-          "name": "sequence_prompt",
-          "type": "STRING",
-          "link": null
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 6
         }
       ],
       "outputs": [
@@ -294,31 +294,60 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "H3ContinuumTimelineSampler"
+        "Node name for S&R": "H3ContinuumTimelineSampler",
+        "h3_timeline_dimensions_initialized": true,
+        "h3_timeline_sampler_layout": 1
       },
       "widgets_values": [
-        0,
+        "Auto",
+        768,
+        512,
+        "Strong — 39 frames",
         20261017,
         "fixed",
-        "Strong — 39 frames",
-        "Native Masked — exact continuation (Recommended)",
-        0,
-        0,
-        false,
         true,
+        "Save + Auto Resume",
+        0,
+        0,
+        "",
+        "Match Output",
+        "Efficient - 0.4 MP",
+        "Native Masked — exact continuation (Recommended)",
+        "",
+        true,
+        0,
         "Basic",
         false,
         true,
-        "Save + Auto Resume",
-        "",
-        "Match Output",
-        "",
-        "Efficient - 0.4 MP",
-        true,
         "",
         true,
-        "Auto"
-      ]
+        false
+      ],
+      "widgets_values_named": {
+        "control_after_generate": "fixed",
+        "job_index": 0,
+        "base_seed": 20261017,
+        "continuity": "Strong — 39 frames",
+        "continuation_method": "Native Masked — exact continuation (Recommended)",
+        "regenerate_from": 0,
+        "reroll_nonce": 0,
+        "emit_refine_state": false,
+        "audio_continuity": true,
+        "diagnostics": "Basic",
+        "debug": false,
+        "show_preview": true,
+        "run_storage": "Save + Auto Resume",
+        "run_name": "",
+        "reference_size": "Match Output",
+        "project_id": "",
+        "video_reference_size": "Efficient - 0.4 MP",
+        "strict_compatibility": true,
+        "managed_prompt_source_json": "",
+        "conditioning_lookahead": true,
+        "prompt_mode": "Auto",
+        "width": 768,
+        "height": 512
+      }
     },
     {
       "id": 9,
@@ -489,9 +518,9 @@
     [3, 2, 0, 7, 0, "MODEL"],
     [4, 3, 0, 8, 2, "CLIP"],
     [5, 4, 0, 8, 3, "VAE"],
-    [6, 5, 0, 8, 4, "VAE"],
-    [7, 6, 0, 8, 5, "SAMPLER"],
-    [8, 7, 0, 8, 6, "SIGMAS"],
+    [6, 5, 0, 8, 14, "VAE"],
+    [7, 6, 0, 8, 4, "SAMPLER"],
+    [8, 7, 0, 8, 5, "SIGMAS"],
     [9, 8, 0, 9, 0, "LATENT"],
     [10, 4, 0, 9, 1, "VAE"],
     [11, 8, 1, 10, 0, "LATENT"],
