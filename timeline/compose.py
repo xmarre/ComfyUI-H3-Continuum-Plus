@@ -79,9 +79,47 @@ def write_video_frames(frames, path, fps=24):
             container.mux(packet)
 
 
+
+def export_dimensions(p, store, start, stop, resolution="timeline", selected_clip_ids=()):
+    """Choose output pixels independently of the H3 sampling canvas.
+
+    Source-size exports require one unambiguous native source geometry. A
+    highlighted visual clip supplies that geometry even when audio is selected.
+    Never silently fall back to the lower-resolution generation canvas.
+    """
+    if resolution == "timeline":
+        return p["width"], p["height"]
+    if resolution != "source":
+        raise ValueError("Export resolution must be source or timeline")
+    visible = active_clips(p, start, stop, {"retained", "generated"})
+    selected = set(selected_clip_ids)
+    highlighted = [(t, c) for t, c in visible if c["id"] in selected]
+    candidates = highlighted or visible
+    if not candidates:
+        raise ValueError(
+            "Original-size export requires a visible video clip in this range; "
+            "choose Timeline canvas for audio-only exports"
+        )
+    geometries = set()
+    for _, clip in candidates:
+        path = store.assets.verify(clip["asset_id"])
+        from .media import probe
+        stream = probe(path).get("video")
+        if not stream:
+            raise ValueError("Selected export clip contains no video")
+        geometries.add((int(stream["width"]), int(stream["height"])))
+    if len(geometries) != 1:
+        raise ValueError(
+            "Multiple source resolutions in the export range. Highlight one "
+            "video clip to choose its size, or choose Timeline canvas explicitly."
+        )
+    return geometries.pop()
+
+
 def export_project(
     p, store, output, *, codec="lossless", cancel=check_cancel,
-    render_range=None, preview=False, on_progress=None
+    render_range=None, preview=False, on_progress=None,
+    resolution="timeline", selected_clip_ids=(),
 ):
     """Stream a long composition in one-second CPU windows.
 
@@ -135,11 +173,15 @@ def export_project(
             ),
         )
     )
+    width, height = export_dimensions(
+        p, store, start, stop, resolution, selected_clip_ids
+    )
     from .export_stream import encode_export
 
     return encode_export(
         p, store, output, start, stop, rate,
         codec=codec, cancel=cancel, preview=preview,
+        width=width, height=height,
         on_progress=on_progress,
     )
 
