@@ -70,7 +70,7 @@ async function launch({ found = true } = {}) {
       if (name === "./connection.cjs") return fakeConnection;
       throw new Error("Unexpected native module " + name);
     },
-    process: {argv:[]},
+    process: {argv:[],env:{}},
     __dirname,
     URL,
     console,
