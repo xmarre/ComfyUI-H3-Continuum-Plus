@@ -10,6 +10,30 @@ import torch
 from .media import mix_audio
 
 
+def merge_references(persistent, scoped):
+    """Persistent socket pictures precede window-local pictures and aliases."""
+    if persistent is None:
+        return scoped
+    if scoped is None:
+        return persistent
+    from ..reference import ReferenceAssets, _canonical_hash, REFERENCE_CONTRACT_VERSION
+
+    hashes = persistent.image_hashes + scoped.image_hashes
+    return ReferenceAssets(
+        persistent.images + scoped.images,
+        persistent.latents + scoped.latents,
+        hashes,
+        _canonical_hash(
+            {
+                "reference_contract_version": REFERENCE_CONTRACT_VERSION,
+                "size_mode": scoped.size_mode,
+                "image_hashes": list(hashes),
+            }
+        ),
+        scoped.size_mode,
+    )
+
+
 class TimelineInputs:
     def __init__(self, project, job, store):
         self.project = copy.deepcopy(project)
@@ -22,6 +46,13 @@ class TimelineInputs:
         self.reference_cache = OrderedDict()
         self.reference_cache_bytes = 0
         self.offset = job["range"][0]
+        self.reference_size = "Match Output"
+        from ..reference_video import REFERENCE_VIDEO_SIZE_EFFICIENT
+
+        self.video_reference_size = REFERENCE_VIDEO_SIZE_EFFICIENT
+        self.picture_offset = 0
+        self.driving_audio = None
+        self.external_prompt = False
 
     def set_offset(self, offset):
         from .model import compile_window, guide_scope_for
@@ -31,7 +62,10 @@ class TimelineInputs:
         scope = guide_scope_for(self.project, indices, offset=offset)
         self.job["guide_scope"] = list(scope)
         self.windows = [
-            compile_window(self.project, i, guide_scope=scope) for i in indices
+            compile_window(
+                self.project, i, guide_scope=scope, picture_offset=self.picture_offset
+            )
+            for i in indices
         ]
         self.job["windows"] = self.windows
 
@@ -39,11 +73,24 @@ class TimelineInputs:
     def hashes(self):
         return [w["generation_hash"] for w in self.windows]
 
+    @property
+    def storage_contract(self):
+        return {
+            "contract": 2,
+            "reference_size": self.reference_size,
+            "video_reference_size": self.video_reference_size,
+        }
+
     def guide_active(self, index):
+        if self.driving_audio is not None:
+            rate = int(self.driving_audio["sample_rate"])
+            return self.driving_audio["waveform"].shape[-1] > round(
+                self.windows[index]["range"][0] * rate / 24
+            )
         return bool(self.windows[index]["guide"])
 
     def audio_source(self, audio_vae):
-        if not any(w["guide"] for w in self.windows):
+        if self.driving_audio is None and not any(w["guide"] for w in self.windows):
             return None
         from ..driving_audio import prepare_driving_audio_source
 
@@ -54,8 +101,19 @@ class TimelineInputs:
         a = self.offset
         b = a + self.job["range"][1] - self.job["range"][0] + 34
         self.guide_mix_range = [a, b]
-        pcm = mix_audio(self.project, self.store.assets, a, b, rate, "guide")
-        audio = {"waveform": torch.from_numpy(pcm)[None], "sample_rate": rate}
+        if self.driving_audio is not None:
+            rate = int(self.driving_audio["sample_rate"])
+            audio = {
+                "waveform": self.driving_audio["waveform"][
+                    ..., round(a * rate / 24) : round(b * rate / 24)
+                ],
+                "sample_rate": rate,
+            }
+        else:
+            pcm = mix_audio(self.project, self.store.assets, a, b, rate, "guide")
+            audio = {"waveform": torch.from_numpy(pcm)[None], "sample_rate": rate}
+        if audio["waveform"].shape[-1] == 0:
+            return None
         return prepare_driving_audio_source(
             audio, audio_vae, target_frames=b - a, fps=24
         )
@@ -68,7 +126,7 @@ class TimelineInputs:
         compiler then re-bases them onto each invocation's own clock, including
         native context, without importing adjacent windows.
         """
-        if not self.windows[index].get("timed_prompt"):
+        if self.external_prompt or not self.windows[index].get("timed_prompt"):
             return original
         if self.timeline_plan is None:
             from ..v2.prompts import make_prompt_plan
@@ -118,7 +176,7 @@ class TimelineInputs:
 
         prepared = []
         for item in w["images"]:
-            key = (item["asset_id"], width, height)
+            key = (item["asset_id"], width, height, self.reference_size)
             cached = self.reference_cache.pop(key, None)
             if cached is None:
                 from PIL import Image
@@ -136,7 +194,7 @@ class TimelineInputs:
                     reference_image_2=None,
                     output_width=width,
                     output_height=height,
-                    size_mode="Match Output",
+                    size_mode=self.reference_size,
                 )
                 single = encode_reference_latents(video_vae, single)
                 single = replace(
@@ -168,24 +226,24 @@ class TimelineInputs:
                 _canonical_hash(
                     {
                         "reference_contract_version": REFERENCE_CONTRACT_VERSION,
-                        "size_mode": "Match Output",
+                        "size_mode": self.reference_size,
                         "image_hashes": list(hashes),
                     }
                 ),
-                "Match Output",
+                self.reference_size,
             )
         video_source = video_assets = None
         if w["video"]:
             # Timeline video lanes compose by explicit top-track precedence.
             from .compose import render_frames
-            from ..reference_video import _resolved_size, REFERENCE_VIDEO_SIZE_EFFICIENT
+            from ..reference_video import _resolved_size
 
             rw, rh = _resolved_size(
                 width,
                 height,
                 output_width=width,
                 output_height=height,
-                size_mode=REFERENCE_VIDEO_SIZE_EFFICIENT,
+                size_mode=self.video_reference_size,
             )
             frames = render_frames(
                 self.project,
@@ -204,7 +262,11 @@ class TimelineInputs:
                     [frames, frames[-1:].expand(physical - (b - a), -1, -1, -1)]
                 )
             video_source = prepare_reference_video_source(
-                frames, target_frames=physical, output_width=width, output_height=height
+                frames,
+                target_frames=physical,
+                output_width=width,
+                output_height=height,
+                size_mode=self.video_reference_size,
             )
             video_assets = encode_reference_video(video_vae, video_source)
         voice_source = voice_assets = None
@@ -220,7 +282,10 @@ class TimelineInputs:
             voice_assets = encode_reference_audio(audio_vae, voice_source)
         return refs, video_source, video_assets, voice_source, voice_assets
 
-    def annotate(self, descriptor, index):
+    def can_prefetch(self, index):
+        return not (self.windows[index]["video"] or self.windows[index]["voice"])
+
+    def annotate(self, descriptor, index, *, record=True):
         w = self.windows[index]
         presentation = dict(descriptor.presentation_contract)
         presentation["timeline_studio"] = {
@@ -294,7 +359,8 @@ class TimelineInputs:
             exact_protected=bool(descriptor.exact_protected_interval),
             guided_overlap=bool(descriptor.guided_overlap_interval),
         )
-        self.manifests.append(
-            {"descriptor": d.semantic_dict(), "window": copy.deepcopy(w)}
-        )
+        if record:
+            self.manifests.append(
+                {"descriptor": d.semantic_dict(), "window": copy.deepcopy(w)}
+            )
         return d

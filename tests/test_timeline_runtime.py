@@ -47,6 +47,7 @@ def test_references_materialize_at_actual_invocation_and_invalidate_suffix(
     monkeypatch, physical
 ):
     monkeypatch.setenv("H3_CONTINUUM_PHYSICAL_PROMPTS", physical)
+    monkeypatch.setenv("H3C_CONDITIONING_LOOKAHEAD", "0")
     p = blank_project()
     p.update(width=64, height=64)
     windows = compile_project(p)["jobs"][0]

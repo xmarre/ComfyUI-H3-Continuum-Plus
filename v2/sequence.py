@@ -776,7 +776,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     if storage_controller is not None:
         storage_plan=dict(continuation_storage_plan({**plan,"hashes":list(prompt_hashes)} if timeline_inputs is not None else plan,continuation_method))
         if timeline_inputs is not None:
-            storage_plan["timeline_studio"] = {"contract": 1, "audio_guide": any(w["guide"] for w in timeline_inputs.windows)}
+            storage_plan["timeline_studio"] = timeline_inputs.storage_contract
         storage_plan["physical_prompt_policy"]=PHYSICAL_COMPILER_VERSION if physical_candidate else LEGACY_COMPILER_VERSION
         storage_plan["prompt_source_digest"]=str((plan.get("source") or {}).get("source_digest",""))
         storage_plan["timeline_video_adapter"]="physical_window_v1" if physical_timeline_video_enabled() else "legacy_nominal_chunk_v1"
@@ -900,8 +900,15 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         invocation_voice_assets = reference_audio_assets
         invocation_video_assets = reference_video_assets
         if timeline_inputs is not None:
-            invocation_references, invocation_video_source, invocation_video_assets, invocation_voice_source, invocation_voice_assets = timeline_inputs.materialize(
+            scoped_references, scoped_video_source, scoped_video_assets, scoped_voice_source, scoped_voice_assets = timeline_inputs.materialize(
                 sequence_index, video_vae=video_vae, audio_vae=driving_audio_vae, width=width, height=height)
+            from ..timeline.runtime import merge_references
+            invocation_references = merge_references(reference_assets, scoped_references)
+            if scoped_video_source is not None:
+                invocation_video_source, invocation_video_assets = scoped_video_source, scoped_video_assets
+            if scoped_voice_source is not None:
+                invocation_voice_source, invocation_voice_assets = scoped_voice_source, scoped_voice_assets
+            del scoped_references, scoped_video_source, scoped_video_assets, scoped_voice_source, scoped_voice_assets
         descriptor=make_normal_descriptor(
             geometry=geometry,retained_before=retained_frames,target_duration_frames=target_duration_frames,
             continuation_method=continuation_method,initial_state_external=initial_state is not None and not entries,
@@ -949,35 +956,44 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             "host_wall_s=%.3f",
             sequence_index + 1, actual_prefetch_hit, time.perf_counter() - encoding_started,
         )
-        if (timeline_inputs is None and not actual_prefetch_hit and timeline_video_source is None
-                and sequence_index + 1 in normal_indices):
+        if (not actual_prefetch_hit and timeline_video_source is None
+                and sequence_index + 1 in normal_indices
+                and (timeline_inputs is None or timeline_inputs.can_prefetch(sequence_index + 1))):
             from .conditioning_lifecycle import bounded_cpu_conditioning, plan_next_geometry
             next_geometry = plan_next_geometry(
                 current=geometry, continuity=continuity, continuation_method=continuation_method,
-                audio_continuity=audio_continuity, driving_audio_active=driving_audio_source is not None,
+                audio_continuity=audio_continuity, driving_audio_active=driving_audio_source is not None and (timeline_inputs is None or timeline_inputs.guide_active(sequence_index + 1)),
                 chunks=chunks, chunk_seconds=chunk_seconds, retained_frames=retained_frames,
                 width=width, height=height, debug=debug,
             )
             if next_geometry is not None:
-                next_last = bool(last_frame is not None and next_geometry.is_final)
-                next_descriptor = make_normal_descriptor(
-                    geometry=next_geometry, retained_before=retained_frames + geometry.net_frames,
-                    target_duration_frames=target_duration_frames, continuation_method=continuation_method,
-                    initial_state_external=False, assets=assets, include_first=False, include_last=next_last,
-                    reference_assets=reference_assets, reference_audio_source=reference_audio_source,
-                    reference_video_source=reference_video_source, timeline_video_source=None,
-                )
                 # Speculation must not mutate the ordinary per-request cache.
                 # If the next encode fails, its usual sequential encode will
                 # still report that error at the next actual invocation.
                 lookahead_started = time.monotonic()
                 outcome = "skipped"
+                next_scoped = next_references = None
                 try:
+                    next_last = bool(last_frame is not None and next_geometry.is_final)
+                    next_references = reference_assets
+                    if timeline_inputs is not None:
+                        next_scoped, _, _, _, _ = timeline_inputs.materialize(
+                            sequence_index + 1, video_vae=video_vae, audio_vae=driving_audio_vae, width=width, height=height)
+                        next_references = merge_references(reference_assets, next_scoped)
+                    next_descriptor = make_normal_descriptor(
+                        geometry=next_geometry, retained_before=retained_frames + geometry.net_frames,
+                        target_duration_frames=target_duration_frames, continuation_method=continuation_method,
+                        initial_state_external=False, assets=assets, include_first=False, include_last=next_last,
+                        reference_assets=next_references, reference_audio_source=reference_audio_source,
+                        reference_video_source=reference_video_source, timeline_video_source=None,
+                    )
+                    if timeline_inputs is not None:
+                        next_descriptor = timeline_inputs.annotate(next_descriptor, sequence_index + 1, record=False)
                     ahead, _, _, ahead_key = encode_physical_prompt_conditioning(
-                        clip=clip, plan=plan, descriptor=next_descriptor,
+                        clip=clip, plan=timeline_inputs.invocation_plan(plan,sequence_index + 1) if timeline_inputs is not None else plan, descriptor=next_descriptor,
                         legacy_text=prompts[sequence_index + 1], assets=assets,
                         include_first=False, include_last=next_last,
-                        reference_assets=reference_assets,
+                        reference_assets=next_references,
                         reference_audio_assets=reference_audio_assets,
                         timeline_video_assets=reference_video_assets,
                         cache=dict(cache),
@@ -996,6 +1012,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                         "H3C-PT236 conditioning-lookahead next_chunk=%d status=%s wall_s=%.3f",
                         sequence_index + 2, outcome, time.monotonic() - lookahead_started,
                     )
+                    del next_scoped, next_references
         token_telemetry=conditioning_telemetry(base_conditioning)
         chunk_plan=dict(geometry.plan); chunk_plan["physical_prompt"]=physical_meta
         latent=empty_h3_latent(width,height,geometry.total_frames)

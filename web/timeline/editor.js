@@ -725,7 +725,7 @@ export class TimelineEditor {
       const format = el(
         "select",
         { "aria-label": "Prompt format" },
-        ...["Fixed", "List", "Timeline"].map((v) =>
+        ...["Auto", "Fixed", "List", "Timeline"].map((v) =>
           el("option", { value: v, text: v }),
         ),
       );

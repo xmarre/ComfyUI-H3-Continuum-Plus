@@ -46,13 +46,22 @@ def stale_take(
 ):
     from .model import compile_window
 
+    if record.get("prompt_override"):
+        p = copy.deepcopy(p)
+        p["prompts"] = record["prompt_override"]
+        p["tracks"] = [t for t in p["tracks"] if t["role"] != "prompt"]
     limit = len(record["indices"])
     ranges = record.get("chunk_output_ranges", [])
     if end_frame is not None and ranges:
         limit = sum(a < end_frame for a, b in ranges)
     scope = record.get("guide_scope")
     for index, old in zip(record["indices"][:limit], record["input_hashes"][:limit]):
-        window = compile_window(p, index, guide_scope=tuple(scope) if scope else None)
+        window = compile_window(
+            p,
+            index,
+            guide_scope=tuple(scope) if scope else None,
+            picture_offset=record.get("picture_offset", 0),
+        )
         if window["generation_hash"] != old:
             return True
     by_id = {r["id"]: r for r in records}
@@ -176,13 +185,10 @@ class H3ContinuumTimelineStudio:
 class H3ContinuumTimelineSampler:
     @classmethod
     def INPUT_TYPES(cls):
-        from ..v3.driving_nodes import V34_CONTINUITY_OPTIONS, V34_CONTINUITY_STRONG
-        from ..masked_continuation import (
-            CONTINUATION_METHODS,
-            CONTINUATION_NATIVE_MASKED,
-        )
+        from ..v3.driving_nodes import H3ContinuumSamplerV34
 
-        return {
+        native = copy.deepcopy(H3ContinuumSamplerV34.INPUT_TYPES())
+        schema = {
             "required": {
                 "timeline": ("H3_CONTINUUM_TIMELINE_PROJECT",),
                 "model": ("MODEL",),
@@ -192,18 +198,9 @@ class H3ContinuumTimelineSampler:
                 "sampler": ("SAMPLER",),
                 "sigmas": ("SIGMAS",),
                 "job_index": ("INT", {"default": 0, "min": 0}),
-                "base_seed": (
-                    "INT",
-                    {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF},
-                ),
-                "continuity": (
-                    V34_CONTINUITY_OPTIONS,
-                    {"default": V34_CONTINUITY_STRONG},
-                ),
-                "continuation_method": (
-                    CONTINUATION_METHODS,
-                    {"default": CONTINUATION_NATIVE_MASKED},
-                ),
+                "base_seed": native["required"]["base_seed"],
+                "continuity": native["required"]["continuity"],
+                "continuation_method": native["required"]["continuation_method"],
                 "regenerate_from": ("INT", {"default": 0, "min": 0, "max": 16}),
                 "reroll_nonce": ("INT", {"default": 0, "min": 0}),
                 "emit_refine_state": ("BOOLEAN", {"default": False}),
@@ -211,6 +208,31 @@ class H3ContinuumTimelineSampler:
             "optional": {"first_frame": ("IMAGE",), "last_frame": ("IMAGE",)},
             "hidden": {"prompt": "PROMPT", "unique_id": "UNIQUE_ID"},
         }
+        # Keep the original Timeline widget order. Native definitions remain
+        # shared, including sizing options, tooltips and seed controls.
+        for name in (
+            "audio_continuity",
+            "diagnostics",
+            "debug",
+            "show_preview",
+            "run_storage",
+            "run_name",
+            "reference_size",
+            "project_id",
+            "video_reference_size",
+            "strict_compatibility",
+        ):
+            schema["required"][name] = native["required"][name]
+        schema["required"]["run_storage"][1]["default"] = "Save + Auto Resume"
+        for name, definition in native["optional"].items():
+            if name != "audio_vae":
+                schema["optional"][name] = definition
+        schema["optional"]["sequence_prompt"] = native["required"]["sequence_prompt"]
+        schema["optional"]["sequence_prompt"][1]["tooltip"] = (
+            "Optional native prompt source. When connected, replaces Studio's prompt script for the full project; prompt clips still belong to Studio when disconnected."
+        )
+        schema["optional"]["prompt_mode"] = native["required"]["prompt_mode"]
+        return schema
 
     @classmethod
     def IS_CHANGED(cls, regenerate_from=0, **kwargs):
@@ -223,6 +245,7 @@ class H3ContinuumTimelineSampler:
         "H3_CONTINUUM_TIMELINE_TAKE",
         "STRING",
         "H3_CONTINUUM_REFINE_STATE",
+        "AUDIO",
     )
     RETURN_NAMES = (
         "video_latents",
@@ -231,10 +254,17 @@ class H3ContinuumTimelineSampler:
         "take",
         "status",
         "refine_state",
+        "driving_audio",
     )
-    OUTPUT_IS_LIST = (True, True, False, False, False, True)
+    OUTPUT_IS_LIST = (True, True, False, False, False, True, False)
     FUNCTION = "sample"
     CATEGORY = CATEGORY
+    DESCRIPTION = (
+        "Native V3.4 sampling with Timeline takes. Studio owns output dimensions, "
+        "duration, chunk length and scoped prompts. Persistent references precede "
+        "scoped pictures; scoped video replaces persistent Video Reference only "
+        "in its active windows. Connected Driving Audio overrides guide lanes."
+    )
 
     def sample(
         self,
@@ -256,6 +286,23 @@ class H3ContinuumTimelineSampler:
         last_frame=None,
         prompt=None,
         unique_id=None,
+        audio_continuity=True,
+        diagnostics="Detailed Report",
+        debug=False,
+        show_preview=True,
+        run_storage="Save + Auto Resume",
+        run_name="",
+        reference_size="Match Output",
+        project_id="",
+        video_reference_size=None,
+        strict_compatibility=False,
+        managed_prompt_source_json="",
+        conditioning_lookahead=None,
+        reference_video_1=None,
+        driving_audio=None,
+        sequence_prompt=None,
+        prompt_mode="Auto",
+        **reference_images,
     ):
         from ..v2.sequence import run_sequence
         from ..v2.prompts import make_prompt_plan
@@ -272,7 +319,13 @@ class H3ContinuumTimelineSampler:
             _refine_state_output,
         )
         from ..v3.plan import prepare_physical_decode_entries
-        from ..constants import DIAGNOSTICS_FULL
+        from ..v2.conditioning_lifecycle import conditioning_lookahead_scope
+        from ..reference import prepare_reference_assets
+        from ..reference_video import (
+            prepare_reference_video_source,
+            REFERENCE_VIDEO_SIZE_EFFICIENT,
+        )
+        from ..temporal import align_frame_count_up
 
         p = copy.deepcopy(timeline["project"])
         if not 0 <= int(job_index) < len(timeline["jobs"]):
@@ -299,13 +352,36 @@ class H3ContinuumTimelineSampler:
             for i in w[key]
         }:
             store.assets.verify(asset_id)
+        references = prepare_reference_assets(
+            **{
+                f"reference_image_{i}": reference_images.get(f"reference_image_{i}")
+                for i in range(1, 9)
+            },
+            output_width=p["width"],
+            output_height=p["height"],
+            size_mode=reference_size,
+        )
+        video_reference_size = video_reference_size or REFERENCE_VIDEO_SIZE_EFFICIENT
+        video_source = prepare_reference_video_source(
+            reference_video_1,
+            target_frames=align_frame_count_up(p["chunk_frames"]),
+            output_width=p["width"],
+            output_height=p["height"],
+            size_mode=video_reference_size,
+        )
         provider = TimelineInputs(p, job, store)
+        provider.reference_size = reference_size
+        provider.video_reference_size = video_reference_size
+        provider.picture_offset = references.count if references else 0
+        provider.driving_audio = driving_audio
+        provider.set_offset(job["range"][0])
+        job = provider.job
         guide = None
         continuity = _normalize_v34_continuity(continuity)
         validate_native_masked_request(
             method=continuation_method,
             continuity=continuity,
-            audio_continuity=True,
+            audio_continuity=bool(audio_continuity),
             driving_audio_active=all(
                 provider.guide_active(i) for i in range(1, len(job["windows"]))
             ),
@@ -317,18 +393,51 @@ class H3ContinuumTimelineSampler:
             chunks=len(job["windows"]),
             chunk_seconds=p["chunk_frames"] / 24,
         )
+        if sequence_prompt is not None:
+            # Parse on the full project clock, then retain the selected job's
+            # routed windows (including strict inner Timeline ranges).
+            from ..v2.prompts import build_sampler_prompt_plan
+
+            external = build_sampler_prompt_plan(
+                prompt_mode=prompt_mode,
+                prompt_script="",
+                sequence_prompt=sequence_prompt,
+                prompt_plan=None,
+                chunks=(p["duration_frames"] + p["chunk_frames"] - 1)
+                // p["chunk_frames"],
+                chunk_seconds=p["chunk_frames"] / 24,
+                managed_prompt_source_json=managed_prompt_source_json,
+            )
+            external_project = copy.deepcopy(p)
+            external_project["prompts"] = {
+                "global": "",
+                "mode": external["mode"],
+                "script": external["source"]["original_text"],
+            }
+            external_project["tracks"] = [
+                t for t in external_project["tracks"] if t["role"] != "prompt"
+            ]
+            provider.project = external_project
+            provider.set_offset(provider.offset)
+            job = provider.job
+            plan = make_prompt_plan(
+                mode="List",
+                script=json.dumps([w["prompt"] for w in job["windows"]]),
+                chunks=len(job["windows"]),
+                chunk_seconds=p["chunk_frames"] / 24,
+            )
+            if external.get("managed_prompt_transport"):
+                plan["managed_prompt_transport"] = copy.deepcopy(
+                    external["managed_prompt_transport"]
+                )
+            plan["notes"].extend(external.get("notes", []))
         # The existing Run Storage contract fingerprints model patches/weights,
         # CLIP, VAE, sampler and sigma bytes. Use it to qualify selected sessions.
         from ..run_storage import build_sampling_contract
         from ..driving_audio import _tensor_sha256
 
         contract_plan = copy.deepcopy(plan)
-        contract_plan["timeline_studio"] = {
-            "contract": 1,
-            "audio_guide": any(
-                provider.guide_active(i) for i in range(len(job["windows"]))
-            ),
-        }
+        contract_plan["timeline_studio"] = provider.storage_contract
         contract, resume_safe, reasons = build_sampling_contract(
             model=model,
             model_fingerprint_value=model_fingerprint(model),
@@ -341,7 +450,7 @@ class H3ContinuumTimelineSampler:
             height=p["height"],
             chunk_seconds=p["chunk_frames"] / 24,
             continuity=continuity,
-            audio_continuity=True,
+            audio_continuity=bool(audio_continuity),
             base_seed=int(base_seed),
             reroll_from_chunk=0,
             reroll_nonce=0,
@@ -353,9 +462,20 @@ class H3ContinuumTimelineSampler:
             else "none",
             strict_compatibility=False,
             driving_audio_vae=audio_vae,
+            reference_contract=references.contract if references else None,
+            reference_video_contract=video_source.contract if video_source else None,
         )
         settings_hash = digest(
-            [contract["global"], continuation_method, job["start_chunk"]]
+            [
+                contract["global"],
+                continuation_method,
+                job["start_chunk"],
+                reference_size,
+                video_reference_size,
+                _tensor_sha256(driving_audio["waveform"]) if driving_audio else None,
+                int(driving_audio["sample_rate"]) if driving_audio else None,
+                digest(external["source"]) if sequence_prompt is not None else None,
+            ]
         )
         all_takes = takes(store, p["project_id"])
         rejected = set(p.get("rejected", []))
@@ -436,6 +556,10 @@ class H3ContinuumTimelineSampler:
             "indices": [w["index"] for w in job["windows"]],
             "input_hashes": provider.hashes,
             "guide_scope": job.get("guide_scope"),
+            "picture_offset": provider.picture_offset,
+            "prompt_override": provider.project["prompts"]
+            if sequence_prompt is not None
+            else None,
             "settings_hash": settings_hash,
             "parent_take": parent["id"] if parent else None,
             "output_start": provider.offset,
@@ -447,11 +571,14 @@ class H3ContinuumTimelineSampler:
             "selection": p["selection"],
             "project_snapshot": p,
         }
-        from ..run_storage import run_storage_scope
+        from ..run_storage import run_storage_scope, resolve_run_storage_name
 
         storage_name = (
-            "timeline_"
-            + p["project_id"]
+            resolve_run_storage_name(
+                project_id=project_id,
+                legacy_run_name=run_name,
+                automatic_key="timeline_" + p["project_id"],
+            )
             + "_"
             + str(job["start_chunk"])
             + "_"
@@ -464,21 +591,25 @@ class H3ContinuumTimelineSampler:
         from contextlib import nullcontext
 
         capture = capture_chunk_refine_state() if emit_refine_state else nullcontext([])
-        with run_storage_scope(
-            storage_name, prompt=prompt, unique_id=unique_id
-        ) as storage:
-            storage.force_fresh_nonce = (
-                bool(p.get("queued_batch_id")) and int(regenerate_from) > 0
-            )
-            storage.excluded_revisions = {
-                r["revision_id"]
-                for r in all_takes
-                if r["id"] in rejected
-                and r.get("storage_name") == storage_name
-                and r.get("revision_id")
-            }
-            if previous and previous.get("storage_name") == storage_name:
-                storage.preferred_revision = previous.get("revision_id")
+        storage_scope = (
+            run_storage_scope(storage_name, prompt=prompt, unique_id=unique_id)
+            if run_storage != "Off"
+            else nullcontext(None)
+        )
+        with storage_scope as storage:
+            if storage is not None:
+                storage.force_fresh_nonce = bool(emit_refine_state) or (
+                    bool(p.get("queued_batch_id")) and int(regenerate_from) > 0
+                )
+                storage.excluded_revisions = {
+                    r["revision_id"]
+                    for r in all_takes
+                    if r["id"] in rejected
+                    and r.get("storage_name") == storage_name
+                    and r.get("revision_id")
+                }
+                if previous and previous.get("storage_name") == storage_name:
+                    storage.preferred_revision = previous.get("revision_id")
             native_boundary, native_nonce, seed_note = (
                 take_seed_request(
                     p,
@@ -493,8 +624,27 @@ class H3ContinuumTimelineSampler:
                 if not emit_refine_state
                 else (1, int(reroll_nonce), None)
             )
+            if storage is None:
+                # Takes still need an immutable continuation Session, but Off
+                # does not resume or write the native Run Storage cache.
+                if native_boundary and not native_nonce:
+                    native_nonce = 1 + max(
+                        (
+                            int(
+                                (r.get("sampling_contract") or {}).get(
+                                    "effective_reroll_nonce", 0
+                                )
+                            )
+                            for r in all_takes
+                            if r.get("settings_hash") == settings_hash
+                        ),
+                        default=0,
+                    )
+                seed_note = "Run Storage Off: all chunks in this job are sampled."
 
             def checkpoint(entries, identity_hash, first_frame_hash, last_frame_hash):
+                if storage is None:
+                    return
                 partial_record = {
                     **record,
                     "status": "partial",
@@ -507,7 +657,11 @@ class H3ContinuumTimelineSampler:
                 )
 
             provider.checkpoint = checkpoint
-            with continuation_method_scope(continuation_method), capture as captured:
+            with (
+                continuation_method_scope(continuation_method),
+                conditioning_lookahead_scope(conditioning_lookahead),
+                capture as captured,
+            ):
                 entries, last_state, new_session, report = run_sequence(
                     model=model,
                     clip=clip,
@@ -523,26 +677,53 @@ class H3ContinuumTimelineSampler:
                     continuity=continuity,
                     base_seed=(int(base_seed) + job["start_chunk"])
                     & 0xFFFFFFFFFFFFFFFF,
-                    audio_continuity=True,
+                    audio_continuity=bool(audio_continuity),
                     exact_total_duration=False,
-                    diagnostics_mode=DIAGNOSTICS_FULL,
+                    diagnostics_mode=diagnostics,
                     reroll_from_chunk=native_boundary,
                     reroll_nonce=native_nonce,
                     strict_compatibility=False,
-                    debug=False,
+                    debug=bool(debug),
+                    enable_preview=bool(show_preview),
                     latent_only=True,
                     session=None,
                     initial_state=initial,
                     driving_audio_source=guide,
                     driving_audio_vae=audio_vae,
                     timeline_inputs=provider,
+                    reference_assets=references,
+                    reference_video_source=video_source,
                 )
-            storage.finalize(session=new_session, report=report)
-            record.update(storage_name=storage_name, revision_id=storage.revision_id)
-            record["sampling_contract"] = copy.deepcopy(storage.manifest["contract"])
-            record["chunk_hashes"] = [
-                c["file_sha256"] for c in storage.manifest["chunks"]
-            ]
+            if storage is not None:
+                storage.finalize(session=new_session, report=report)
+                record.update(
+                    storage_name=storage_name, revision_id=storage.revision_id
+                )
+                record["sampling_contract"] = copy.deepcopy(
+                    storage.manifest["contract"]
+                )
+                record["chunk_hashes"] = [
+                    c["file_sha256"] for c in storage.manifest["chunks"]
+                ]
+                report += "\n" + storage.summary(
+                    detailed=diagnostics == "Detailed Report"
+                )
+            else:
+                record["sampling_contract"] = {
+                    **contract,
+                    "reroll_from_chunk": native_boundary,
+                    "effective_reroll_nonce": native_nonce,
+                }
+                record["chunk_hashes"] = [
+                    digest(
+                        [
+                            _tensor_sha256(e["video"]),
+                            _tensor_sha256(e["audio"]),
+                            e["plan"],
+                        ]
+                    )
+                    for e in entries
+                ]
         save_session(new_session, prefix=prefix, slot=1)
         record["model_inputs"] = [
             {
@@ -589,7 +770,7 @@ class H3ContinuumTimelineSampler:
             enabled=emit_refine_state,
             captured=captured,
             video_latents=videos,
-            debug=False,
+            debug=bool(debug),
         )
         if reasons:
             report += "\nSession auto reuse disabled: " + "; ".join(reasons)
@@ -600,7 +781,24 @@ class H3ContinuumTimelineSampler:
         for w in job["windows"]:
             for warning in w.get("warnings", []):
                 report += "\nTimeline warning: " + warning
-        return videos, audios, assembly, record, report, refine
+        selected_audio = None
+        if driving_audio is not None and guide is not None:
+            from ..v3.driving_nodes import _DRIVING_AUDIO_PLAN_KEY, _copy_audio
+            from ..driving_audio import prepare_driving_audio_source
+
+            selected_audio = _copy_audio(
+                prepare_driving_audio_source(
+                    guide.source_audio,
+                    audio_vae,
+                    target_frames=record["output_range"][1] - record["output_range"][0],
+                    fps=24,
+                ).source_audio
+            )
+            assembly[_DRIVING_AUDIO_PLAN_KEY] = _copy_audio(selected_audio)
+            report += "\nConnected Driving Audio overrides Studio guide lanes and supplies final audio for this job."
+        if reference_video_1 is not None and any(w["video"] for w in job["windows"]):
+            report += "\nScoped video guidance overrides persistent Video Reference in its active windows."
+        return videos, audios, assembly, record, report, refine, selected_audio
 
 
 class H3ContinuumTimelineTake:

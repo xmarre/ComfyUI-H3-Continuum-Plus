@@ -147,8 +147,14 @@ app.registerExtension({
   loadedGraphNode(node) {
     if (node.comfyClass === "H3ContinuumTimelineStudio") summary(node);
   },
-  beforeConfigureGraph() {
+  beforeConfigureGraph(graphData) {
     for (const editor of editors.values()) editor.close();
     editors.clear();
+    // The first Timeline schema had no seed control widget. Insert its
+    // fixed default before LiteGraph assigns positional serialized values.
+    for (const node of graphData?.nodes || []) {
+      if (node.type === "H3ContinuumTimelineSampler" && node.widgets_values?.length === 7)
+        node.widgets_values.splice(2, 0, "fixed");
+    }
   },
 });

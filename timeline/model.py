@@ -208,7 +208,7 @@ def clip_input(p, t, c, start, end):
     }
 
 
-def compile_window(p, index, guide_scope=None):
+def compile_window(p, index, guide_scope=None, picture_offset=0):
     size = p["chunk_frames"]
     start, end = index * size, min((index + 1) * size, p["duration_frames"])
     active = active_clips(p, start, end)
@@ -232,12 +232,13 @@ def compile_window(p, index, guide_scope=None):
         if i["role"] == "image_reference" and i["asset_id"] not in seen:
             seen.add(i["asset_id"])
             images.append(i)
-    if len(images) > 8:
+    if len(images) + picture_offset > 8:
         raise ValueError(
             f"Chunk {index + 1} exceeds H3's eight active reference images"
         )
     picture_by_asset = {
-        i["asset_id"]: f"<Picture {n}>" for n, i in enumerate(images, 1)
+        i["asset_id"]: f"<Picture {n}>"
+        for n, i in enumerate(images, 1 + picture_offset)
     }
     aliases = {
         i["alias"]: picture_by_asset[i["asset_id"]]
