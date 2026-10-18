@@ -398,6 +398,78 @@ def test_duplicate_import_does_not_certify_corrupt_registered_bytes(movie, tmp_p
     assert store.verify(asset["id"]).read_bytes() == movie.read_bytes()
 
 
+def test_link_server_media_keeps_original_bytes_and_reopens(movie, tmp_path):
+    root = tmp_path / "studio" / "assets"
+    store = AssetStore(root, link_roots=[tmp_path])
+    source_size = movie.stat().st_size
+    asset = store.link(movie, cancel=lambda: None)
+    assert asset["storage"] == "linked"
+    assert asset["kind"] == "video"
+    assert not (root / asset["id"]).exists()
+    assert (root / (asset["id"] + ".link.json")).is_file()
+    assert sum(p.stat().st_size for p in root.iterdir()) < source_size
+    assert store.path(asset["id"]) == movie.resolve()
+    reopened = AssetStore(root, link_roots=[tmp_path])
+    assert reopened.verify(asset["id"]) == movie.resolve()
+    assert reopened.link(movie)["id"] == asset["id"]
+    assert len(list(root.iterdir())) == 1
+
+
+def test_server_media_link_rejects_paths_outside_roots(movie, tmp_path):
+    store = AssetStore(tmp_path / "studio" / "assets", link_roots=[tmp_path / "empty"])
+    with pytest.raises(ValueError, match="outside allowed link roots"):
+        store.link(movie)
+    (tmp_path / "empty").mkdir()
+    link = tmp_path / "empty" / "outside.mkv"
+    link.symlink_to(movie)
+    with pytest.raises(ValueError, match="outside allowed link roots"):
+        store.link(link)
+    with pytest.raises(FileNotFoundError):
+        store.link(tmp_path / "missing.mkv")
+
+
+def test_linked_file_change_or_missing_source_is_not_accepted(movie, tmp_path):
+    store = AssetStore(tmp_path / "studio" / "assets", link_roots=[tmp_path])
+    linked = store.link(movie)
+    with movie.open("ab") as file:
+        file.write(b"changed source")
+    with pytest.raises(ValueError, match="content changed"):
+        store.verify(linked["id"])
+    movie.unlink()
+    with pytest.raises(ValueError, match="Linked source is unavailable"):
+        store.path(linked["id"])
+
+
+def test_server_link_never_deletes_existing_managed_copy(movie, tmp_path):
+    store = AssetStore(tmp_path / "studio" / "assets", link_roots=[tmp_path])
+    with movie.open("rb") as source:
+        imported = store.register(source)
+    before = store.path(imported["id"]).stat()
+    link = store.link(movie)
+    assert link["storage"] == "managed"
+    after = store.path(imported["id"]).stat()
+    assert (before.st_ino, before.st_mtime_ns) == (after.st_ino, after.st_mtime_ns)
+    assert not (store.root / (imported["id"] + ".link.json")).exists()
+
+
+def test_link_refuses_source_changed_during_registration(movie, tmp_path, monkeypatch):
+    import ComfyUI_H3_Continuum_Join.timeline.media as media
+
+    store = AssetStore(tmp_path / "studio" / "assets", link_roots=[tmp_path])
+    original = media.probe
+
+    def mutate_after_probe(path):
+        result = original(path)
+        with movie.open("ab") as out:
+            out.write(b"changed during registration")
+        return result
+
+    monkeypatch.setattr(media, "probe", mutate_after_probe)
+    with pytest.raises(media.AssetContentChanged, match="during linking"):
+        store.link(movie)
+    assert list(store.root.iterdir()) == []
+
+
 def test_uncached_audio_only_reads_the_selected_samples(movie, monkeypatch):
     import ComfyUI_H3_Continuum_Join.timeline.media as media
 
