@@ -160,3 +160,28 @@ also must yield an output file with timestamps reset to zero. Existing exact
 export/generation audio semantics remain unchanged. Media selection from a
 late source position still incurs exact PCM prefix decoding up to that source
 position. HTTP acceptance script checks that a missing scope is rejected.
+
+## Highlighted clip vs stale render range; unresponsive Close (2026-10-18)
+
+User screenshot: a retained footage clip outlined in yellow has timeline
+bounds 17136–17283, its Source in field is 714 seconds, while the separate
+Render in/out fields still showed 0–336. The earlier range-only fix exported
+the start of the *project*, not the highlighted clip. The export action now
+resolves the highlighted actual retained/generated video or final-audio clip,
+updates the visible saved in/out interval, and exports those absolute output
+frames through the existing clip source mapping. It refuses multiple selected
+clips with incompatible output intervals. Backend validation checks the
+selected clip IDs and verifies that their output bounds match the committed
+export range. A front-end test reproduces 17136–17283/source 714; a real
+media fixture test places a clip late on a long output timeline, selects its
+middle source, and compares decoded first output/source frames. No-video-clip
+selection preserves the manually configured render range.
+
+Closing also previously ran `stopPlayback`, workflow serialization and
+sampler/canvas refresh, and called synchronous media `load()` before removing
+the modal; any slow call could block Close. The modal now detaches first,
+then performs best-effort cleanup and cancels active exports. Native Windows
+window-close and Ctrl+Shift+Q bypass renderer beforeunload and exit the
+Electron process in the main process; tests exercise both. This does not
+establish that a severely overloaded Windows host will respond instantly in
+the real runtime, which requires an on-device stress test.
