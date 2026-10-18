@@ -1,6 +1,6 @@
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-native-path-only-no-scan-v3";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-native-export-resolution-guide-v4";
 import {
   History,
   clone,
