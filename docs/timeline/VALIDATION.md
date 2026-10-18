@@ -114,3 +114,10 @@ project encode, bounded request lengths, and request cancellation. Passing CI
 cannot establish subsecond playback on multi-hour source MKVs on WSL/DrvFS,
 which must be measured on the actual system. Playback audio seek is allowed
 to be approximate; generation/final export sample-grid rules remain exact.
+
+The waveform endpoint previously used the exact audio decoder and could
+repeatedly decode the source prefix up to late timeline locations when caching
+was disabled. Interactive waveform now uses preview-only PTS seeking; detached
+thumbnail/waveform/proxy requests are cancellable. These changes do not relax
+the generation/export audio phase contract. Long-source WSL performance and
+physical native playback still require runtime qualification.
