@@ -143,6 +143,8 @@ def export_project(
             pcmfile = Path(directory) / "audio.f32"
             with av.open(str(silent), "w", format="matroska") as container:
                 stream = container.add_stream("ffv1", rate=24)
+                if preview:
+                    stream.thread_count = 1
                 stream.width = p["width"]
                 stream.height = p["height"]
                 stream.pix_fmt = "bgr0"
@@ -183,6 +185,7 @@ def export_project(
                 else [
                     "-c:v",
                     "libx264",
+                    *(["-threads:v", "1", "-preset", "ultrafast"] if preview else []),
                     "-crf",
                     "16",
                     "-pix_fmt",
