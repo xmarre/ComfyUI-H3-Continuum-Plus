@@ -785,3 +785,78 @@ def test_reimport_repairs_same_size_corruption_when_filesystem_stamps_are_coarse
     with movie.open("rb") as source:
         store.register(source)
     assert path.read_bytes() == movie.read_bytes()
+
+
+def test_export_direct_mux_both_codecs_progress_and_cleanup(movie, tmp_path, monkeypatch):
+    """Real AV mux round-trip, with no full-length FFV1 intermediate file."""
+    import ComfyUI_H3_Continuum_Join.timeline.media as media
+
+    store = ProjectStore(tmp_path / "store")
+    with movie.open("rb") as inp:
+        asset = store.assets.register(inp, "movie.mkv")
+    p = blank_project()
+    p.update(width=64, height=64, duration_frames=72,
+             selection=[0, 72], assets=[asset])
+    common = {
+        "asset_id": asset["id"], "start": 0, "end": 72,
+        "source_in": "0", "speed": "1", "padding": "error",
+    }
+    p["tracks"] = [
+        {"id": "film", "role": "retained",
+         "clips": [{"id": "video", **common, "audio_role": "neither"}]},
+        {"id": "sound", "role": "audio",
+         "clips": [{"id": "audio", **common, "audio_role": "final"}]},
+    ]
+    p = validate(p)
+    real_decode = media._decode_audio_stream
+    decodes = []
+
+    def capture(*args, **kwargs):
+        decodes.append((args, kwargs))
+        return real_decode(*args, **kwargs)
+
+    monkeypatch.setattr(media, "_decode_audio_stream", capture)
+    for codec, extension in [("lossless", "mkv"), ("h264", "mp4")]:
+        decodes.clear()
+        progress = []
+        target = tmp_path / ("one_pass." + extension)
+        exported = export_project(
+            p, store, target, codec=codec,
+            on_progress=lambda **update: progress.append(update)
+        )
+        assert exported == target
+        assert target.is_file() and target.stat().st_size > 1000
+        info = probe(target)
+        assert info["video"] and info["audio"]
+        assert Fraction(info["duration"]) >= Fraction(29, 10)
+        assert any(x["stage"] == "encoding" for x in progress)
+        assert progress[-1] == {
+            "stage": "complete", "frames_done": 72, "total_frames": 72
+        }
+        assert len(decodes) == 1, "Audio stream must decode once per export"
+        assert not list(tmp_path.glob("h3-export-scratch-*"))
+        assert not list(tmp_path.glob("one_pass-*" + extension))
+
+
+def test_preview_is_not_silently_downscaled_to_480_pixels(movie, tmp_path):
+    from ComfyUI_H3_Continuum_Join.timeline.preview import render_preview_segment
+
+    store = ProjectStore(tmp_path / "project")
+    with movie.open("rb") as inp:
+        asset = store.assets.register(inp, "original.mkv")
+    p = blank_project()
+    p.update(
+        width=640, height=352, duration_frames=24,
+        selection=[0, 24], assets=[asset], tracks=[{
+            "id": "v", "role": "retained", "clips":[{
+                "id":"clip", "asset_id":asset["id"],
+                "start":0, "end":24, "source_in":"0",
+                "speed":"1", "padding":"error", "audio_role":"neither",
+            }]
+        }]
+    )
+    rendered = tmp_path / "full_resolution.mp4"
+    render_preview_segment(validate(p), store, rendered, 0, 24)
+    info = probe(rendered)
+    assert info["video"]["width"] == 640
+    assert info["video"]["height"] == 352
