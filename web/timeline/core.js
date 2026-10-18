@@ -39,7 +39,7 @@ export function selectedClips(p, ids) {
  */
 export function exportTarget(p, selectedIds = []) {
   const ids = new Set(selectedIds);
-  const candidates = p.tracks.flatMap((track) => {
+  const candidates = (p.tracks || []).flatMap((track) => {
     if (track.muted) return [];
     if (!["retained", "generated", "audio"].includes(track.role)) return [];
     return track.clips
