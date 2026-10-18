@@ -2,18 +2,29 @@
 
 ## Executed evidence and outstanding hardware acceptance
 
-The earlier browser-fingerprint implementation passed 589 Python and 20
-JavaScript tests across a four-version CI matrix, but was rejected because it
-required recursive drive searches. Those results **do not qualify** the native
-desktop replacement. The current mirror/final CI must be checked separately.
+The rejected browser-fingerprint implementation required recursive drive
+searches and is **not** the current architecture.
 
-Native desktop bridge validation adds connection health checks, startup failure diagnostics, main-process IPC for path registration, direct-path mapping, refusal of UNC and
-traversal, no movie-byte upload, path privacy, transaction cancellation and
-explicit failure in ordinary Chrome. The Windows CI workflow builds an unsigned
-portable Electron executable as a validation artifact. A Windows packaging
-check is **not** equivalent to physically dragging an Explorer file into the
-actual ComfyUI UI and exercising live WSL link, playback, export and subsequent
-queued H3 jobs. That remains required before production release.
+The replacement native desktop mirror passed GitHub Actions
+[Python/JavaScript run #39111496813](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/actions/runs/39111496813):
+**581 Python tests per version on Python 3.10–3.13**, **21 frontend tests**,
+and publisher validation. Windows
+[run #39111496829](https://github.com/xmarre/ComfyUI-H3-Continuum-Plus/actions/runs/39111496829)
+passed **17 native tests** covering local URL selection, connection refusal,
+ComfyUI health response checks, startup error display, native-path validation,
+main-process IPC restrictions and cancellation.
+
+Unlike the earlier mock-only builds, Windows CI also **ran the packaged portable
+Electron executable**, loaded a mock ComfyUI HTTP server, injected a genuine
+disk-backed file into Chromium's native file picker, verified the isolated
+preload path handoff, and confirmed that **only the original path** reached
+the mock `/link` route. This materially tests the packaged application
+bootstrap and native handoff, not merely JavaScript mocks.
+
+Outstanding production acceptance: physical Windows Explorer drag into the
+real ComfyUI frontend; real WSL path and FFprobe; source persistence across
+ComfyUI restarts; long-MKV playback, audio seeks, export and later native H3
+queued jobs. The packaged smoke's mock server does **not** establish these.
 
 | Layer | Executed check | What it establishes |
 | --- | --- | --- |
