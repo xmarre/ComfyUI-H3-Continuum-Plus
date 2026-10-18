@@ -17,7 +17,7 @@ from aiohttp import web
 
 from .media import MEDIA_FORMATS, preview_audio_window, run_process, video_frames
 from .protocol import NATIVE_PATH_CONTRACT, native_runtime_manifest
-from .model import compile_project, validate
+from .model import compile_project, selected_export_range, validate
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
@@ -630,6 +630,8 @@ def register_routes():
         codec = data.get("codec", "lossless")
         if codec not in ("lossless", "h264"):
             raise ValueError("Unknown export codec")
+        start, stop = selected_export_range(p, data.get("render_range"))
+        frames = stop - start
         active = sum(t["status"] == "running" for t in _tasks.values())
         if active >= 2:
             raise ValueError("Two exports are already running")
@@ -646,7 +648,8 @@ def register_routes():
         item = {
             "status": "running", "stage": "queued",
             "cancel": event, "filename": output.name,
-            "frames_done": 0, "total_frames": p["duration_frames"],
+            "frames_done": 0, "total_frames": frames,
+            "render_range": [start, stop],
             "elapsed_seconds": 0, "started_at": started,
         }
         _tasks[job] = item
@@ -664,8 +667,9 @@ def register_routes():
                 await asyncio.to_thread(
                     export_project, p, project_store(), output,
                     codec=codec, cancel=cancel, on_progress=progress,
+                    render_range=(start, stop),
                 )
-                progress(stage="complete", frames_done=p["duration_frames"])
+                progress(stage="complete", frames_done=frames)
                 item["status"] = "complete"
             except Exception as exc:
                 item.update(
@@ -676,7 +680,10 @@ def register_routes():
                 )
 
         item["task"] = asyncio.create_task(work())
-        return web.json_response({"id": job, "status": "running"})
+        return web.json_response({
+            "id": job, "status": "running",
+            "render_range": [start, stop], "total_frames": frames,
+        })
 
     @endpoint("get", "/export/{job_id}")
     async def status(request):
