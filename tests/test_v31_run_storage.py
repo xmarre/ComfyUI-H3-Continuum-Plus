@@ -315,6 +315,38 @@ def _sampling_contract(
     )
 
 
+@pytest.mark.parametrize("preferred,exact", [(False,False), (True,False), (False,True), (True,True)])
+def test_timeline_rejected_revision_is_never_a_prefix_candidate(tmp_path, monkeypatch, preferred, exact):
+    import ComfyUI_H3_Continuum_Join.run_storage as storage
+    import ComfyUI_H3_Continuum_Join.graph_contract as graph_contract
+    controller, _ = _controller(tmp_path)
+    contract, safe, reasons = _sampling_contract(reroll_nonce=1)
+    assert safe, reasons
+    monkeypatch.setattr(storage, "build_sampling_contract", lambda **k: (copy.deepcopy(contract), True, []))
+    monkeypatch.setattr(graph_contract, "build_upstream_graph_contract", lambda *a, **k: ({}, True, []))
+    revision, contract_sha = revision_identity(contract)
+    rejected = revision if exact else "d" * 16
+    controller.preferred_revision = rejected if preferred else None
+    controller.excluded_revisions = {rejected}
+    directory = controller.revisions_root / rejected
+    directory.mkdir(parents=True)
+    (directory / "manifest.json").write_text(json.dumps({
+        "revision_id": rejected, "contract_sha256": contract_sha,
+        "run_storage_schema_version": storage.RUN_STORAGE_SCHEMA_VERSION,
+    }))
+    def rejected_read(*args):
+        pytest.fail("Rejected revision reached prefix loading")
+    monkeypatch.setattr(controller, "_valid_prefix", rejected_read)
+    monkeypatch.setattr(controller, "_write_project", lambda: None)
+    assert controller.prepare(
+        model=None, model_fingerprint_value="f" * 64, clip=None, video_vae=None, sampler=None,
+        sigmas=torch.tensor([1., 0.]), prompt_plan={"prompts": ["same"] * 3},
+        width=96, height=64, chunk_seconds=5., continuity="Balanced", audio_continuity=True,
+        base_seed=1, reroll_from_chunk=2, reroll_nonce=1, first_frame_hash="a" * 64,
+        last_frame_hash="", identity_hash="none", strict_compatibility=False, existing_session=None, conditioning_mode="t2va",
+    ) is None
+
+
 def test_v322_golden_reference_contract_preserves_revision_identity():
     model = _Model()
     clip = _Clip()

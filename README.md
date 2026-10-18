@@ -1,5 +1,9 @@
 # ComfyUI-H3-Continuum-Plus
 
+## Timeline Studio (draft integration)
+
+A separate compact Timeline Studio node opens a resizable editor for retained footage, scoped prompts/references/audio, native Continuum jobs, alternatives and final composition. Existing V3.4 nodes remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md), [architecture](docs/timeline/ARCHITECTURE.md), [validation and GPU acceptance](docs/timeline/VALIDATION.md), and [importable examples](examples/timeline). This integration still requires trained-H3 hardware qualification before production readiness.
+
 ## v3.4.11 — Comfy Registry ownership (17 October 2026)
 
 The Plus fork is configured for publishing with **`PublisherId = "xmarre"`** and its own Registry node ID, **`comfyui-h3-continuum-plus`**. This identifies the maintained Plus fork separately from upstream `ukr8b3g-cmyk/ComfyUI-H3-Continuum`. The original author is still credited in the package metadata.
