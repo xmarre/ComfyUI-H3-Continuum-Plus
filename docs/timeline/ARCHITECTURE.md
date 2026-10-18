@@ -119,3 +119,24 @@ waveforms are approximate and use bounded random access audio; this is
 separate from generation/audio export's exact sample-grid decoder. This
 prevents rapid scrubbing or a late waveform tile from initiating repeated
 hour-long audio prefix decodes while the original PCM cache is disabled.
+
+## Direct full-resolution export and persistent finished files
+
+The final export no longer constructs a full-film temporary FFV1 silent-video
+file, a separate full-film raw PCM file, and a second full-film FFmpeg
+transcode. `timeline/export_stream.py` muxes one-second video/audio blocks
+directly into a single atomic Matroska (FFV1/float PCM) or MP4 (H.264/AAC)
+output, preserving the configured project width/height and 24 fps timeline
+clock. It maintains absolute sample-index PCM mixing using a temporary
+per-export `PcmCache` so a two-hour input soundtrack is decoded only once,
+not repeatedly from the start for every second. Scratch PCM is on the output
+volume, capacity-checked in advance, and removed whether export succeeds,
+fails or is cancelled. Only the final encoded file is committed by atomic
+rename. The `/export/{job}` status exposes stage, completed frames,
+total frames and elapsed time; `/export/{job}/file` streams a completed
+file from the configured ComfyUI output directory without accepting
+arbitrary user-provided filesystem paths. Export output is kept after the
+editor window closes, and in-flight export cancellation is independent of
+ComfyUI sampler cancellation. The media preview path remains independently
+bounded and uses the **full timeline canvas resolution**, never a hidden
+480-pixel longest-edge reduction.
