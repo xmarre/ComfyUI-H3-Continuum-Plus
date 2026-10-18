@@ -196,7 +196,7 @@ def main():
             project.update(
                 width=64,
                 height=64,
-                duration_frames=48,
+                duration_frames=336,
                 selection=[0, 48],
                 assets=[asset],
             )
@@ -239,9 +239,22 @@ def main():
                 )
                 == 512
             )
+            # An omitted range must not silently render all 336 frames.
+            try:
+                request(
+                    "/h3_continuum/timeline/export",
+                    {"project": project, "codec": "lossless"},
+                )
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 400
+            else:
+                raise AssertionError("Export without selection range was accepted")
             job = request(
                 "/h3_continuum/timeline/export",
-                {"project": project, "codec": "lossless"},
+                {
+                    "project": project, "codec": "lossless",
+                    "render_range": list(project["selection"]),
+                },
             )
             for _ in range(100):
                 status = request("/h3_continuum/timeline/export/" + job["id"])
@@ -250,8 +263,9 @@ def main():
                 time.sleep(0.1)
             assert status["status"] == "complete", status
             assert status["stage"] == "complete"
-            assert status["frames_done"] == project["duration_frames"]
-            assert status["total_frames"] == project["duration_frames"]
+            assert status["render_range"] == project["selection"]
+            assert status["frames_done"] == 48
+            assert status["total_frames"] == 48
             lossless_bytes = request(
                 "/h3_continuum/timeline/export/" + job["id"] + "/file"
             )
@@ -259,7 +273,10 @@ def main():
 
             delivered = request(
                 "/h3_continuum/timeline/export",
-                {"project": project, "codec": "h264"},
+                {
+                    "project": project, "codec": "h264",
+                    "render_range": list(project["selection"]),
+                },
             )
             for _ in range(150):
                 h264 = request(
