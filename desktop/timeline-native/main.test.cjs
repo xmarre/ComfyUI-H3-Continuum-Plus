@@ -32,6 +32,7 @@ async function launch({ found = true, compatible = true } = {}) {
     isDestroyed() {return false;}
     on(name, cb) {windowListeners.set(name, cb);}
     close() {windowListeners.get("close")?.();}
+    destroy() {windowListeners.get("close")?.();}
     loadURL(url) {currentURL = url; loads.push(url); return Promise.resolve();}
     setTitle(value) {title = value;}
   };
