@@ -1,0 +1,1808 @@
+// Checked by Continuum Timeline Desktop against the *served* extension code.
+// Do not invoke filesystem discovery or reintroduce browser video uploads.
+export const NATIVE_PATH_CONTRACT = "h3-timeline-native-path-only-no-scan-v2";
+import {
+  History,
+  clone,
+  uid,
+  ratio,
+  sourceAt,
+  snap,
+  selectedClips,
+  split,
+  trim,
+  move,
+  remove,
+  paste,
+  makeTrack,
+  placeAsset,
+} from "./core.js";
+const BASE = "/h3_continuum/timeline";
+const ROLES = [
+  "retained",
+  "video_guide",
+  "image_reference",
+  "audio",
+  "prompt",
+  "generated",
+];
+const LABELS = {
+  retained: "Original footage",
+  video_guide: "Video guidance",
+  image_reference: "Image reference set",
+  audio: "Audio",
+  prompt: "Prompt regions",
+  generated: "Generated takes",
+};
+const el = (tag, attrs = {}, ...children) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else n.setAttribute(k, v);
+  }
+  n.append(...children.filter((x) => x != null));
+  return n;
+};
+const button = (text, fn, title = text) =>
+  el("button", { type: "button", text, title, onclick: fn });
+const time = (f) =>
+  `${Math.floor(f / 86400)
+    .toString()
+    .padStart(2, "0")}:${Math.floor(f / 1440) % 60}`.replace(/:(\d)$/, ":0$1") +
+  `:${(Math.floor(f / 24) % 60).toString().padStart(2, "0")}:${(f % 24).toString().padStart(2, "0")}`;
+export async function request(api, path, options = {}) {
+  const r = await api.fetchApi(BASE + path, options);
+  if (!r.ok) {
+    let message;
+    try {
+      message = (await r.json()).error;
+    } catch {
+      message = r.statusText;
+    }
+    throw new Error(message || "Timeline request failed");
+  }
+  return r.json();
+}
+export class TimelineEditor {
+  constructor({ node, widget, api, app }) {
+    this.node = node;
+    this.widget = widget;
+    this.api = api;
+    this.app = app;
+    const project = JSON.parse(widget.value);
+    // View state lives in node properties: it is saved with the workflow but
+    // never reaches the prompt, so scrolling cannot invalidate execution.
+    node.properties ??= {};
+    const view = {
+      ...(project.ui || {}),
+      ...(node.properties.h3_timeline_view || {}),
+    };
+    delete project.ui;
+    this.history = new History(project);
+    this.serverRevision = this.p.revision || 0;
+    this.selected = view.selected || [];
+    this.clipboard = [];
+    this.playhead = view.playhead || 0;
+    this.previewMode = view.previewMode || "composed";
+    this.zoom =
+      view.zoom ||
+      Math.min(
+        160,
+        Math.max(0.2, ((innerWidth - 700) * 24) / this.p.duration_frames),
+      );
+    this.abort = new AbortController();
+    this.queuedIds = new Set(view.queuedPrompts || []);
+    this.proxy = false;
+    this.playWanted = false;
+    this.playEpoch = 0;
+    this.playController = null;
+    this.nextPreview = null;
+    this.closed = false;
+    this.editVersion = 0;
+    this.waveCache = new Map();
+    this.root = el("dialog", {
+      class: "h3ts",
+      tabindex: "0",
+      "aria-label": "Continuum Timeline Studio",
+    });
+    this.root.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      this.close();
+    });
+    this.root.addEventListener("keydown", (e) => this.key(e));
+    this.root.addEventListener("pointerdown", (e) => {
+      if (!e.target.closest("input,textarea,select,button")) this.root.focus();
+    });
+    document.body.append(this.root);
+    this.root.showModal();
+    this.build();
+    this.render();
+    this.scroller.scrollLeft = view.scroll || 0;
+    this.root.focus();
+    this.guard(() => this.pruneQueued());
+  }
+  // Keep only prompt ids the server still has pending or running.
+  async pruneQueued() {
+    if (!this.queuedIds.size) return;
+    const checked = new Set(this.queuedIds);
+    const response = await this.api.fetchApi("/queue");
+    if (!response.ok) return;
+    const queue = await response.json();
+    if (this.closed) return;
+    const live = new Set(
+      [...(queue.queue_pending || []), ...(queue.queue_running || [])].map(
+        (row) => row[1],
+      ),
+    );
+    this.queuedIds = new Set(
+      [...this.queuedIds].filter((id) => !checked.has(id) || live.has(id)),
+    );
+    this.persistView();
+  }
+  get p() {
+    return this.history.value;
+  }
+  message(text, error = false) {
+    this.status.textContent = text;
+    this.status.classList.toggle("error", error);
+  }
+  async guard(fn) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e.name !== "AbortError") this.message(e.message, true);
+    }
+  }
+  edit(fn) {
+    this.stopPlayback();
+    this.editVersion++;
+    this.history.commit(fn);
+    this.persistWidget();
+    this.render();
+  }
+  persistView() {
+    this.node.properties.h3_timeline_view = {
+      playhead: this.playhead,
+      zoom: this.zoom,
+      selected: [...this.selected],
+      queuedPrompts: [...this.queuedIds],
+      scroll: this.scroller?.scrollLeft || 0,
+      previewMode: this.previewMode,
+    };
+  }
+  persistWidget() {
+    this.persistView();
+    // Undo snapshots carry the revision they were taken at; the server's
+    // current revision is authoritative for the next optimistic save.
+    this.p.revision = this.serverRevision;
+    delete this.p.ui;
+    this.widget.value = JSON.stringify(this.p);
+    this.node.title = "Timeline Studio · " + this.p.name;
+    this.node.__timelineSummary = [
+      `${this.p.width}×${this.p.height} · ${(this.p.duration_frames / 24).toFixed(2)} s · 24 fps`,
+      `${this.p.chunk_frames} f chunks · render ${(this.p.selection[0] / 24).toFixed(2)}–${(this.p.selection[1] / 24).toFixed(2)} s`,
+    ];
+    this.node.setDirtyCanvas?.(true, true);
+    this.node.__timelineRefreshSamplers?.();
+  }
+  async save() {
+    const version = this.editVersion;
+    const saved = await request(this.api, "/project", {
+      method: "POST",
+      body: JSON.stringify({
+        project: this.p,
+        expected_revision: this.serverRevision,
+      }),
+    });
+    this.serverRevision = saved.revision;
+    if (version === this.editVersion) this.history.value = saved;
+    else this.p.revision = saved.revision;
+    this.persistWidget();
+    this.message(
+      version === this.editVersion
+        ? "Project saved · revision " + saved.revision
+        : "Earlier snapshot saved · newer edits remain unsaved",
+    );
+  }
+  async reload() {
+    this.stopPlayback();
+    const p = await request(this.api, "/project/" + this.p.project_id);
+    this.history = new History(p);
+    this.serverRevision = p.revision;
+    this.selected = [];
+    this.render();
+    this.persistWidget();
+    this.message("Saved project loaded");
+  }
+  build() {
+    this.status = el("output", {
+      class: "h3ts-status",
+      text: "Ready · source timestamps and output frames are separate clocks",
+    });
+    this.title = el("input", {
+      value: this.p.name,
+      "aria-label": "Project name",
+      onchange: (e) => this.edit((p) => (p.name = e.target.value)),
+    });
+    const file = el("input", {
+      type: "file",
+      multiple: "",
+      accept: "video/*,audio/*,image/*,.mkv",
+      onchange: (e) => this.guard(() => this.importFiles(e.target.files)),
+    });
+    file.hidden = true;
+    this.root.append(
+      el(
+        "header",
+        {},
+        el("strong", { text: "CONTINUUM / TIMELINE STUDIO" }),
+        this.title,
+        button("Import media", () => file.click()),
+        file,
+        button("Save", () => this.guard(() => this.save())),
+        button("Reload", () => this.guard(() => this.reload())),
+        button("Close", () => this.close()),
+      ),
+    );
+    this.assets = el("aside", { class: "h3ts-assets" });
+    this.inspector = el("aside", { class: "h3ts-inspector" });
+    this.video = el("video", {
+      preload: "metadata",
+      playsinline: "",
+    });
+    this.image = el("img", { class: "h3ts-image", alt: "Reference image" });
+    this.image.hidden = true;
+    this.video.addEventListener("error", () => {
+      if (this.closed) return;
+      if (this.playWanted) {
+        this.stopPlayback();
+        this.message("Playback segment could not be decoded", true);
+        return;
+      }
+      if (!this.video.hidden && this.previewAsset && !this.proxy)
+        this.guard(() => this.preview(true));
+    });
+    this.video.addEventListener("ended", () => {
+      if (!this.playWanted || this.closed || this.compositionStart == null)
+        return;
+      if (this.compositionEnd >= this.p.duration_frames) {
+        this.stopPlayback();
+        this.message("Reached end of timeline");
+        return;
+      }
+      this.playhead = this.compositionEnd;
+      this.guard(() => this.playSegment(this.playhead, this.playEpoch));
+    });
+    this.video.addEventListener("timeupdate", () => {
+      if (this.compositionStart != null) {
+        this.playhead = Math.min(
+          this.p.duration_frames - 1,
+          this.compositionStart + Math.floor(this.video.currentTime * 24),
+        );
+        this.drawPlayhead();
+        if (this.playWanted && this.compositionEnd < this.p.duration_frames &&
+            this.compositionEnd - this.playhead <= 60) {
+          this.prefetchSegment(this.compositionEnd);
+        }
+        return;
+      }
+      if (!this.video.paused && this.previewClip) {
+        const c = this.previewClip;
+        const src = this.video.currentTime + (this.proxyOffset || 0);
+        this.playhead = Math.round(
+          c.start +
+            ((src - ratio(c.source_in || 0)) / ratio(c.speed || 1)) * 24,
+        );
+        this.drawPlayhead();
+      }
+    });
+    this.counter = el("output", { text: time(0) });
+    this.compare = el(
+      "select",
+      { "aria-label": "Preview mode" },
+      el("option", { value: "composed", text: "Composed cut" }),
+      el("option", { value: "source", text: "A · original" }),
+      el("option", { value: "generated", text: "B · generated" }),
+    );
+    this.compare.value = this.previewMode;
+    this.compare.onchange = () => {
+      this.stopPlayback();
+      this.guard(() => this.preview());
+    };
+    const center = el(
+      "section",
+      { class: "h3ts-viewer" },
+      el("div", { class: "h3ts-preview" }, this.video, this.image),
+      el(
+        "nav",
+        {},
+        button("−1 frame", () => this.seek(this.playhead - 1)),
+        button("Play / pause", () => this.guard(() => this.playComposition())),
+        button("+1 frame", () => this.seek(this.playhead + 1)),
+        this.counter,
+        this.compare,
+        button("Source-window proxy", () =>
+          this.guard(() => this.preview(true)),
+        ),
+      ),
+    );
+    this.root.append(el("main", {}, this.assets, center, this.inspector));
+    const role = el(
+      "select",
+      { "aria-label": "New track kind" },
+      ...ROLES.filter((r) => r !== "generated").map((r) =>
+        el("option", { value: r, text: LABELS[r] }),
+      ),
+    );
+    this.ripple = el("input", {
+      type: "checkbox",
+      "aria-label": "Ripple edits",
+    });
+    this.snapping = el("input", {
+      type: "checkbox",
+      checked: "",
+      "aria-label": "Snap",
+    });
+    this.rangeA = el("input", {
+      type: "number",
+      min: "0",
+      value: this.p.selection[0],
+      "aria-label": "Render in frame",
+    });
+    this.rangeB = el("input", {
+      type: "number",
+      min: "1",
+      value: this.p.selection[1],
+      "aria-label": "Render out frame",
+    });
+    for (const input of [this.rangeA, this.rangeB])
+      input.onchange = () =>
+        this.edit(
+          (p) => (p.selection = [+this.rangeA.value, +this.rangeB.value]),
+        );
+    this.root.append(
+      el(
+        "nav",
+        { class: "h3ts-tools" },
+        role,
+        button("+ Track", () =>
+          this.edit((p) =>
+            p.tracks.push(makeTrack(role.value, LABELS[role.value])),
+          ),
+        ),
+        button("Split", () =>
+          this.edit((p) => split(p, this.selected, this.playhead)),
+        ),
+        button("Duplicate", () => this.duplicate()),
+        button("Delete", () =>
+          this.edit((p) => remove(p, this.selected, this.ripple.checked)),
+        ),
+        el("label", {}, this.ripple, "Ripple"),
+        el("label", {}, this.snapping, "Snap"),
+        button("Undo", () => this.undo()),
+        button("Redo", () => this.redo()),
+        button("− Zoom", () => this.setZoom(this.zoom / 1.5)),
+        button("+ Zoom", () => this.setZoom(this.zoom * 1.5)),
+        button("Marker", () =>
+          this.edit((p) =>
+            p.markers.push({ id: uid(), frame: this.playhead, name: "Marker" }),
+          ),
+        ),
+        el("span", { text: "Render [in,out)" }),
+        this.rangeA,
+        this.rangeB,
+        button("Inspect inputs", () => this.guard(() => this.inspectInputs())),
+        button("Queue selection", () => this.guard(() => this.queue())),
+        button("Reroll selection", () => this.guard(() => this.queue(true))),
+        button("Cancel sampling", () =>
+          this.guard(() => this.cancelSampling()),
+        ),
+      ),
+    );
+    this.scroller = el("div", { class: "h3ts-scroll" });
+    this.timeline = el("div", { class: "h3ts-timeline" });
+    this.scroller.append(this.timeline);
+    this.root.append(this.scroller);
+    this.scroller.addEventListener("scroll", () => {
+      this.scheduleDraw();
+      this.persistView();
+    });
+    this.root.addEventListener("dragover", (e) => e.preventDefault());
+    this.root.addEventListener("drop", (e) => {
+      if (e.dataTransfer.files.length) {
+        e.preventDefault();
+        this.guard(() => this.importFiles(e.dataTransfer.files));
+      }
+    });
+    this.diagnostics = el("pre", { class: "h3ts-diagnostics" });
+    const details = el(
+      "details",
+      {},
+      el("summary", { text: "Model inputs and temporal diagnostics" }),
+      this.diagnostics,
+    );
+    this.root.append(
+      el(
+        "footer",
+        {},
+        this.status,
+        button("Review takes", () => this.guard(() => this.review())),
+        button("Export FFV1 / PCM", () =>
+          this.guard(() => this.export("lossless")),
+        ),
+        button("Export H.264 / AAC", () =>
+          this.guard(() => this.export("h264")),
+        ),
+        button("Cancel export", () =>
+          this.guard(
+            () =>
+              this.exportId &&
+              request(this.api, "/export/" + this.exportId + "/cancel", {
+                method: "POST",
+              }),
+          ),
+        ),
+      ),
+      details,
+    );
+    this.resize = new ResizeObserver(() => this.scheduleDraw());
+    this.resize.observe(this.scroller);
+  }
+  render() {
+    this.renderAssets();
+    this.renderInspector();
+    this.drawTimeline();
+    this.rangeA.value = this.p.selection[0];
+    this.rangeB.value = this.p.selection[1];
+    if (!this.playWanted) this.guard(() => this.preview());
+  }
+  renderAssets() {
+    this.assets.replaceChildren(
+      el("h3", { text: "Media & references" }),
+      el("p", {
+        text: "Drag media onto a track. Image sets apply per sampling invocation.",
+      }),
+    );
+    for (const a of this.p.assets) {
+      const card = el(
+        "div",
+        { class: "h3ts-asset", draggable: "true" },
+        el("strong", { text: a.name }),
+        el("small", {
+          text: `${a.kind} · ${Number(ratio(a.duration || 0)).toFixed(2)} s · ${a.storage === "linked" ? "linked source" : "managed copy"}`,
+        }),
+      );
+      card.ondragstart = (e) =>
+        e.dataTransfer.setData("application/x-h3-asset", a.id);
+      const alias = el("input", {
+        value: a.alias || "",
+        placeholder: "Semantic alias, e.g. Alice",
+        "aria-label": "Reference alias",
+        onchange: (e) =>
+          this.edit(
+            (p) => (p.assets.find((x) => x.id === a.id).alias = e.target.value),
+          ),
+      });
+      card.append(
+        alias,
+        button("Place at playhead", () => this.place(a)),
+        button("Relink", () => {
+          const f = el("input", {
+            type: "file",
+            onchange: (e) =>
+              this.guard(() => this.relink(a, e.target.files[0])),
+          });
+          f.click();
+        }),
+      );
+      this.assets.append(card);
+    }
+  }
+  place(a, trackId = null, frame = this.playhead) {
+    this.edit((p) => {
+      let track = p.tracks.find((t) => t.id === trackId);
+      if (!track) {
+        track = makeTrack(
+          a.kind === "image"
+            ? "image_reference"
+            : a.kind === "audio"
+              ? "audio"
+              : "retained",
+          a.kind === "image" ? "Reference set" : a.name,
+        );
+        p.tracks.push(track);
+      }
+      const duration =
+        a.kind === "image"
+          ? p.chunk_frames
+          : Math.max(1, Math.round(ratio(a.duration) * 24));
+      const c = placeAsset(p, a, track, frame, duration);
+      this.selected = [c.id];
+    });
+  }
+  async resolveOriginal(file) {
+    if (this.abort.signal.aborted) throw this.abort.signal.reason;
+    const native = globalThis.h3NativeMedia;
+    if (!native || typeof native.linkFile !== "function") {
+      throw new Error(
+        "Zero-copy drag requires Timeline Studio Desktop for Windows. " +
+        "An ordinary browser does not expose the file path; " +
+        "Studio will not scan drives or upload/copy the movie.",
+      );
+    }
+    this.message("Linking the selected original in place · no scan or upload…");
+    const transaction = uid();
+    const cancel = () => native.cancelLink?.(transaction);
+    this.abort.signal.addEventListener("abort", cancel, { once: true });
+    let asset;
+    try {
+      asset = await native.linkFile(file, transaction);
+    } finally {
+      this.abort.signal.removeEventListener("abort", cancel);
+    }
+    if (this.abort.signal.aborted) throw this.abort.signal.reason;
+    if (asset.storage !== "linked" && asset.storage !== "managed") {
+      throw new Error("Native media bridge did not return a registered asset");
+    }
+    return asset;
+  }
+  async importFiles(files) {
+    for (const file of files) {
+      const asset = await this.resolveOriginal(file);
+      this.addImportedAsset(asset);
+      this.message(
+        asset.storage === "linked"
+          ? "Ready · original linked in place · no movie copy"
+          : "Ready · identical asset already registered in the managed store",
+      );
+    }
+  }
+  addImportedAsset(a) {
+    this.edit((p) => {
+      if (!p.assets.some((x) => x.id === a.id)) p.assets.push(a);
+    });
+    this.place(a);
+    if (a.audio && a.kind === "video") {
+      this.edit((p) => {
+        const t = makeTrack("audio", "Original soundtrack");
+        placeAsset(
+          p,
+          a,
+          t,
+          this.playhead,
+          Math.round(ratio(a.duration) * 24),
+        );
+        p.tracks.push(t);
+      });
+    }
+  }
+  async relink(old, file) {
+    if (!file) return;
+    const a = await this.resolveOriginal(file);
+    this.edit((p) => {
+      if (!p.assets.some((x) => x.id === a.id))
+        p.assets.push({ ...a, alias: old.alias });
+      for (const t of p.tracks)
+        for (const c of t.clips) if (c.asset_id === old.id) c.asset_id = a.id;
+    });
+    this.message("Source relinked without uploading movie bytes");
+  }
+  renderInspector() {
+    const pairs = selectedClips(
+      {
+        ...this.p,
+        tracks: this.p.tracks.map((t) => ({ ...t, locked: false })),
+      },
+      this.selected,
+    );
+    this.inspector.replaceChildren(
+      el("h3", { text: pairs.length ? `${pairs.length} selected` : "Project" }),
+    );
+    const field = (label, value, fn, type = "text") => {
+      const i = el(type === "textarea" ? "textarea" : "input", {
+        ...(type === "textarea" ? {} : { type }),
+        value,
+        "aria-label": label,
+      });
+      if (type === "textarea") i.value = value;
+      i.onchange = () => this.edit(fn.bind(null, i.value));
+      this.inspector.append(el("label", {}, label, i));
+    };
+    if (pairs.length === 1) {
+      const [track, c] = pairs[0];
+      field(
+        "Name",
+        c.name || "",
+        (v, p) =>
+          (p.tracks
+            .find((t) => t.id === track.id)
+            .clips.find((x) => x.id === c.id).name = v),
+      );
+      for (const [name, key] of [
+        ["Timeline in (frame)", "start"],
+        ["Timeline out (frame)", "end"],
+        ["Source in (absolute PTS seconds)", "source_in"],
+        ["Speed (negative = reverse)", "speed"],
+        ["Alias", "alias"],
+        ["Volume (linear)", "gain"],
+        ["Fade in (seconds)", "fade_in"],
+        ["Fade out (seconds)", "fade_out"],
+      ])
+        field(name, c[key] ?? (key === "gain" ? 1 : 0), (v, p) => {
+          const clip = p.tracks
+            .find((t) => t.id === track.id)
+            .clips.find((x) => x.id === c.id);
+          clip[key] = ["start", "end"].includes(key) ? Math.round(+v) : v;
+        });
+      for (const [label, key, values] of [
+        ["End policy", "padding", ["error", "hold", "silence"]],
+        [
+          "Audio route",
+          "audio_role",
+          ["neither", "guide", "final", "both", "reference"],
+        ],
+      ]) {
+        const select = el(
+          "select",
+          { "aria-label": label },
+          ...values.map((v) => el("option", { value: v, text: v })),
+        );
+        select.value = c[key] || values[0];
+        select.onchange = () =>
+          this.edit(
+            (p) =>
+              (p.tracks
+                .find((t) => t.id === track.id)
+                .clips.find((x) => x.id === c.id)[key] = select.value),
+          );
+        this.inspector.append(el("label", {}, label, select));
+      }
+      field("Source out (absolute PTS seconds)", sourceAt(c, c.end), (v, p) => {
+        const target = p.tracks
+          .find((t) => t.id === track.id)
+          .clips.find((x) => x.id === c.id);
+        target.end =
+          target.start +
+          Math.max(
+            1,
+            Math.round(
+              ((ratio(v) - ratio(target.source_in)) * 24) / ratio(target.speed),
+            ),
+          );
+        p.duration_frames = Math.max(p.duration_frames, target.end);
+      });
+      if (track.role === "prompt")
+        field(
+          "Prompt",
+          c.text || "",
+          (v, p) =>
+            (p.tracks
+              .find((t) => t.id === track.id)
+              .clips.find((x) => x.id === c.id).text = v),
+          "textarea",
+        );
+      if (track.role === "prompt") {
+        const override = el("input", {
+          type: "checkbox",
+          "aria-label": "Override inherited prompt",
+        });
+        override.checked = !!c.override;
+        override.onchange = () =>
+          this.edit(
+            (p) =>
+              (p.tracks
+                .find((t) => t.id === track.id)
+                .clips.find((x) => x.id === c.id).override = override.checked),
+          );
+        this.inspector.append(
+          el(
+            "label",
+            {},
+            override,
+            "Override inherited prompt (global remains)",
+          ),
+        );
+      }
+      if (track.role === "retained") {
+        const disabled = el("input", {
+          type: "checkbox",
+          "aria-label": "Disable video in Recreate",
+        });
+        disabled.checked = !!c.guide_disabled;
+        disabled.onchange = () =>
+          this.edit(
+            (p) =>
+              (p.tracks
+                .find((t) => t.id === track.id)
+                .clips.find((x) => x.id === c.id).guide_disabled =
+                disabled.checked),
+          );
+        this.inspector.append(
+          el(
+            "label",
+            {},
+            disabled,
+            "Disable this video in Recreate (audio independent)",
+          ),
+        );
+      }
+      if (track.role === "retained")
+        this.inspector.append(
+          button("Duplicate as video guidance", () =>
+            this.edit((p) => {
+              const lane = makeTrack("video_guide", "Video guidance");
+              lane.clips.push({
+                ...clone(c),
+                id: uid(),
+                audio_role: "neither",
+              });
+              p.tracks.push(lane);
+            }),
+          ),
+        );
+    } else {
+      for (const [label, key] of [
+        ["Duration (frames)", "duration_frames"],
+        ["Chunk length (frames)", "chunk_frames"],
+        ["Output width", "width"],
+        ["Output height", "height"],
+      ])
+        field(
+          label,
+          this.p[key],
+          (v, p) => (p[key] = Math.round(+v)),
+          "number",
+        );
+      const mode = el(
+        "select",
+        { "aria-label": "Generation operation" },
+        ...["generate", "recreate", "replace"].map((v) =>
+          el("option", { value: v, text: v }),
+        ),
+      );
+      mode.value = this.p.operation;
+      mode.onchange = () => this.edit((p) => (p.operation = mode.value));
+      this.inspector.append(el("label", {}, "Operation", mode));
+      field(
+        "Global prompt",
+        this.p.prompts.global,
+        (v, p) => (p.prompts.global = v),
+        "textarea",
+      );
+      const format = el(
+        "select",
+        { "aria-label": "Prompt format" },
+        ...["Auto", "Fixed", "List", "Timeline"].map((v) =>
+          el("option", { value: v, text: v }),
+        ),
+      );
+      format.value = this.p.prompts.mode;
+      format.onchange = () => this.edit((p) => (p.prompts.mode = format.value));
+      this.inspector.append(el("label", {}, "Prompt format", format));
+      field(
+        "Prompt script",
+        this.p.prompts.script || "",
+        (v, p) => (p.prompts.script = v),
+        "textarea",
+      );
+      this.inspector.append(
+        el("p", {
+          text: "General references apply to the whole physical invocation. Timed internal H3 keyframes and hot LoRA switching are not supported.",
+        }),
+      );
+    }
+    if (this.p.markers.length) {
+      this.inspector.append(el("h4", { text: "Markers / named regions" }));
+      for (const marker of this.p.markers) {
+        const name = el("input", {
+          value: marker.name,
+          "aria-label": "Marker name",
+          onchange: (e) =>
+            this.edit(
+              (p) =>
+                (p.markers.find((m) => m.id === marker.id).name =
+                  e.target.value),
+            ),
+        });
+        const end = el("input", {
+          type: "number",
+          min: String(marker.frame + 1),
+          max: String(this.p.duration_frames),
+          value: marker.end || marker.frame + 1,
+          "aria-label": "Region end frame",
+          onchange: (e) =>
+            this.edit(
+              (p) =>
+                (p.markers.find((m) => m.id === marker.id).end =
+                  +e.target.value),
+            ),
+        });
+        this.inspector.append(
+          el(
+            "div",
+            {},
+            button(time(marker.frame), () => this.seek(marker.frame)),
+            name,
+            end,
+            button("Render region", () =>
+              this.edit(
+                (p) =>
+                  (p.selection = [
+                    marker.frame,
+                    marker.end || marker.frame + 1,
+                  ]),
+              ),
+            ),
+            button("×", () =>
+              this.edit(
+                (p) =>
+                  (p.markers = p.markers.filter((m) => m.id !== marker.id)),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+  }
+  frameX(f) {
+    return 180 + (f * this.zoom) / 24;
+  }
+  fromX(clientX) {
+    return Math.round(
+      ((clientX - this.timeline.getBoundingClientRect().left - 180) * 24) /
+        this.zoom,
+    );
+  }
+  points() {
+    return [
+      0,
+      ...this.p.markers.map((m) => m.frame),
+      ...this.p.tracks.flatMap((t) =>
+        t.clips.flatMap((c) =>
+          this.selected.includes(c.id) ? [] : [c.start, c.end],
+        ),
+      ),
+      ...Array.from(
+        { length: Math.ceil(this.p.duration_frames / this.p.chunk_frames) + 1 },
+        (_, i) => i * this.p.chunk_frames,
+      ),
+    ];
+  }
+  snapped(f) {
+    return this.snapping.checked
+      ? snap(f, this.points(), (8 * 24) / this.zoom)
+      : Math.max(0, Math.round(f));
+  }
+  drawTimeline() {
+    if (!this.timeline) return;
+    const left = this.scroller.scrollLeft,
+      right = left + this.scroller.clientWidth;
+    const width = Math.max(
+      this.scroller.clientWidth,
+      180 + (this.p.duration_frames * this.zoom) / 24 + 30,
+    );
+    this.timeline.style.width = width + "px";
+    this.timeline.replaceChildren();
+    const ruler = el("div", { class: "h3ts-ruler" });
+    ruler.onpointerdown = (e) => this.seek(Math.max(0, this.fromX(e.clientX)));
+    this.timeline.append(ruler);
+    const stride = Math.max(24, Math.ceil(80 / this.zoom) * 24);
+    for (
+      let f = Math.max(
+        0,
+        Math.floor(((left - 180) * 24) / this.zoom / stride) * stride,
+      );
+      f <= this.p.duration_frames && this.frameX(f) < right + 100;
+      f += stride
+    ) {
+      ruler.append(
+        el("span", {
+          class: "h3ts-tick",
+          style: `left:${this.frameX(f)}px`,
+          text: time(f),
+        }),
+      );
+    }
+    for (
+      let f = Math.max(
+        0,
+        Math.floor(((left - 180) * 24) / this.zoom / this.p.chunk_frames) *
+          this.p.chunk_frames,
+      );
+      f <= this.p.duration_frames && this.frameX(f) < right + 100;
+      f += this.p.chunk_frames
+    )
+      this.timeline.append(
+        el("div", {
+          class: "h3ts-boundary",
+          style: `left:${this.frameX(f)}px`,
+          title: `Logical chunk ${Math.floor(f / this.p.chunk_frames) + 1}`,
+        }),
+      );
+    this.timeline.append(
+      el("div", {
+        class: "h3ts-render-range",
+        style: `left:${this.frameX(this.p.selection[0])}px;width:${((this.p.selection[1] - this.p.selection[0]) * this.zoom) / 24}px`,
+      }),
+    );
+    for (const m of this.p.markers)
+      if (this.frameX(m.frame) >= left && this.frameX(m.frame) < right)
+        this.timeline.append(
+          el("button", {
+            class: "h3ts-marker",
+            style: `left:${this.frameX(m.frame)}px`,
+            text: "◆ " + m.name,
+            onclick: () => this.seek(m.frame),
+          }),
+        );
+    for (const [index, t] of this.p.tracks.entries()) {
+      const row = el("div", {
+        class: "h3ts-track" + (t.hidden ? " h3ts-hidden" : ""),
+      });
+      const header = el(
+        "div",
+        { class: "h3ts-track-name" },
+        el("input", {
+          value: t.name || LABELS[t.role],
+          "aria-label": "Track name",
+          onchange: (e) =>
+            this.edit(
+              (p) =>
+                (p.tracks.find((x) => x.id === t.id).name = e.target.value),
+            ),
+        }),
+      );
+      for (const [key, label] of [
+        ["locked", "L"],
+        ["muted", "M"],
+        ["hidden", "H"],
+      ])
+        header.append(
+          button(
+            (t[key] ? "●" : "○") + label,
+            () =>
+              this.edit(
+                (p) => (p.tracks.find((x) => x.id === t.id)[key] = !t[key]),
+              ),
+            { locked: "Lock track", muted: "Mute track", hidden: "Hide track" }[
+              key
+            ],
+          ),
+        );
+      header.append(
+        button("↑", () =>
+          this.edit((p) => {
+            if (index > 0)
+              [p.tracks[index - 1], p.tracks[index]] = [
+                p.tracks[index],
+                p.tracks[index - 1],
+              ];
+          }),
+        ),
+        button("↓", () =>
+          this.edit((p) => {
+            if (index < p.tracks.length - 1)
+              [p.tracks[index + 1], p.tracks[index]] = [
+                p.tracks[index],
+                p.tracks[index + 1],
+              ];
+          }),
+        ),
+      );
+      row.append(header);
+      row.ondragover = (e) => e.preventDefault();
+      row.ondrop = (e) => {
+        const assetId = e.dataTransfer.getData("application/x-h3-asset");
+        if (assetId) {
+          e.preventDefault();
+          e.stopPropagation();
+          const asset = this.p.assets.find((a) => a.id === assetId);
+          this.place(asset, t.id, this.snapped(this.fromX(e.clientX)));
+        }
+      };
+      row.ondblclick = (e) => {
+        if (t.role === "prompt" && !t.locked) {
+          const f = this.snapped(this.fromX(e.clientX));
+          this.edit((p) => {
+            const c = {
+              id: uid(),
+              start: f,
+              end: Math.min(p.duration_frames, f + p.chunk_frames),
+              source_in: "0",
+              speed: "1",
+              padding: "error",
+              audio_role: "neither",
+              text: "",
+            };
+            p.tracks.find((x) => x.id === t.id).clips.push(c);
+            this.selected = [c.id];
+          });
+        }
+      };
+      if (!t.hidden)
+        for (const c of t.clips) {
+          const x = this.frameX(c.start),
+            w = ((c.end - c.start) * this.zoom) / 24;
+          if (x + w < left || x > right) continue;
+          const clip = el(
+            "div",
+            {
+              class: `h3ts-clip ${t.role}${this.selected.includes(c.id) ? " selected" : ""}`,
+              style: `left:${x}px;width:${Math.max(4, w)}px`,
+              tabindex: "0",
+              role: "button",
+              "aria-label": `${c.name || c.text || t.role} ${time(c.start)} to ${time(c.end)}`,
+            },
+            el("span", {
+              text:
+                c.name ||
+                c.text ||
+                this.p.assets.find((a) => a.id === c.asset_id)?.name ||
+                "Prompt",
+            }),
+          );
+          clip.onpointerdown = (e) => this.drag(e, t, c, clip);
+          clip.oncontextmenu = (e) => this.context(e, t, c);
+          clip.append(
+            el("i", { class: "trim-left" }),
+            el("i", { class: "trim-right" }),
+          );
+          if (t.role === "audio") this.waveform(clip, c);
+          else if (c.asset_id && w > 80) this.filmstrip(clip, c, left, right);
+          row.append(clip);
+        }
+      this.timeline.append(row);
+    }
+    this.playheadLine = el("div", {
+      class: "h3ts-playhead",
+      style: `left:${this.frameX(this.playhead)}px`,
+    });
+    this.timeline.append(this.playheadLine);
+    this.drawPlayhead();
+  }
+  drag(e, t, c, element) {
+    if (t.locked || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) {
+      this.selected = this.selected.includes(c.id)
+        ? this.selected.filter((id) => id !== c.id)
+        : [...this.selected, c.id];
+    } else if (!this.selected.includes(c.id)) this.selected = [c.id];
+    const initial = clone(this.p),
+      startX = e.clientX,
+      edge = e.target.classList.contains("trim-left")
+        ? "start"
+        : e.target.classList.contains("trim-right")
+          ? "end"
+          : null;
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    let delta = 0;
+    const onmove = (event) => {
+      delta =
+        this.snapped(c.start + ((event.clientX - startX) * 24) / this.zoom) -
+        c.start;
+      element.style.transform = `translateX(${(delta * this.zoom) / 24}px)`;
+    };
+    const finish = () => {
+      target.removeEventListener("pointermove", onmove);
+      target.removeEventListener("pointerup", finish);
+      target.removeEventListener("pointercancel", cancel);
+      this.history.value = initial;
+      if (delta)
+        this.edit((p) =>
+          edge
+            ? trim(
+                p,
+                [c.id],
+                edge,
+                (edge === "start" ? c.start : c.end) + delta,
+                this.ripple.checked,
+              )
+            : move(p, this.selected, delta, e.altKey),
+        );
+      else {
+        this.renderInspector();
+        this.drawTimeline();
+      }
+    };
+    const cancel = () => {
+      delta = 0;
+      finish();
+    };
+    target.addEventListener("pointermove", onmove);
+    target.addEventListener("pointerup", finish);
+    target.addEventListener("pointercancel", cancel);
+  }
+  context(e, t, c) {
+    e.preventDefault();
+    this.selected = [c.id];
+    const menu = el("div", {
+      class: "h3ts-context",
+      style: `left:${e.clientX}px;top:${e.clientY}px`,
+    });
+    for (const [label, fn] of [
+      [
+        "Split here",
+        () => this.edit((p) => split(p, this.selected, this.playhead)),
+      ],
+      ["Duplicate", () => this.duplicate()],
+      [
+        "Delete",
+        () => this.edit((p) => remove(p, this.selected, this.ripple.checked)),
+      ],
+      [
+        "Set render range",
+        () => this.edit((p) => (p.selection = [c.start, c.end])),
+      ],
+    ])
+      menu.append(
+        button(label, () => {
+          menu.remove();
+          fn();
+        }),
+      );
+    this.root.append(menu);
+    menu.addEventListener("mouseleave", () => menu.remove());
+  }
+  // Thumbnails and waveforms are requested on fixed grids so scrolling only
+  // adds new tiles and every URL stays cacheable.
+  filmstrip(element, c, left, right) {
+    const step = 2 ** Math.max(0, Math.ceil(Math.log2((80 * 24) / this.zoom)));
+    const visibleStart = Math.max(
+      c.start,
+      Math.floor(((left - 180) * 24) / this.zoom / step) * step,
+    );
+    const visibleEnd = Math.min(
+      c.end,
+      Math.ceil(((right - 180) * 24) / this.zoom),
+    );
+    for (let f = visibleStart; f < visibleEnd; f += step) {
+      const tile = Math.max(f - (f % step), c.start);
+      const x = ((tile - c.start) * this.zoom) / 24;
+      element.append(
+        el("img", {
+          class: "h3ts-filmstrip",
+          src:
+            BASE +
+            "/thumbnail/" +
+            c.asset_id +
+            "?pts=" +
+            sourceAt(c, tile).toFixed(6),
+          loading: "lazy",
+          alt: "",
+          style: `left:${x}px;width:${(step * this.zoom) / 24}px`,
+        }),
+      );
+      f = tile;
+    }
+  }
+  waveTile(asset, start, end) {
+    const key = `${asset}:${start}:${end}`;
+    if (!this.waveCache.has(key)) {
+      const pending = request(
+        this.api,
+        `/waveform/${asset}?start=${start}&end=${end}`,
+        { signal: this.abort.signal },
+      ).catch((e) => {
+        this.waveCache.delete(key);
+        throw e;
+      });
+      this.waveCache.set(key, pending);
+      if (this.waveCache.size > 256)
+        this.waveCache.delete(this.waveCache.keys().next().value);
+    }
+    return this.waveCache.get(key);
+  }
+  waveform(element, c) {
+    const speed = ratio(c.speed || 1);
+    const pxPerSource = this.zoom / Math.abs(speed);
+    const span =
+      2 ** Math.min(5, Math.max(-3, Math.round(Math.log2(512 / pxPerSource))));
+    const left = Math.max(
+      c.start,
+      Math.floor(((this.scroller.scrollLeft - 180) * 24) / this.zoom),
+    );
+    const right = Math.min(
+      c.end,
+      Math.ceil(
+        ((this.scroller.scrollLeft + this.scroller.clientWidth - 180) * 24) /
+          this.zoom,
+      ),
+    );
+    if (right <= left) return;
+    const sa = Math.min(sourceAt(c, left), sourceAt(c, right));
+    const sb = Math.max(sourceAt(c, left), sourceAt(c, right));
+    for (let k = Math.max(0, Math.floor(sa / span)); k * span < sb; k++) {
+      const start = k * span,
+        end = start + span;
+      // Timeline x of a source time inside this clip.
+      const at = (t) => ((t - ratio(c.source_in || 0)) / speed) * this.zoom;
+      const x = Math.min(at(start), at(end));
+      this.waveTile(c.asset_id, start, end)
+        .then((data) => {
+          if (!element.isConnected) return;
+          const canvas = el("canvas", {
+            width: String(data.peaks.length),
+            height: "25",
+            class: "h3ts-waveform",
+            style: `left:${x}px;width:${span * pxPerSource}px`,
+          });
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#9ee8c5";
+          const peaks = speed < 0 ? [...data.peaks].reverse() : data.peaks;
+          for (let i = 0; i < peaks.length; i++)
+            ctx.fillRect(i, 12 - peaks[i] * 12, 1, Math.max(1, peaks[i] * 24));
+          element.append(canvas);
+        })
+        .catch(() => {});
+    }
+  }
+  scheduleDraw() {
+    if (this.drawPending) return;
+    this.drawPending = requestAnimationFrame(() => {
+      this.drawPending = 0;
+      if (!this.closed) this.drawTimeline();
+    });
+  }
+  stopPlayback() {
+    this.playWanted = false;
+    ++this.playEpoch;
+    this.playController?.abort();
+    this.playController = null;
+    this.nextPreview?.controller.abort();
+    this.nextPreview = null;
+    this.video.pause();
+  }
+  async fetchSegment(start, length, controller) {
+    return request(this.api, "/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        project: clone(this.p), start,
+        length_frames: length, mode: this.compare.value,
+      }),
+      signal: controller.signal,
+      timeoutMs: 15000,
+    });
+  }
+  prefetchSegment(start) {
+    if (!this.playWanted || this.closed || start >= this.p.duration_frames ||
+        this.nextPreview?.start === start) return;
+    this.nextPreview?.controller.abort();
+    const controller = new AbortController();
+    const next = {
+      start, controller,
+      promise: this.fetchSegment(start, 144, controller),
+    };
+    next.promise.catch(() => {}); // Pausing may discard the pending prefetch.
+    this.nextPreview = next;
+  }
+  async playSegment(start, epoch) {
+    if (!this.playWanted || epoch !== this.playEpoch || this.closed) return;
+    if (start >= this.p.duration_frames) {
+      this.stopPlayback();
+      this.message("Reached end of timeline");
+      return;
+    }
+    const cached = this.nextPreview?.start === start ? this.nextPreview : null;
+    if (cached) this.nextPreview = null;
+    const controller = cached?.controller || new AbortController();
+    this.playController = controller;
+    const cancel = () => controller.abort();
+    this.abort.signal.addEventListener("abort", cancel, { once: true });
+    try {
+      this.message("Preparing short playback segment…");
+      const result = await (cached
+        ? cached.promise : this.fetchSegment(start, 48, controller));
+      if (!this.playWanted || this.closed || epoch !== this.playEpoch ||
+          controller.signal.aborted) return;
+      this.video.pause();
+      this.previewClip = null;
+      this.video.dataset.source = result.url;
+      this.video.src = result.url;
+      this.video.hidden = false;
+      this.image.hidden = true;
+      this.compositionStart = result.start;
+      this.compositionEnd = result.end;
+      await this.video.play();
+      if (this.playWanted && epoch === this.playEpoch) {
+        this.message(
+          "Playing · segment ready in " +
+          ((result.prepare_ms || 0) / 1000).toFixed(2) +
+          "s" + (result.cache_hit ? " (cached)" : "") +
+          " · next segment prefetching"
+        );
+        this.prefetchSegment(this.compositionEnd);
+      }
+    } catch (error) {
+      if (this.playWanted && epoch === this.playEpoch &&
+          error?.name !== "AbortError") {
+        this.stopPlayback();
+        this.message("Playback unavailable: " + error.message, true);
+      }
+    } finally {
+      this.abort.signal.removeEventListener("abort", cancel);
+      if (this.playController === controller) this.playController = null;
+    }
+  }
+  async playComposition() {
+    // Pause must be synchronous even when FFmpeg has not returned yet.
+    if (this.playWanted || !this.video.paused) {
+      this.stopPlayback();
+      this.message("Paused");
+      return;
+    }
+    if (!this.p.tracks.some(t =>
+      !t.muted && t.clips?.some(c =>
+        ["retained", "generated"].includes(t.role) ||
+        (t.role === "audio" && ["final", "both"].includes(c.audio_role))
+      )
+    )) {
+      this.message("No playable footage or final audio · import or place media first");
+      return;
+    }
+    this.playWanted = true;
+    const epoch = ++this.playEpoch;
+    // Resume an already-buffered segment without a new render or HTTP call.
+    if (this.compositionStart != null &&
+        this.playhead >= this.compositionStart &&
+        this.playhead < this.compositionEnd - 1 &&
+        this.video.dataset.source) {
+      try {
+        await this.video.play();
+        if (this.playWanted && this.playEpoch === epoch) {
+          this.message("Playing");
+          this.prefetchSegment(this.compositionEnd);
+        }
+      } catch (error) {
+        if (this.playWanted && this.playEpoch === epoch) {
+          this.stopPlayback();
+          this.message("Playback unavailable: " + error.message, true);
+        }
+      }
+      return;
+    }
+    await this.playSegment(this.playhead, epoch);
+  }
+  async preview(forceProxy = false) {
+    this.compositionStart = null;
+    const mode = this.compare.value;
+    this.previewMode = mode;
+    const roles =
+      mode === "source"
+        ? ["retained"]
+        : mode === "generated"
+          ? ["generated"]
+          : ["retained", "generated"];
+    let chosen;
+    for (const t of this.p.tracks)
+      if (!t.muted && roles.includes(t.role))
+        for (const c of t.clips)
+          if (c.start <= this.playhead && this.playhead < c.end) chosen = c;
+    this.counter.textContent =
+      time(this.playhead) +
+      ` · chunk ${Math.floor(this.playhead / this.p.chunk_frames) + 1}`;
+    if (!chosen) {
+      this.video.pause();
+      this.video.hidden = true;
+      this.image.hidden = true;
+      return;
+    }
+    const asset = this.p.assets.find((a) => a.id === chosen.asset_id);
+    if (!asset) return;
+    this.previewClip = chosen;
+    this.previewAsset = asset;
+    const source = sourceAt(chosen, this.playhead),
+      origin = ratio(asset.video?.start_time || 0);
+    if (asset.kind === "image") {
+      this.video.hidden = true;
+      this.image.hidden = false;
+      this.image.src = BASE + "/thumbnail/" + asset.id + "?pts=" + source;
+      return;
+    }
+    if (!forceProxy) {
+      // Single-frame inspection never needs an expensive transcoded video.
+      // Scrubbing a two-hour source therefore does not start FFmpeg jobs.
+      this.video.pause();
+      this.video.hidden = true;
+      this.image.hidden = false;
+      this.image.src = BASE + "/thumbnail/" + asset.id +
+        "?pts=" + source.toFixed(6);
+      return;
+    }
+    this.video.hidden = false;
+    this.image.hidden = true;
+    // A seek preview needs only four seconds, not a 30-second transcode.
+    // All transport remains bounded to the inspected source window.
+    const useProxy =
+      forceProxy ||
+      asset.video?.codec_name === "ffv1" ||
+      /\.mkv$/i.test(asset.name);
+    const offset = useProxy
+      ? Math.max(0, Math.floor((source - origin) / 3) * 3)
+      : 0;
+    const url = useProxy
+      ? `${BASE}/proxy/${asset.id}?start=${offset}&duration=4`
+      : `${BASE}/media/${asset.id}?type=video/mp4`;
+    this.proxy = useProxy;
+    this.proxyOffset = offset + origin;
+    if (this.video.dataset.source !== url) {
+      this.video.dataset.source = url;
+      this.video.src = url;
+      this.video.addEventListener(
+        "loadedmetadata",
+        () => {
+          if (!this.closed && this.video.dataset.source === url)
+            this.video.currentTime = Math.max(0, source - origin - offset);
+        },
+        { once: true },
+      );
+    } else if (this.video.paused)
+      this.video.currentTime = Math.max(0, source - origin - offset);
+  }
+  seek(f) {
+    this.stopPlayback();
+    this.compositionStart = null;
+    this.playhead = Math.min(
+      this.p.duration_frames - 1,
+      Math.max(0, Math.round(f)),
+    );
+    this.drawPlayhead();
+    this.guard(() => this.preview());
+    this.persistView();
+  }
+  drawPlayhead() {
+    if (this.playheadLine)
+      this.playheadLine.style.left = this.frameX(this.playhead) + "px";
+    if (this.counter)
+      this.counter.textContent =
+        time(this.playhead) +
+        ` · chunk ${Math.floor(this.playhead / this.p.chunk_frames) + 1}`;
+  }
+  setZoom(z) {
+    this.zoom = Math.max(0.1, Math.min(1000, z));
+    this.drawTimeline();
+    this.persistView();
+  }
+  copy() {
+    this.clipboard = selectedClips(this.p, this.selected).map(([t, c]) => [
+      t.id,
+      clone(c),
+    ]);
+  }
+  duplicate() {
+    this.copy();
+    const end = Math.max(
+      this.playhead,
+      ...this.clipboard.map(([, c]) => c.end),
+    );
+    this.edit((p) => (this.selected = paste(p, this.clipboard, end)));
+  }
+  undo() {
+    this.stopPlayback();
+    this.editVersion++;
+    this.history.undo();
+    this.persistWidget();
+    this.render();
+  }
+  redo() {
+    this.stopPlayback();
+    this.editVersion++;
+    this.history.redo();
+    this.persistWidget();
+    this.render();
+  }
+  key(e) {
+    // The editor is modal: no ComfyUI shortcut (queue, delete node, ...) may
+    // act on the graph behind it, including while typing in its fields.
+    e.stopPropagation();
+    if (e.target.closest("input,textarea,select,[contenteditable=true]"))
+      return;
+    let handled = true;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === "z")
+      e.shiftKey ? this.redo() : this.undo();
+    else if (mod && e.key.toLowerCase() === "y") this.redo();
+    else if (mod && e.key.toLowerCase() === "c") this.copy();
+    else if (mod && e.key.toLowerCase() === "v")
+      this.edit(
+        (p) => (this.selected = paste(p, this.clipboard, this.playhead)),
+      );
+    else if (mod && e.key.toLowerCase() === "s") this.guard(() => this.save());
+    else if (e.key === "Delete" || e.key === "Backspace")
+      this.edit((p) => remove(p, this.selected, this.ripple.checked));
+    else if (e.key.toLowerCase() === "s")
+      this.edit((p) => split(p, this.selected, this.playhead));
+    else if (e.key === "ArrowLeft") this.seek(this.playhead - 1);
+    else if (e.key === "ArrowRight") this.seek(this.playhead + 1);
+    else if (e.key === " ") {
+      this.guard(() => this.playComposition());
+    } else if (e.key.toLowerCase() === "i")
+      this.edit((p) => (p.selection[0] = this.playhead));
+    else if (e.key.toLowerCase() === "o")
+      this.edit((p) => (p.selection[1] = this.playhead + 1));
+    else handled = false;
+    if (handled) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+  async inspectInputs() {
+    const plan = await request(this.api, "/compile", {
+      method: "POST",
+      body: JSON.stringify(this.p),
+    });
+    this.diagnostics.textContent = JSON.stringify(
+      { jobs: plan.jobs, capabilities: plan.capabilities },
+      null,
+      2,
+    );
+    this.diagnostics.parentElement.open = true;
+    this.message(
+      "Compiled logical inputs. Actual physical descriptors are recorded with sampled takes.",
+    );
+    return plan;
+  }
+  async queue(reroll = false) {
+    await this.save();
+    const snapshot = clone(this.p);
+    snapshot.queued_batch_id = uid();
+    const plan = await request(this.api, "/compile", {
+      method: "POST",
+      body: JSON.stringify(snapshot),
+    });
+    const samplers = this.app.graph._nodes
+      .filter(
+        (n) =>
+          n.comfyClass === "H3ContinuumTimelineSampler" &&
+          n.inputs?.find((i) => i.name === "timeline")?.link != null,
+      )
+      .filter((n) => {
+        const link =
+          this.app.graph.links[
+            n.inputs.find((i) => i.name === "timeline").link
+          ];
+        return link?.origin_id === this.node.id;
+      });
+    if (samplers.length !== 1)
+      throw new Error(
+        "Connect this project to one Timeline Sampler before queueing",
+      );
+    const sampler = samplers[0];
+    // Core's seed controls run around app.queuePrompt. This editor submits
+    // its own frozen batch through api.queuePrompt, so run the same widget
+    // lifecycle once for the entire batch, keeping its causal jobs coherent.
+    const queuedNodes = [...this.app.graph._nodes];
+    for (const node of queuedNodes)
+      for (const widget of node.widgets || [])
+        widget.beforeQueued?.({ isPartialExecution: false });
+    const frozen = await this.app.graphToPrompt();
+    frozen.output[String(this.node.id)].inputs.project_json =
+      JSON.stringify(snapshot);
+    const graphNode = frozen.workflow?.nodes?.find(
+      (n) => n.id === this.node.id,
+    );
+    if (graphNode?.widgets_values)
+      graphNode.widgets_values[0] = JSON.stringify(snapshot);
+    let submitted = 0;
+    try {
+      for (let i = 0; i < plan.jobs.length; i++) {
+        const payload = clone(frozen);
+        const actual = payload.output[String(sampler.id)].inputs;
+        const job = plan.jobs[i];
+        actual.job_index = i;
+        if (reroll) {
+          // A job continuing a stored parent state can only restart at its
+          // first chunk.
+          const resumes = job.requires_previous_job || job.resume_parent_take;
+          actual.regenerate_from =
+            i === 0 && !resumes
+              ? Math.max(
+                  1,
+                  Math.floor(snapshot.selection[0] / snapshot.chunk_frames) -
+                    job.start_chunk +
+                    1,
+                )
+              : 1;
+          // Native storage allocates the next nonce under its run lock. A
+          // restored or concurrently used widget counter cannot safely do so.
+          actual.reroll_nonce = 0;
+        }
+        const serialized = payload.workflow?.nodes?.find(
+          (n) => n.id === sampler.id,
+        );
+        if (serialized?.widgets_values) {
+          for (const key of ["job_index", "regenerate_from", "reroll_nonce"]) {
+            const index = sampler.widgets
+              .filter((w) => w.serialize !== false)
+              .findIndex((w) => w.name === key);
+            if (index >= 0 && key in actual)
+              serialized.widgets_values[index] = actual[key];
+            if (serialized.widgets_values_named && key in actual)
+              serialized.widgets_values_named[key] = actual[key];
+          }
+        }
+        // Number 0 appends in submission order; -1 would queue each later job
+        // ahead of its predecessor.
+        const queued = await this.api.queuePrompt(0, payload);
+        submitted++;
+        this.queuedIds.add(queued.prompt_id);
+        this.persistView();
+      }
+    } finally {
+      if (submitted) {
+        for (const node of queuedNodes)
+          if (String(node.id) in frozen.output)
+            for (const widget of node.widgets || [])
+              widget.afterQueued?.({ isPartialExecution: false });
+        this.app.graph.setDirtyCanvas?.(true, true);
+      }
+    }
+    this.message(
+      `${plan.jobs.length} immutable job snapshot(s) queued. Connect decoded assembly to Save Take for review.`,
+    );
+  }
+  async cancelSampling() {
+    const response = await this.api.fetchApi("/queue");
+    if (!response.ok) throw new Error("Cannot read the sampling queue");
+    let queue = await response.json();
+    const live = new Set(
+      [...(queue.queue_pending || []), ...(queue.queue_running || [])].map(
+        (row) => row[1],
+      ),
+    );
+    this.queuedIds = new Set([...this.queuedIds].filter((id) => live.has(id)));
+    const pending = (queue.queue_pending || [])
+      .filter((row) => this.queuedIds.has(row[1]))
+      .map((row) => row[1]);
+    if (pending.length) {
+      const removed = await this.api.fetchApi("/queue", {
+        method: "POST",
+        body: JSON.stringify({ delete: pending }),
+      });
+      if (!removed.ok)
+        throw new Error("Could not cancel pending timeline jobs");
+      // A pending job can start while DELETE is in flight. Re-read before
+      // deciding whether its execution needs an interrupt.
+      const refreshed = await this.api.fetchApi("/queue");
+      if (!refreshed.ok) throw new Error("Cannot verify sampling cancellation");
+      queue = await refreshed.json();
+    }
+    const active = (queue.queue_running || []).some((row) =>
+      this.queuedIds.has(row[1]),
+    );
+    if (active) await this.api.interrupt();
+    const remaining = new Set(
+      [...(queue.queue_pending || []), ...(queue.queue_running || [])].map(
+        (row) => row[1],
+      ),
+    );
+    this.queuedIds = new Set(
+      [...this.queuedIds].filter((id) => remaining.has(id)),
+    );
+    this.persistView();
+    this.message(
+      active
+        ? "Timeline sampling cancellation requested"
+        : pending.length
+          ? "Pending timeline jobs cancelled"
+          : "No active job queued by this editor",
+    );
+  }
+  async review() {
+    await this.save();
+    const records = await request(this.api, "/takes/" + this.p.project_id);
+    this.inspector.replaceChildren(
+      el("h3", { text: "Generated alternatives" }),
+    );
+    for (const r of records) {
+      const rejected = this.p.rejected?.includes(r.id);
+      const card = el(
+        "section",
+        { class: "h3ts-take" },
+        el("strong", { text: r.id.slice(0, 8) }),
+        el("p", {
+          text: `${time(r.range[0])}–${time(r.range[1])} · ${r.stale ? "STALE" : r.status}${rejected ? " · rejected" : ""}`,
+        }),
+      );
+      if (r.rendition) {
+        card.append(
+          button("Preview B", () => {
+            this.video.src =
+              BASE + "/proxy/" + r.rendition.asset.id + "?duration=4";
+            this.video.hidden = false;
+            this.image.hidden = true;
+            this.previewClip = null;
+            this.video.play().catch(() => {});
+          }),
+        );
+        if (!r.stale)
+          card.append(
+            button("Accept / select", () =>
+              this.guard(() => this.selectTake(r, "accept")),
+            ),
+          );
+        card.append(
+          button("Reject", () =>
+            this.guard(() => this.selectTake(r, "reject")),
+          ),
+        );
+      }
+      card.append(
+        button("Inspect actual inputs", () => {
+          this.diagnostics.textContent = JSON.stringify(
+            r.model_inputs || [],
+            null,
+            2,
+          );
+          this.diagnostics.parentElement.open = true;
+        }),
+      );
+      this.inspector.append(card);
+    }
+  }
+  async selectTake(record, action) {
+    await this.save();
+    const p = await request(this.api, "/take/select", {
+      method: "POST",
+      body: JSON.stringify({
+        project_id: this.p.project_id,
+        take_id: record.id,
+        action,
+        expected_revision: this.serverRevision,
+      }),
+    });
+    this.history = new History(p);
+    this.serverRevision = p.revision;
+    this.persistWidget();
+    this.render();
+    this.message(
+      action === "accept"
+        ? "Take selected; dependent later choices invalidated"
+        : "Take rejected",
+    );
+  }
+  async export(codec) {
+    await this.save();
+    const result = await request(this.api, "/export", {
+      method: "POST",
+      body: JSON.stringify({ project: this.p, codec }),
+    });
+    this.exportId = result.id;
+    this.message("Export running…");
+    const poll = async () => {
+      if (this.closed) return;
+      const status = await request(this.api, "/export/" + result.id);
+      if (status.status === "running") {
+        this.exportTimer = setTimeout(() => this.guard(poll), 1000);
+        return;
+      }
+      this.message(
+        status.status === "complete"
+          ? "Export saved: " + status.filename
+          : status.error,
+        status.status !== "complete",
+      );
+    };
+    await poll();
+  }
+  close() {
+    if (this.closed) return;
+    this.stopPlayback();
+    this.closed = true;
+    this.persistWidget();
+    this.abort.abort();
+    this.resize.disconnect();
+    cancelAnimationFrame(this.drawPending);
+    clearTimeout(this.exportTimer);
+    this.video.pause();
+    this.video.removeAttribute("src");
+    this.video.load();
+    this.root.close();
+    this.root.remove();
+    this.onClose?.();
+  }
+}
