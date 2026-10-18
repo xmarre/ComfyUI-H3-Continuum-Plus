@@ -21,6 +21,8 @@ preload path handoff, and confirmed that **only the original path** reached
 the mock `/link` route. This materially tests the packaged application
 bootstrap and native handoff, not merely JavaScript mocks.
 
+Additional deployment regression: the Windows desktop verifies a live no-scan runtime manifest, checks the *actual served* editor and entry JavaScript, and refuses a stale Patcher overlay, duplicate registrations or the old scanning UI. The frontend entry imports its editor with an explicit version parameter; the desktop clears its private module caches before loading.
+
 Outstanding production acceptance: physical Windows Explorer drag into the
 real ComfyUI frontend; real WSL path and FFprobe; source persistence across
 ComfyUI restarts; long-MKV playback, audio seeks, export and later native H3
