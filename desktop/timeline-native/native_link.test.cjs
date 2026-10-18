@@ -119,3 +119,66 @@ test("Bundled sandbox preload exposes only native link and cancellation", async 
   const result = await bridge.linkFile({ name: "movie.mkv" }, "real");
   assert.equal(result.id, "ok");
 });
+
+test("Native window keeps sandboxing and trusted ComfyUI microphone access", async () => {
+  const fs = require("node:fs");
+  const vm = require("node:vm");
+  const nodePath = require("node:path");
+  const source = fs.readFileSync(nodePath.join(__dirname, "main.cjs"), "utf8");
+  let options, permissionHandler, trustedContents;
+  class Window {
+    static getAllWindows() { return []; }
+    constructor(input) {
+      options = input;
+      this.webContents = {
+        setWindowOpenHandler() {},
+        on() {},
+      };
+      trustedContents = this.webContents;
+    }
+    loadURL() { return Promise.resolve(); }
+  }
+  const app = {
+    requestSingleInstanceLock: () => true,
+    on: () => {},
+    whenReady: () => Promise.resolve(),
+    quit() { throw new Error("Unexpected application shutdown"); },
+  };
+  const electron = {
+    app,
+    BrowserWindow: Window,
+    session: {
+      defaultSession: {
+        setPermissionRequestHandler(fn) { permissionHandler = fn; },
+      },
+    },
+  };
+  vm.runInNewContext(source, {
+    require(id) {
+      if (id === "electron") return electron;
+      if (id === "node:path") return nodePath;
+      throw new Error("unexpected native module");
+    },
+    process: { argv: [] },
+    URL,
+    console,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(options.webPreferences.sandbox, true);
+  assert.equal(options.webPreferences.nodeIntegration, false);
+  assert.equal(options.webPreferences.contextIsolation, true);
+  assert.equal(options.webPreferences.webSecurity, true);
+  const check = (contents, permission, url) => {
+    let allowed = null;
+    permissionHandler(contents, permission, value => {allowed = value;}, {
+      requestingUrl: url,
+    });
+    return allowed;
+  };
+  const local = "http://127.0.0.1:8188/";
+  assert.equal(check(trustedContents, "media", local), true);
+  assert.equal(check(trustedContents, "clipboard-read", local), true);
+  assert.equal(check(trustedContents, "midiSysex", local), false);
+  assert.equal(check({}, "media", local), false);
+  assert.equal(check(trustedContents, "media", "https://example.com"), false);
+});

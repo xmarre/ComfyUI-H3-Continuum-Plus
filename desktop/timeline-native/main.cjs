@@ -24,7 +24,6 @@ else {
     let target;
     try { target = localTarget(); }
     catch (error) { console.error(error.message); app.quit(); return; }
-    session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     const window = new BrowserWindow({
       width: 1600,
       height: 1050,
@@ -40,6 +39,23 @@ else {
         allowRunningInsecureContent: false,
       },
     });
+    // Trusted local ComfyUI microphone/clipboard functionality must keep
+    // working. Every other renderer/permission/origin remains denied.
+    const permitted = new Set([
+      "media", "clipboard-read", "clipboard-sanitized-write", "fullscreen",
+    ]);
+    session.defaultSession.setPermissionRequestHandler(
+      (contents, permission, callback, details) => {
+        let origin = null;
+        try { origin = new URL(details?.requestingUrl).origin; }
+        catch { /* No valid requesting origin. */ }
+        callback(
+          contents === window.webContents &&
+          origin === target.origin &&
+          permitted.has(permission),
+        );
+      },
+    );
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.webContents.on("will-navigate", (event, destination) => {
       try {
