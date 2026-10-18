@@ -98,3 +98,19 @@ Fourteen public-facade CPU tests check the native control inventory, storage Off
 The real frontend additionally round-trips audio continuity, both reference sizes, Qwen lookahead and storage Off; migrates a seven-widget sampler without shifting seeds/boundaries/nonces; and verifies Core seed increment occurs once after a two-job Studio batch. The actual server checks all eight image sockets and the appended audio output in object_info.
 
 Sampler layout checks also assert V3.4 widget order, contiguous references, incoming link slot integrity, graph-connected width/height/seed round-trips, and timing-control edits reaching the actual project compiler. Native CPU tests verify requested latent dimensions, cache invalidation on dimension changes and rejection of a different-resolution continuation parent. Real take-review HTTP checks cover adoption of resolved canvas dimensions and preservation of a later explicit canvas edit. A frontend regression check also preserves explicit sampler dimensions when Studio opens without a canvas change.
+
+## Play/Pause regression and runtime qualification
+
+An observed minute-long delay was traced to `/preview` unconditionally
+performing a 30-second `export_project` (FFV1 intermediate, audio mix,
+then MP4 encode) before calling `video.play()`. Scrubbing also started
+30-second Matroska proxy jobs. The replacement uses small seek-based windows,
+fast source-only FFmpeg, optional short composition, cancelable workers,
+thumbnail-only scrubbing, segment prefetch and immediate Pause. The Python
+suite now includes real FFmpeg media-fixture checks for two-second late source
+segments, selected-window audio reads and cancellation/partial-file cleanup.
+Frontend tests assert synchronous pause during unresolved HTTP, no empty
+project encode, bounded request lengths, and request cancellation. Passing CI
+cannot establish subsecond playback on multi-hour source MKVs on WSL/DrvFS,
+which must be measured on the actual system. Playback audio seek is allowed
+to be approximate; generation/final export sample-grid rules remain exact.
