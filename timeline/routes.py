@@ -140,6 +140,19 @@ def register_routes():
 
         async with _lookup_slots:
             task = asyncio.create_task(asyncio.to_thread(discover_and_link))
+
+            async def watch_disconnect():
+                # aiohttp's default handler lifecycle does not necessarily
+                # cancel a handler when its client aborts a fetch. Stop the
+                # drive traversal instead of occupying the singleton slot.
+                while not task.done():
+                    transport = request.transport
+                    if transport is None or transport.is_closing():
+                        stopped.set()
+                        return
+                    await asyncio.sleep(0.25)
+
+            watcher = asyncio.create_task(watch_disconnect())
             try:
                 asset = await asyncio.shield(task)
             except asyncio.CancelledError:
@@ -149,6 +162,9 @@ def register_routes():
                 except InterruptedError:
                     pass
                 raise
+            finally:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
         if asset.get("video") and (
             asset["video"].get("nb_frames") == "1"
             or asset["name"].lower().endswith(
