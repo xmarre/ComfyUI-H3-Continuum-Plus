@@ -168,6 +168,37 @@ def validate(project):
 
 
 
+def verify_export_clip_selection(p, clip_ids, start, stop):
+    """Check the highlighted source clips match the exact output interval.
+
+    A clip's absolute source PTS lives in source_in. Output selection uses
+    c.start/c.end; treating either as frame zero exports the wrong movie part.
+    """
+    if not isinstance(clip_ids, list) or len(clip_ids) > 12:
+        raise ValueError("Invalid highlighted export clips")
+    if not clip_ids:
+        return  # Explicit manual [in,out) range, no highlighted media.
+    if len(set(clip_ids)) != len(clip_ids) or any(
+        not isinstance(i, str) for i in clip_ids
+    ):
+        raise ValueError("Duplicate or invalid highlighted export clips")
+    matches = [
+        clip for track in p["tracks"]
+        if track["role"] in {"retained", "generated", "audio"}
+        and not track.get("muted")
+        for clip in track["clips"]
+        if clip["id"] in clip_ids and not clip.get("muted")
+        and (track["role"] != "audio"
+             or clip.get("audio_role") in {"final", "both"})
+    ]
+    if len(matches) != len(clip_ids):
+        raise ValueError("Highlighted export clip is missing or unavailable")
+    if any(c["start"] != start or c["end"] != stop for c in matches):
+        raise ValueError(
+            "Highlighted export clip differs from selected output range"
+        )
+
+
 def selected_export_range(p, requested):
     """Require a deliberate, exact [in,out) interval for HTTP exports.
 
