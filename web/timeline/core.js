@@ -110,6 +110,10 @@ export function routeClipToGuidance(p, ids) {
   };
   if (guide) Object.assign(guide, copy);
   else lane.clips.push(copy);
+  // Guidance is composited bottom-to-top; a later guide lane must not mask
+  // the explicit user selection when the action is repeated.
+  p.tracks.splice(p.tracks.indexOf(lane), 1);
+  p.tracks.push(lane);
   p.selection = [source.start, source.end];
   return copy;
 }
