@@ -550,9 +550,9 @@ def register_routes():
             p["tracks"] = [t for t in p["tracks"] if t["role"] != "generated"]
         elif mode == "generated":
             p["tracks"] = [t for t in p["tracks"] if t["role"] != "retained"]
-        scale = min(1, 480 / max(p["width"], p["height"]))
-        p["width"] = max(32, round(p["width"] * scale / 32) * 32)
-        p["height"] = max(32, round(p["height"] * scale / 32) * 32)
+        # Preview quality follows the timeline canvas, never a hidden 480px
+        # longest-edge cap. Speed comes from bounded temporal work/seek,
+        # not from quietly degrading the movie to 160p or 270p.
         key = digest([
             {k: v for k, v in p.items() if k != "ui"},
             start, stop, "low-latency-play-v1",
