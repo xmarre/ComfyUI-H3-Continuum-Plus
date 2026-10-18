@@ -618,7 +618,7 @@ test("completed export displays a usable file link instead of only a filename", 
         if (url.endsWith("/export") && options.method === "POST")
           payload = {
             id, status:"running", total_frames:48,
-            render_range:[0,48],
+            render_range:[0,48], resolution:"timeline", width:64, height:64,
           };
         else if (url.endsWith("/export/" + id))
           payload = {
@@ -658,7 +658,7 @@ test("export error is visible and no duplicate jobs launch during running export
           launches++;
           return {ok:true,json:async()=>({
             id, status:"running", total_frames:120,
-            render_range:[0,120],
+            render_range:[0,120], resolution:"timeline", width:64, height:64,
           })};
         }
         return {
@@ -666,7 +666,7 @@ test("export error is visible and no duplicate jobs launch during running export
           json:async()=>({
             status:"running",stage:"encoding",
             frames_done:48,total_frames:120,
-            render_range:[0,120],elapsed_seconds:3.4,
+            render_range:[0,120], resolution:"timeline", width:64, height:64,elapsed_seconds:3.4,
           }),
         };
       },
@@ -697,12 +697,12 @@ test("export from a long movie submits only the 14-second selected frame range",
           assert.deepEqual(payload.render_range,[0,336]);
           assert.equal(payload.project.duration_frames,159000);
           return {ok:true,json:async()=>({
-            id:job,status:"running",render_range:[0,336],
+            id:job,status:"running",render_range:[0,336], resolution:"timeline", width:64, height:64,
             total_frames:336,
           })};
         }
         return {ok:true,json:async()=>({
-          status:"complete",render_range:[0,336],
+          status:"complete",render_range:[0,336], resolution:"timeline", width:64, height:64,
           total_frames:336, frames_done:336,
           filename:"Timeline_" + job + ".mp4",elapsed_seconds:1.7,
         })};
@@ -731,7 +731,7 @@ test("a backend ignoring selected range is cancelled, not left exporting the fil
       fetchApi:async(url,opts)=>{
         if(url.endsWith("/export") && opts.method==="POST")
           return {ok:true,json:async()=>({
-            id,status:"running",render_range:[0,159000],
+            id,status:"running",render_range:[0,159000], resolution:"timeline", width:64, height:64,
             total_frames:159000,
           })};
         if(url.endsWith("/export/"+id+"/cancel")){
@@ -777,13 +777,13 @@ test("highlighted movie clip wins over stale 0–336 render fields and keeps sou
         const request=JSON.parse(options.body);
         calls.push({kind:"export",request});
         return {ok:true,json:async()=>({
-          status:"running",id,render_range:[17136,17283],total_frames:147,
+          status:"running",id,render_range:[17136,17283], resolution:"timeline", width:64, height:64,total_frames:147,
         })};
       }
       if(url.endsWith("/export/"+id))
         return {ok:true,json:async()=>({
           status:"complete",filename:"Timeline_"+id+".mp4",
-          elapsed_seconds:1, render_range:[17136,17283],
+          elapsed_seconds:1, render_range:[17136,17283], resolution:"timeline", width:64, height:64,
           total_frames:147,
         })};
       throw new Error("unexpected path "+url);
@@ -869,7 +869,7 @@ test("close during accepted-but-unanswered export POST cancels returned job",asy
       if(path.endsWith("/export")&&options.method==="POST")
         return await new Promise(resolve=>{finishPost=()=>resolve({
           ok:true,json:async()=>({
-            id,total_frames:336,render_range:[0,336],
+            id,total_frames:336,render_range:[0,336], resolution:"timeline", width:64, height:64,
           }),
         });});
       if(path.endsWith("/export/"+id+"/cancel")){
@@ -921,4 +921,45 @@ test("retained source routes to H3 video guidance at original PTS without export
   assert.equal(p.tracks[2].clips[0].id, firstId);
   assert.equal(p.tracks[2].clips[0].source_in, "720");
   assert.throws(() => routeClipToGuidance(p, ["no-such-clip"]), /exactly one retained/);
+});
+
+test("native export rejects backend that lies about original source pixels", async () => {
+  const id="a".repeat(32);
+  let cancelled=0;
+  const p={
+    duration_frames:504, selection:[0,48],
+    assets:[{id:"source",video:{width:1920,height:1080}}],
+    tracks:[{role:"retained",clips:[{
+      id:"c",asset_id:"source",start:0,end:48,
+      source_in:"0",speed:"1",
+    }]}],
+  };
+  const editor={
+    p,selected:["c"],closed:false,exportPending:false,
+    exportResolutionChoice:"source",
+    exportLink:{hidden:true,textContent:""},
+    exportStatus:{textContent:""},
+    async save(){},message(){},
+    api:{fetchApi:async(url,options)=>{
+      if(url.endsWith("/export") && options.method==="POST"){
+        const req=JSON.parse(options.body);
+        assert.equal(req.resolution,"source");
+        return {ok:true,json:async()=>({
+          id,total_frames:48,render_range:[0,48],
+          resolution:"source",width:768,height:512,
+        })};
+      }
+      if(url.endsWith("/export/"+id+"/cancel")){
+        cancelled++;
+        return {ok:true,json:async()=>({cancelled:true})};
+      }
+      throw Error("unexpected request "+url);
+    }},
+  };
+  await assert.rejects(
+    TimelineEditor.prototype.export.call(editor,"lossless"),
+    /ignored export resolution or source pixel dimensions/,
+  );
+  assert.equal(cancelled,1);
+  assert.equal(editor.exportPending,false);
 });
