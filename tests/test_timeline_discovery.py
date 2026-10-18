@@ -125,7 +125,7 @@ def test_cancelled_or_unsafe_fingerprint_fails_before_linking(movie, tmp_path):
         {"name": "../original.mkv"},
         {"name": "C:\\original.mkv"},
         {"chunk_size": 1},
-        {"chunks": ["0" * 64]},
+        {"chunks": ["0" * 63]},
         {"size": -1},
         {"size": True},
     ):
