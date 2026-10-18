@@ -95,6 +95,10 @@ export class TimelineEditor {
     this.abort = new AbortController();
     this.queuedIds = new Set(view.queuedPrompts || []);
     this.proxy = false;
+    this.playWanted = false;
+    this.playEpoch = 0;
+    this.playController = null;
+    this.nextPreview = null;
     this.closed = false;
     this.editVersion = 0;
     this.waveCache = new Map();
@@ -253,14 +257,15 @@ export class TimelineEditor {
         this.guard(() => this.preview(true));
     });
     this.video.addEventListener("ended", () => {
-      if (
-        this.compositionStart != null &&
-        this.compositionEnd < this.p.duration_frames &&
-        !this.closed
-      ) {
-        this.playhead = this.compositionEnd;
-        this.guard(() => this.playComposition());
+      if (!this.playWanted || this.closed || this.compositionStart == null)
+        return;
+      if (this.compositionEnd >= this.p.duration_frames) {
+        this.stopPlayback();
+        this.message("Reached end of timeline");
+        return;
       }
+      this.playhead = this.compositionEnd;
+      this.guard(() => this.playSegment(this.playhead, this.playEpoch));
     });
     this.video.addEventListener("timeupdate", () => {
       if (this.compositionStart != null) {
@@ -269,6 +274,10 @@ export class TimelineEditor {
           this.compositionStart + Math.floor(this.video.currentTime * 24),
         );
         this.drawPlayhead();
+        if (this.playWanted && this.compositionEnd < this.p.duration_frames &&
+            this.compositionEnd - this.playhead <= 60) {
+          this.prefetchSegment(this.compositionEnd);
+        }
         return;
       }
       if (!this.video.paused && this.previewClip) {
@@ -436,7 +445,7 @@ export class TimelineEditor {
     this.drawTimeline();
     this.rangeA.value = this.p.selection[0];
     this.rangeB.value = this.p.selection[1];
-    this.guard(() => this.preview());
+    if (!this.playWanted) this.guard(() => this.preview());
   }
   renderAssets() {
     this.assets.replaceChildren(
@@ -1228,34 +1237,98 @@ export class TimelineEditor {
       if (!this.closed) this.drawTimeline();
     });
   }
-  async playComposition() {
-    if (!this.video.paused) {
-      this.video.pause();
-      return;
-    }
-    this.message("Preparing bounded composition preview with final audio…");
-    const snapshot = clone(this.p);
-    const start = this.playhead;
-    const result = await request(this.api, "/preview", {
+  stopPlayback() {
+    this.playWanted = false;
+    ++this.playEpoch;
+    this.playController?.abort();
+    this.playController = null;
+    this.nextPreview?.controller.abort();
+    this.nextPreview = null;
+    this.video.pause();
+  }
+  async fetchSegment(start, length, controller) {
+    return request(this.api, "/preview", {
       method: "POST",
       body: JSON.stringify({
-        project: snapshot,
-        start,
-        mode: this.compare.value,
+        project: clone(this.p), start,
+        length_frames: length, mode: this.compare.value,
       }),
-      signal: this.abort.signal,
+      signal: controller.signal,
+      timeoutMs: 15000,
     });
-    if (this.closed || this.playhead !== start) return;
-    this.video.pause();
-    this.previewClip = null;
-    this.video.dataset.source = result.url;
-    this.video.src = result.url;
-    this.video.hidden = false;
-    this.image.hidden = true;
-    this.compositionStart = result.start;
-    this.compositionEnd = result.end;
-    await this.video.play();
-    this.message("Composition preview · final audio mix");
+  }
+  prefetchSegment(start) {
+    if (!this.playWanted || this.closed || start >= this.p.duration_frames ||
+        this.nextPreview?.start === start) return;
+    this.nextPreview?.controller.abort();
+    const controller = new AbortController();
+    const next = {
+      start, controller,
+      promise: this.fetchSegment(start, 144, controller),
+    };
+    next.promise.catch(() => {}); // Pausing may discard the pending prefetch.
+    this.nextPreview = next;
+  }
+  async playSegment(start, epoch) {
+    if (!this.playWanted || epoch !== this.playEpoch || this.closed) return;
+    if (start >= this.p.duration_frames) {
+      this.stopPlayback();
+      this.message("Reached end of timeline");
+      return;
+    }
+    const cached = this.nextPreview?.start === start ? this.nextPreview : null;
+    if (cached) this.nextPreview = null;
+    const controller = cached?.controller || new AbortController();
+    this.playController = controller;
+    const cancel = () => controller.abort();
+    this.abort.signal.addEventListener("abort", cancel, { once: true });
+    try {
+      this.message("Preparing short playback segment…");
+      const result = await (cached
+        ? cached.promise : this.fetchSegment(start, 48, controller));
+      if (!this.playWanted || this.closed || epoch !== this.playEpoch ||
+          controller.signal.aborted) return;
+      this.video.pause();
+      this.previewClip = null;
+      this.video.dataset.source = result.url;
+      this.video.src = result.url;
+      this.video.hidden = false;
+      this.image.hidden = true;
+      this.compositionStart = result.start;
+      this.compositionEnd = result.end;
+      await this.video.play();
+      if (this.playWanted && epoch === this.playEpoch) {
+        this.message("Playing · next segment is prepared in advance");
+        this.prefetchSegment(this.compositionEnd);
+      }
+    } catch (error) {
+      if (this.playWanted && epoch === this.playEpoch &&
+          error?.name !== "AbortError") {
+        this.stopPlayback();
+        this.message("Playback unavailable: " + error.message, true);
+      }
+    } finally {
+      this.abort.signal.removeEventListener("abort", cancel);
+      if (this.playController === controller) this.playController = null;
+    }
+  }
+  async playComposition() {
+    // Pause must be synchronous even when FFmpeg has not returned yet.
+    if (this.playWanted || !this.video.paused) {
+      this.stopPlayback();
+      this.message("Paused");
+      return;
+    }
+    if (!this.p.tracks.some(t =>
+      !t.muted && ["retained", "generated"].includes(t.role) &&
+      t.clips?.length
+    )) {
+      this.message("No video on the timeline · import or place footage first");
+      return;
+    }
+    this.playWanted = true;
+    const epoch = ++this.playEpoch;
+    await this.playSegment(this.playhead, epoch);
   }
   async preview(forceProxy = false) {
     this.compositionStart = null;
@@ -1295,17 +1368,17 @@ export class TimelineEditor {
     }
     this.video.hidden = false;
     this.image.hidden = true;
-    // Browsers may reject Matroska even with H.264 video. Only encode the
-    // current 30-second window; never transcode the entire source movie.
+    // A seek preview needs only four seconds, not a 30-second transcode.
+    // All transport remains bounded to the inspected source window.
     const useProxy =
       forceProxy ||
       asset.video?.codec_name === "ffv1" ||
       /\.mkv$/i.test(asset.name);
     const offset = useProxy
-      ? Math.max(0, Math.floor((source - origin) / 20) * 20)
+      ? Math.max(0, Math.floor((source - origin) / 3) * 3)
       : 0;
     const url = useProxy
-      ? `${BASE}/proxy/${asset.id}?start=${offset}&duration=30`
+      ? `${BASE}/proxy/${asset.id}?start=${offset}&duration=4`
       : `${BASE}/media/${asset.id}?type=video/mp4`;
     this.proxy = useProxy;
     this.proxyOffset = offset + origin;
@@ -1324,7 +1397,8 @@ export class TimelineEditor {
       this.video.currentTime = Math.max(0, source - origin - offset);
   }
   seek(f) {
-    this.video.pause();
+    this.stopPlayback();
+    this.compositionStart = null;
     this.playhead = Math.min(
       this.p.duration_frames - 1,
       Math.max(0, Math.round(f)),
@@ -1589,7 +1663,7 @@ export class TimelineEditor {
         card.append(
           button("Preview B", () => {
             this.video.src =
-              BASE + "/proxy/" + r.rendition.asset.id + "?duration=30";
+              BASE + "/proxy/" + r.rendition.asset.id + "?duration=4";
             this.video.hidden = false;
             this.image.hidden = true;
             this.previewClip = null;
@@ -1668,6 +1742,7 @@ export class TimelineEditor {
   }
   close() {
     if (this.closed) return;
+    this.stopPlayback();
     this.closed = true;
     this.persistWidget();
     this.abort.abort();
