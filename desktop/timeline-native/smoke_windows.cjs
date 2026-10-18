@@ -30,7 +30,7 @@ async function main() {
     } else if (req.url === "/h3_continuum/timeline/runtime") {
       res.writeHead(200, {"content-type":"application/json","cache-control":"no-store"});
       res.end(JSON.stringify({
-        contract:"h3-timeline-native-path-only-no-scan-v3",
+        contract:"h3-timeline-native-export-resolution-guide-v4",
         transport:"native-selected-path",
         drive_scan:false,browser_movie_upload:false,
         editor_url:"/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js",
@@ -38,12 +38,12 @@ async function main() {
       }));
     } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js") {
       res.writeHead(200, {"content-type":"text/javascript"});
-      res.end('export const NATIVE_PATH_CONTRACT = "h3-timeline-native-path-only-no-scan-v3";\n' +
+      res.end('export const NATIVE_PATH_CONTRACT = "h3-timeline-native-export-resolution-guide-v4";\n' +
         'native.linkFile(file, transaction);');
     } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js") {
       res.writeHead(200, {"content-type":"text/javascript"});
-      res.end('const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-native-path-only-no-scan-v3";\n' +
-        'import "./timeline/editor.js?v=h3-timeline-native-path-only-no-scan-v3";');
+      res.end('const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-native-export-resolution-guide-v4";\n' +
+        'import "./timeline/editor.js?v=h3-timeline-native-export-resolution-guide-v4";');
     } else if (req.url === "/") {
       res.writeHead(200, {"content-type":"text/html; charset=utf-8"});
       res.end("<!doctype html><title>ComfyUI smoke</title><body>" +
