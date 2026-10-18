@@ -7,7 +7,7 @@ JavaScript tests across a four-version CI matrix, but was rejected because it
 required recursive drive searches. Those results **do not qualify** the native
 desktop replacement. The current mirror/final CI must be checked separately.
 
-Native desktop bridge validation adds direct-path mapping, refusal of UNC and
+Native desktop bridge validation adds connection health checks, startup failure diagnostics, main-process IPC for path registration, direct-path mapping, refusal of UNC and
 traversal, no movie-byte upload, path privacy, transaction cancellation and
 explicit failure in ordinary Chrome. The Windows CI workflow builds an unsigned
 portable Electron executable as a validation artifact. A Windows packaging
