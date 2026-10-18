@@ -27,6 +27,23 @@ async function main() {
     if (req.url === "/system_stats") {
       res.writeHead(200, {"content-type":"application/json"});
       res.end(JSON.stringify({system:{os:"windows-stub"},devices:[]}));
+    } else if (req.url === "/h3_continuum/timeline/runtime") {
+      res.writeHead(200, {"content-type":"application/json","cache-control":"no-store"});
+      res.end(JSON.stringify({
+        contract:"h3-timeline-native-path-only-no-scan-v2",
+        transport:"native-selected-path",
+        drive_scan:false,browser_movie_upload:false,
+        editor_url:"/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js",
+        entry_url:"/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js",
+      }));
+    } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js") {
+      res.writeHead(200, {"content-type":"text/javascript"});
+      res.end('export const NATIVE_PATH_CONTRACT = "h3-timeline-native-path-only-no-scan-v2";\n' +
+        'native.linkFile(file, transaction);');
+    } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js") {
+      res.writeHead(200, {"content-type":"text/javascript"});
+      res.end('const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-native-path-only-no-scan-v2";\n' +
+        'import "./timeline/editor.js?v=h3-timeline-native-path-only-no-scan-v2";');
     } else if (req.url === "/") {
       res.writeHead(200, {"content-type":"text/html; charset=utf-8"});
       res.end("<!doctype html><title>ComfyUI smoke</title><body>" +
