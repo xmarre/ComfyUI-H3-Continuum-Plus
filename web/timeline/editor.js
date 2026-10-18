@@ -9,6 +9,7 @@ import {
   sourceAt,
   snap,
   selectedClips,
+  exportTarget,
   split,
   trim,
   move,
@@ -439,10 +440,10 @@ export class TimelineEditor {
         this.exportStatus,
         this.exportLink,
         button("Review takes", () => this.guard(() => this.review())),
-        button("Export selection · FFV1 / PCM", () =>
+        button("Export highlighted clip / in-out · FFV1", () =>
           this.guard(() => this.export("lossless")),
         ),
-        button("Export selection · H.264 / AAC", () =>
+        button("Export highlighted clip / in-out · H.264", () =>
           this.guard(() => this.export("h264")),
         ),
         button("Cancel export", () =>
@@ -1785,22 +1786,38 @@ export class TimelineEditor {
     this.exportLink.textContent = "";
     this.exportStatus.textContent = "Preparing export…";
     try {
+      // The yellow-highlighted clip is the requested snippet. 'Render in/out'
+      // describes a separate range and must not override the highlighted
+      // clip without the user's knowledge.
+      const target = exportTarget(this.p, this.selected);
+      const {start, stop} = target;
+      if (target.kind === "clip" &&
+          (this.p.selection[0] !== start || this.p.selection[1] !== stop)) {
+        // Commit the actual output range so both the input fields and backend
+        // agree with what was highlighted at export time.
+        this.edit((p) => { p.selection = [start, stop]; });
+      }
       await this.save();
-      // Snapshot the committed [in,out) in output frames; never permit a
-      // backend default to silently export hours of source footage.
-      const [start, stop] = this.p.selection;
+      // An explicit clip source is still mapped through source_in and speed,
+      // never confused with project time zero.
       if (!Number.isSafeInteger(start) || !Number.isSafeInteger(stop) ||
           start < 0 || stop <= start || stop > this.p.duration_frames) {
         throw new Error("Invalid Render [in,out) selection for export");
       }
       const frames = stop - start;
-      const descriptor = "frames " + start + "–" + stop +
-        " (" + (frames / 24).toFixed(2) + " seconds)";
+      const descriptor = (target.kind === "clip"
+        ? "highlighted clip · " : "render range · ") +
+        "frames " + start + "–" + stop +
+        " (" + (frames / 24).toFixed(2) + " seconds)" +
+        (target.kind === "clip"
+          ? " · source in " + (target.sourceIn ?? "0") + "s"
+          : "");
       this.exportStatus.textContent = "Exporting selection · " + descriptor;
       const result = await request(this.api, "/export", {
         method: "POST",
         body: JSON.stringify({
           project: this.p, codec, render_range: [start, stop],
+          selected_clip_ids: target.clipIds,
         }),
       });
       this.exportId = result.id;
@@ -1867,18 +1884,35 @@ export class TimelineEditor {
   }
   close() {
     if (this.closed) return;
-    this.stopPlayback();
     this.closed = true;
-    this.persistWidget();
-    this.abort.abort();
-    this.resize.disconnect();
-    cancelAnimationFrame(this.drawPending);
-    clearTimeout(this.exportTimer);
-    this.video.pause();
-    this.video.removeAttribute("src");
-    this.video.load();
-    this.root.close();
+    // Remove the modal FIRST. No video decoder, canvas refresh, workflow
+    // serialization, or hanging media request may prevent Close from working.
+    try { this.root.close?.(); } catch { /* Already dismissed. */ }
     this.root.remove();
-    this.onClose?.();
+    try { this.onClose?.(); } catch (e) { console.warn(e); }
+
+    // Most edits already persist synchronously. Closing only stores view
+    // state; persistWidget() also refreshes a large sampler graph and can
+    // freeze a busy ComfyUI canvas, so never call it on Close.
+    try { this.persistView(); } catch (e) { console.warn(e); }
+    const activeExport = this.exportPending ? this.exportId : null;
+    this.exportPending = false;
+    clearTimeout(this.exportTimer);
+    try { this.abort.abort(); } catch { /* no pending requests */ }
+    try { this.resize?.disconnect(); } catch {}
+    try { cancelAnimationFrame(this.drawPending); } catch {}
+    try {
+      this.stopPlayback();
+      this.video.removeAttribute("src");
+      // Do not call HTMLMediaElement.load() synchronously during Close:
+      // tearing down a large remote video resource can stall this callback.
+    } catch (e) { console.warn(e); }
+    if (activeExport) {
+      // The user is closing an unusable editor, not electing to keep a large
+      // background export saturating WSL. Cancel it best-effort.
+      void request(this.api, "/export/" + activeExport + "/cancel", {
+        method: "POST",
+      }).catch((e) => console.warn("Export cancellation:", e));
+    }
   }
 }
