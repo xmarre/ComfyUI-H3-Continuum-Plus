@@ -134,4 +134,86 @@ function startupHTML({ heading, detail, url, attempts = [] }) {
     '});</script></main></body></html>';
 }
 
-module.exports = { localURL, candidates, probe, escapeHTML, startupHTML };
+// Both the active Python runtime and the actually served editor must agree.
+// This prevents an installed old Patcher overlay from reaching its drive scan.
+const NATIVE_PATH_CONTRACT = "h3-timeline-native-path-only-no-scan-v2";
+
+function safeExtensionURL(base, value, suffix) {
+  if (typeof value !== "string" ||
+      !value.startsWith("/extensions/") ||
+      !value.endsWith(suffix) ||
+      value.includes("\\") ||
+      value.includes("?") || value.includes("#") ||
+      value.split("/").some(part => part === "." || part === "..")) {
+    throw new Error("Timeline Studio returned an unsafe frontend module path");
+  }
+  const url = new URL(value, base);
+  if (url.origin !== base.origin || url.pathname !== value) {
+    throw new Error("Timeline Studio extension URL escapes the local server");
+  }
+  return url;
+}
+
+async function verifyTimelineRuntime(base, { fetchImpl = fetch, timeoutMs = 6000 } = {}) {
+  const target = localURL(base.href || String(base));
+  const get = async (url) => {
+    const response = await fetchImpl(url.href, {
+      method: "GET",
+      headers: { "Cache-Control": "no-cache" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) {
+      throw new Error(
+        "Timeline Studio backend is outdated or missing (HTTP " +
+        response.status + " at " + url.pathname + "). Apply the current " +
+        "PR #51 in ComfyUI Patcher and restart the ComfyUI Python process."
+      );
+    }
+    const length = Number(response.headers?.get?.("content-length") || 0);
+    if (length > 512 * 1024) throw new Error("Timeline runtime response is unexpectedly large");
+    const text = await response.text();
+    if (text.length > 512 * 1024) throw new Error("Timeline runtime response is unexpectedly large");
+    return text;
+  };
+  let data;
+  try {
+    data = JSON.parse(await get(new URL("/h3_continuum/timeline/runtime", target)));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("Timeline Studio runtime endpoint is invalid. Update the Patcher overlay and restart ComfyUI.");
+    }
+    throw error;
+  }
+  if (data.contract !== NATIVE_PATH_CONTRACT ||
+      data.transport !== "native-selected-path" ||
+      data.drive_scan !== false ||
+      data.browser_movie_upload !== false) {
+    throw new Error(
+      "Timeline Studio backend is stale or incompatible. It may still run " +
+      "recursive media discovery. Apply PR #51 and restart ComfyUI; " +
+      "the desktop will refuse the unsafe version."
+    );
+  }
+  const editor = safeExtensionURL(target, data.editor_url, "/timeline/editor.js");
+  const entry = safeExtensionURL(target, data.entry_url, "/timeline_studio.js");
+  const [editorJS, entryJS] = await Promise.all([get(editor), get(entry)]);
+  if (!editorJS.includes('NATIVE_PATH_CONTRACT = "' + NATIVE_PATH_CONTRACT + '"') ||
+      !entryJS.includes('H3_TIMELINE_ENTRY_CONTRACT = "' + NATIVE_PATH_CONTRACT + '"') ||
+      !entryJS.includes("editor.js?v=" + NATIVE_PATH_CONTRACT) ||
+      !editorJS.includes("native.linkFile(file, transaction)") ||
+      editorJS.includes("Locating original on mounted Windows drives") ||
+      editorJS.includes("/resolve-dropped")) {
+    throw new Error(
+      "Timeline Studio frontend is stale or mismatched with the backend. " +
+      "Restart ComfyUI after updating PR #51; reload the desktop app " +
+      "to discard older extension modules."
+    );
+  }
+  return { contract: NATIVE_PATH_CONTRACT, editor_url: editor.pathname };
+}
+
+module.exports = {
+  localURL, candidates, probe, escapeHTML, startupHTML,
+  NATIVE_PATH_CONTRACT, verifyTimelineRuntime,
+};
