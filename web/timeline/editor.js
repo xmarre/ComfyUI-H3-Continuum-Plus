@@ -510,7 +510,15 @@ export class TimelineEditor {
       );
     }
     this.message("Linking the selected original in place · no scan or upload…");
-    const asset = await native.linkFile(file);
+    const transaction = uid();
+    const cancel = () => native.cancelLink?.(transaction);
+    this.abort.signal.addEventListener("abort", cancel, { once: true });
+    let asset;
+    try {
+      asset = await native.linkFile(file, transaction);
+    } finally {
+      this.abort.signal.removeEventListener("abort", cancel);
+    }
     if (this.abort.signal.aborted) throw this.abort.signal.reason;
     if (asset.storage !== "linked" && asset.storage !== "managed") {
       throw new Error("Native media bridge did not return a registered asset");

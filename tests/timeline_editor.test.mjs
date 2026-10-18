@@ -398,3 +398,33 @@ test("cancelled native drop cannot start source registration", async () => {
     globalThis.h3NativeMedia = previous;
   }
 });
+
+test("closing editor cancels an in-flight native link transaction", async () => {
+  const original = globalThis.h3NativeMedia;
+  let cancelId = null;
+  let requested = null;
+  try {
+    globalThis.h3NativeMedia = {
+      linkFile(_file, id) {
+        requested = id;
+        return new Promise((_resolve, reject) => {
+          this.reject = reject;
+        });
+      },
+      cancelLink(id) {
+        cancelId = id;
+        this.reject(new Error("native link aborted"));
+      },
+    };
+    const abort = new AbortController();
+    const pending = TimelineEditor.prototype.resolveOriginal.call(
+      { abort, message: () => {} }, { name: "huge.mkv" },
+    );
+    abort.abort();
+    await assert.rejects(pending, /native link aborted/);
+    assert.equal(cancelId, requested);
+    assert.match(cancelId, /^[a-f0-9]{32}$/);
+  } finally {
+    globalThis.h3NativeMedia = original;
+  }
+});

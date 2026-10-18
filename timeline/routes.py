@@ -121,9 +121,37 @@ def register_routes():
         if not isinstance(source, str) or not 0 < len(source) <= 4096:
             raise ValueError("A server-local media path is required")
         store = project_store()
-        asset = await asyncio.to_thread(
-            store.assets.link, source, cancel=_request_cancel
+        stop = threading.Event()
+
+        def cancel_link():
+            if stop.is_set():
+                raise InterruptedError("Native media link cancelled")
+
+        task = asyncio.create_task(
+            asyncio.to_thread(store.assets.link, source, cancel=cancel_link)
         )
+
+        async def watch_disconnect():
+            while not task.done():
+                transport = request.transport
+                if transport is None or transport.is_closing():
+                    stop.set()
+                    return
+                await asyncio.sleep(0.25)
+
+        watcher = asyncio.create_task(watch_disconnect())
+        try:
+            asset = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            stop.set()
+            try:
+                await task
+            except InterruptedError:
+                pass
+            raise
+        finally:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
         if asset.get("video") and (
             asset["video"].get("nb_frames") == "1"
             or asset["name"].lower().endswith(
