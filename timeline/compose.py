@@ -80,7 +80,10 @@ def write_video_frames(frames, path, fps=24):
 
 
 
-def export_dimensions(p, store, start, stop, resolution="timeline", selected_clip_ids=()):
+def export_dimensions(
+    p, store, start, stop, resolution="timeline", selected_clip_ids=(),
+    *, cancel=check_cancel,
+):
     """Choose output pixels independently of the H3 sampling canvas.
 
     Source-size exports require one unambiguous native source geometry. A
@@ -102,7 +105,7 @@ def export_dimensions(p, store, start, stop, resolution="timeline", selected_cli
         )
     geometries = set()
     for _, clip in candidates:
-        path = store.assets.verify(clip["asset_id"])
+        path = store.assets.verify(clip["asset_id"], cancel=cancel)
         from .media import probe
         stream = probe(path).get("video")
         if not stream:
@@ -174,7 +177,8 @@ def export_project(
         )
     )
     width, height = export_dimensions(
-        p, store, start, stop, resolution, selected_clip_ids
+        p, store, start, stop, resolution, selected_clip_ids,
+        cancel=cancel,
     )
     from .export_stream import encode_export
 
