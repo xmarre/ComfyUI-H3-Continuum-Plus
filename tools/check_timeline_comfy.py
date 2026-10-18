@@ -150,6 +150,41 @@ def main():
                 raw=movie.read_bytes(),
                 headers={"Content-Type": "application/octet-stream"},
             )
+            # Verify the alternative no-copy route against a real ComfyUI
+            # server: link an allowed source already on the server, and ensure
+            # the asset registry contains only a path pointer, not movie bytes.
+            linked_movie = directory / "input" / "link_source.mkv"
+            subprocess.run(
+                [
+                    "ffmpeg", "-v", "error", "-i", str(movie),
+                    "-map", "0", "-c", "copy", "-metadata",
+                    "title=link-smoke", str(linked_movie),
+                ],
+                check=True,
+            )
+            linked = request(
+                "/h3_continuum/timeline/link", {"path": str(linked_movie)}
+            )
+            assert linked["storage"] == "linked"
+            assert not (
+                directory / "input" / "h3_timeline_studio" / "assets" / linked["id"]
+            ).exists()
+            assert (
+                directory / "input" / "h3_timeline_studio" / "assets"
+                / (linked["id"] + ".link.json")
+            ).is_file()
+            assert len(
+                request(
+                    "/h3_continuum/timeline/thumbnail/" + linked["id"] + "?pts=1"
+                )
+            ) > 100
+            try:
+                request("/h3_continuum/timeline/link", {"path": str(movie)})
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 400
+            else:
+                raise AssertionError("Link outside configured roots was accepted")
+
             project = json.loads(
                 info["H3ContinuumTimelineStudio"]["input"]["required"]["project_json"][
                     1
@@ -320,7 +355,7 @@ def main():
                 json.dumps(
                     {
                         "comfy_nodes": 4,
-                        "http": "import/save/reopen/compile/thumbnail/waveform/export/accept-reject-restore passed",
+                        "http": "upload/link/blocked-outside-root/save/reopen/compile/thumbnail/waveform/export/accept-reject-restore passed",
                         "graph": "real CPU queue execution passed",
                         "gpu_sampling": "not exercised",
                     },
