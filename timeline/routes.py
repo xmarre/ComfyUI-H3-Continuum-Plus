@@ -637,8 +637,11 @@ def register_routes():
         clip_ids = data.get("selected_clip_ids", [])
         verify_export_clip_selection(p, clip_ids, start, stop)
         resolution = data.get("resolution", "timeline")
-        width, height = export_dimensions(
-            p, project_store(), start, stop, resolution, clip_ids
+        # A multi-hour source may need first-use SHA verification. Keep this
+        # work off aiohttp's event loop and out of ComfyUI sampling cancellation.
+        width, height = await asyncio.to_thread(
+            export_dimensions, p, project_store(), start, stop,
+            resolution, clip_ids, cancel=lambda: None,
         )
         if codec == "h264" and (width % 2 or height % 2):
             raise ValueError("H.264 requires even dimensions; use FFV1 or Timeline canvas")
