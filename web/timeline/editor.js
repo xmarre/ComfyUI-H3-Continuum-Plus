@@ -10,6 +10,7 @@ import {
   snap,
   selectedClips,
   exportTarget,
+  routeClipToGuidance,
   split,
   trim,
   move,
@@ -87,6 +88,7 @@ export class TimelineEditor {
     this.clipboard = [];
     this.playhead = view.playhead || 0;
     this.previewMode = view.previewMode || "composed";
+    this.exportResolutionChoice = view.exportResolution || "source";
     this.zoom =
       view.zoom ||
       Math.min(
@@ -171,6 +173,7 @@ export class TimelineEditor {
       queuedPrompts: [...this.queuedIds],
       scroll: this.scroller?.scrollLeft || 0,
       previewMode: this.previewMode,
+      exportResolution: this.exportResolutionChoice,
     };
   }
   persistWidget() {
@@ -395,6 +398,7 @@ export class TimelineEditor {
         this.rangeA,
         this.rangeB,
         button("Inspect inputs", () => this.guard(() => this.inspectInputs())),
+        button("Guide H3 with selected clip", () => this.guard(() => this.guideSelectedClip())),
         button("Queue selection", () => this.guard(() => this.queue())),
         button("Reroll selection", () => this.guard(() => this.queue(true))),
         button("Cancel sampling", () =>
@@ -402,6 +406,8 @@ export class TimelineEditor {
         ),
       ),
     );
+    this.inputRoute = el("p", { class: "h3ts-input-route" });
+    this.root.append(this.inputRoute);
     this.scroller = el("div", { class: "h3ts-scroll" });
     this.timeline = el("div", { class: "h3ts-timeline" });
     this.scroller.append(this.timeline);
@@ -428,6 +434,17 @@ export class TimelineEditor {
       class: "h3ts-export-progress", text: "",
       "aria-live": "polite",
     });
+    this.exportResolution = el("select", {
+      "aria-label": "Export pixel dimensions",
+    },
+      el("option", { value: "source", text: "Original source resolution" }),
+      el("option", { value: "timeline", text: "H3 sampling canvas" }),
+    );
+    this.exportResolution.value = this.exportResolutionChoice;
+    this.exportResolution.onchange = () => {
+      this.exportResolutionChoice = this.exportResolution.value;
+      this.persistView();
+    };
     this.exportLink = el("a", {
       class: "h3ts-export-download",
       text: "", hidden: "",
@@ -440,6 +457,7 @@ export class TimelineEditor {
         this.exportStatus,
         this.exportLink,
         button("Review takes", () => this.guard(() => this.review())),
+        el("label", {}, "Export pixels", this.exportResolution),
         button("Export clip/range · FFV1", () =>
           this.guard(() => this.export("lossless")),
         ),
@@ -464,6 +482,9 @@ export class TimelineEditor {
   render() {
     this.renderAssets();
     this.renderInspector();
+    this.inputRoute.textContent = this.p.operation === "recreate"
+      ? "H3 input: Recreate guides from retained source clips automatically unless explicit video guidance overrides them. Queue selection sends the timeline project to Continuum Timeline Sampler; exporting only saves a file."
+      : "H3 input: Select retained footage and click Guide H3 with selected clip, then Queue selection. The sampler reads registered video guidance directly; exporting only saves a file.";
     this.drawTimeline();
     this.rangeA.value = this.p.selection[0];
     this.rangeB.value = this.p.selection[1];
@@ -741,16 +762,8 @@ export class TimelineEditor {
       }
       if (track.role === "retained")
         this.inspector.append(
-          button("Duplicate as video guidance", () =>
-            this.edit((p) => {
-              const lane = makeTrack("video_guide", "Video guidance");
-              lane.clips.push({
-                ...clone(c),
-                id: uid(),
-                audio_role: "neither",
-              });
-              p.tracks.push(lane);
-            }),
+          button("Guide H3 with this clip", () =>
+            this.guard(() => this.guideSelectedClip()),
           ),
         );
     } else {
@@ -1541,6 +1554,13 @@ export class TimelineEditor {
       e.stopPropagation();
     }
   }
+  guideSelectedClip() {
+    this.edit((p) => routeClipToGuidance(p, this.selected));
+    this.message(
+      "H3 guidance linked to the original asset at its authored source PTS. " +
+      "Render range set to this clip. Queue selection to generate; no export needed."
+    );
+  }
   async inspectInputs() {
     const plan = await request(this.api, "/compile", {
       method: "POST",
@@ -1819,11 +1839,15 @@ export class TimelineEditor {
       const result = await request(this.api, "/export", {
         method: "POST",
         body: JSON.stringify({
-          project: this.p, codec, render_range: [start, stop],
+          project: this.p, codec, resolution: this.exportResolutionChoice,
+          render_range: [start, stop],
           selected_clip_ids: target.clipIds,
         }),
       });
       this.exportId = result.id;
+      const pixels = result.width + "×" + result.height;
+      const sizeDescription = (result.resolution === "source"
+        ? "source-size" : "timeline-size") + " " + pixels;
       if (this.closed) {
         // The server may accept the job while the editor closes; cancel the
         // newly created export even if close() happened before its ID arrived.
@@ -1863,7 +1887,7 @@ export class TimelineEditor {
           }
           const percent = Math.min(100, Math.round(100 * done / frames));
           this.exportStatus.textContent =
-            "Export " + descriptor + " · " +
+            "Export " + sizeDescription + " · " + descriptor + " · " +
             (status.stage || "running") + " · " + percent +
             "% · " + ((status.elapsed_seconds || 0)).toFixed(1) + " s";
           this.exportTimer = setTimeout(() => this.guard(poll), 1000);
@@ -1876,9 +1900,10 @@ export class TimelineEditor {
           this.exportLink.download = status.filename;
           this.exportLink.textContent = "Download " + status.filename;
           this.exportLink.hidden = false;
-          this.exportStatus.textContent = "Exported " + descriptor +
+          this.exportStatus.textContent = "Exported " + sizeDescription + " · " + descriptor +
             " · " + ((status.elapsed_seconds || 0)).toFixed(1) + " s";
-          this.message("Export saved in ComfyUI output: " + status.filename);
+          this.message("Export saved in ComfyUI output: " + status.filename +
+            ". This file is not a model input; use Guide H3 with selected clip or Recreate.");
         } else {
           this.exportStatus.textContent =
             "Export " + (status.status || "failed") + ": " +
