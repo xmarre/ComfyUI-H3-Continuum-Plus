@@ -249,8 +249,8 @@ def test_windows_index_candidate_paths_are_confined_to_mounts(
         def communicate(self, timeout=None):
             self.done = True
             return (
-                b"C:\\Movies\\source.mkv\\nD:\\Movies\\source.mkv\\n"
-                b"\\\\server\\share\\source.mkv\\n",
+                b"C:\\Movies\\source.mkv\nD:\\Movies\\source.mkv\n"
+                b"\\\\server\\share\\source.mkv\n",
                 b"",
             )
         def poll(self):
