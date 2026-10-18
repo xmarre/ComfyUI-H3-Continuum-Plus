@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import os
+import re
 import subprocess
 import threading
 import time
