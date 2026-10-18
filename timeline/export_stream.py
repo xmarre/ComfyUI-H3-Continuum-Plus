@@ -100,13 +100,24 @@ def encode_export(
     cancel=check_cancel,
     on_progress=None,
     preview=False,
+    width=None,
+    height=None,
 ):
-    """One-pass direct container mux, bounded per-second media preparation."""
+    """One-pass direct mux at the explicitly resolved output dimensions."""
     import av
     from .compose import render_frames
 
     if codec not in {"lossless", "h264"}:
         raise ValueError("Unknown export codec")
+    width = p["width"] if width is None else int(width)
+    height = p["height"] if height is None else int(height)
+    if width <= 0 or height <= 0:
+        raise ValueError("Invalid export dimensions")
+    if codec == "h264" and (width % 2 or height % 2):
+        raise ValueError(
+            "H.264 yuv420p requires even source dimensions; select FFV1 "
+            "or an even-sized Timeline canvas"
+        )
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(
@@ -141,8 +152,8 @@ def encode_export(
                 vstream = container.add_stream(
                     "ffv1" if codec == "lossless" else "libx264", rate=24
                 )
-                vstream.width = p["width"]
-                vstream.height = p["height"]
+                vstream.width = width
+                vstream.height = height
                 vstream.pix_fmt = "bgr0" if codec == "lossless" else "yuv420p"
                 if codec == "h264":
                     vstream.options = {
@@ -160,12 +171,14 @@ def encode_export(
                     astream.bit_rate = 192_000
                 audio_format = "flt" if codec == "lossless" else "fltp"
                 sample_cursor = 0
-                for a in range(start, stop, 24):
+                # Bound RGB working memory at native 1080p/4K dimensions.
+                block = max(1, min(24, (96 * 1024**2) // (width * height * 3)))
+                for a in range(start, stop, block):
                     cancel()
-                    b = min(a + 24, stop)
+                    b = min(a + block, stop)
                     frames = render_frames(
                         p, store.assets, a, b,
-                        p["width"], p["height"], cancel=cancel,
+                        width, height, cancel=cancel,
                     )
                     for n, pixels in enumerate(frames):
                         cancel()
