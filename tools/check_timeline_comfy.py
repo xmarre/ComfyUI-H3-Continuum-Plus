@@ -249,6 +249,31 @@ def main():
                     break
                 time.sleep(0.1)
             assert status["status"] == "complete", status
+            assert status["stage"] == "complete"
+            assert status["frames_done"] == project["duration_frames"]
+            assert status["total_frames"] == project["duration_frames"]
+            lossless_bytes = request(
+                "/h3_continuum/timeline/export/" + job["id"] + "/file"
+            )
+            assert lossless_bytes.startswith(b"\\x1a\\x45\\xdf\\xa3")
+
+            delivered = request(
+                "/h3_continuum/timeline/export",
+                {"project": project, "codec": "h264"},
+            )
+            for _ in range(150):
+                h264 = request(
+                    "/h3_continuum/timeline/export/" + delivered["id"]
+                )
+                if h264["status"] != "running":
+                    break
+                time.sleep(0.1)
+            assert h264["status"] == "complete", h264
+            assert h264["filename"].endswith(".mp4")
+            mp4_bytes = request(
+                "/h3_continuum/timeline/export/" + delivered["id"] + "/file"
+            )
+            assert b"ftyp" in mp4_bytes[:32]
             preview = request(
                 "/h3_continuum/timeline/preview",
                 {"project": project, "start": 12, "mode": "composed"},
