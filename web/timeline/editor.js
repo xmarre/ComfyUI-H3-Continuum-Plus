@@ -1309,7 +1309,12 @@ export class TimelineEditor {
       this.compositionEnd = result.end;
       await this.video.play();
       if (this.playWanted && epoch === this.playEpoch) {
-        this.message("Playing · next segment is prepared in advance");
+        this.message(
+          "Playing · segment ready in " +
+          ((result.prepare_ms || 0) / 1000).toFixed(2) +
+          "s" + (result.cache_hit ? " (cached)" : "") +
+          " · next segment prefetching"
+        );
         this.prefetchSegment(this.compositionEnd);
       }
     } catch (error) {
