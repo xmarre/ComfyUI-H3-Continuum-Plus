@@ -440,10 +440,10 @@ export class TimelineEditor {
         this.exportStatus,
         this.exportLink,
         button("Review takes", () => this.guard(() => this.review())),
-        button("Export highlighted clip / in-out · FFV1", () =>
+        button("Export clip/range · FFV1", () =>
           this.guard(() => this.export("lossless")),
         ),
-        button("Export highlighted clip / in-out · H.264", () =>
+        button("Export clip/range · H.264", () =>
           this.guard(() => this.export("h264")),
         ),
         button("Cancel export", () =>
