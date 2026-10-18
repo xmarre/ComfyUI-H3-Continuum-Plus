@@ -835,3 +835,53 @@ test("Close detaches dialog before throwing cleanup hooks and requests export ca
   assert.ok(events.includes("/h3_continuum/timeline/export/"+id+"/cancel"));
   assert.equal(editor.exportPending,false);
 });
+
+test("closing during async save never starts a surprise background export",async()=>{
+  let finishSave, requests=0;
+  const editor={
+    closed:false,exportPending:false,selected:[],
+    p:{duration_frames:336,selection:[0,336],tracks:[]},
+    exportLink:{hidden:true,textContent:""},
+    exportStatus:{textContent:""},
+    save(){return new Promise(resolve=>{finishSave=resolve;});},
+    api:{fetchApi(){requests++;throw Error("must never start export");}},
+    message(){},
+  };
+  const exporting=TimelineEditor.prototype.export.call(editor,"lossless");
+  editor.closed=true;
+  finishSave();
+  await exporting;
+  assert.equal(requests,0);
+});
+
+test("close during accepted-but-unanswered export POST cancels returned job",async()=>{
+  let finishPost, cancels=0;
+  const id="9".repeat(32);
+  const editor={
+    closed:false,exportPending:false,selected:[],
+    p:{duration_frames:336,selection:[0,336],tracks:[]},
+    exportLink:{hidden:true,textContent:""},
+    exportStatus:{textContent:""},
+    async save(){},
+    message(){},
+    api:{fetchApi:async(path,options)=>{
+      if(path.endsWith("/export")&&options.method==="POST")
+        return await new Promise(resolve=>{finishPost=()=>resolve({
+          ok:true,json:async()=>({
+            id,total_frames:336,render_range:[0,336],
+          }),
+        });});
+      if(path.endsWith("/export/"+id+"/cancel")){
+        cancels++;
+        return {ok:true,json:async()=>({cancelled:true})};
+      }
+      throw Error("unexpected path "+path);
+    }},
+  };
+  const exporting=TimelineEditor.prototype.export.call(editor,"h264");
+  await new Promise(resolve=>setImmediate(resolve));
+  editor.closed=true;
+  finishPost();
+  await exporting;
+  assert.equal(cancels,1);
+});
