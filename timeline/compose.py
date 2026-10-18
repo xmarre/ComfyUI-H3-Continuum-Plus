@@ -5,8 +5,6 @@ from __future__ import annotations
 import math
 from fractions import Fraction
 from pathlib import Path
-import tempfile
-import uuid
 
 import numpy as np
 
@@ -83,7 +81,7 @@ def write_video_frames(frames, path, fps=24):
 
 def export_project(
     p, store, output, *, codec="lossless", cancel=check_cancel,
-    render_range=None, preview=False
+    render_range=None, preview=False, on_progress=None
 ):
     """Stream a long composition in one-second CPU windows.
 
@@ -137,93 +135,11 @@ def export_project(
             ),
         )
     )
-    try:
-        with tempfile.TemporaryDirectory(prefix="h3-export-") as directory:
-            silent = Path(directory) / "video.mkv"
-            pcmfile = Path(directory) / "audio.f32"
-            with av.open(str(silent), "w", format="matroska") as container:
-                stream = container.add_stream("ffv1", rate=24)
-                if preview:
-                    stream.thread_count = 1
-                stream.width = p["width"]
-                stream.height = p["height"]
-                stream.pix_fmt = "bgr0"
-                for a in range(start, stop, 24):
-                    cancel()
-                    b = min(a + 24, stop)
-                    frames = render_frames(
-                        p,
-                        store.assets,
-                        a,
-                        b,
-                        p["width"],
-                        p["height"],
-                        cancel=cancel,
-                    )
-                    for n, pixels in enumerate(frames, a):
-                        frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
-                        frame.pts = n - start
-                        frame.time_base = Fraction(1, 24)
-                        for packet in stream.encode(frame):
-                            container.mux(packet)
-                for packet in stream.encode():
-                    container.mux(packet)
-            # Mix boundaries are absolute sample indices; long blocks keep the
-            # number of cached-window reads small for long exports.
-            with pcmfile.open("wb") as wav:
-                for a in range(start, stop, AUDIO_BLOCK_FRAMES):
-                    cancel()
-                    b = min(a + AUDIO_BLOCK_FRAMES, stop)
-                    pcm = mix_audio(
-                        p, store.assets, a, b, rate, "final",
-                        cancel=cancel, preview=preview,
-                    )
-                    wav.write(pcm.T.astype("<f4").tobytes())
-            options = (
-                ["-c:v", "copy", "-c:a", "pcm_f32le"]
-                if codec == "lossless"
-                else [
-                    "-c:v",
-                    "libx264",
-                    *(["-threads:v", "1", "-preset", "ultrafast"] if preview else []),
-                    "-crf",
-                    "16",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                ]
-            )
-            run_process(
-                [
-                    "ffmpeg",
-                    "-v",
-                    "error",
-                    "-nostdin",
-                    "-threads",
-                    "1",
-                    "-i",
-                    str(silent),
-                    "-f",
-                    "f32le",
-                    "-ar",
-                    str(rate),
-                    "-ac",
-                    "2",
-                    "-i",
-                    str(pcmfile),
-                    "-map",
-                    "0:v:0",
-                    "-map",
-                    "1:a:0",
-                    *options,
-                    str(temp),
-                ],
-                cancel=cancel,
-            )
-        temp.replace(output)
-    finally:
-        temp.unlink(missing_ok=True)
-    return output
+    from .export_stream import encode_export
+
+    return encode_export(
+        p, store, output, start, stop, rate,
+        codec=codec, cancel=cancel, preview=preview,
+        on_progress=on_progress,
+    )
+
