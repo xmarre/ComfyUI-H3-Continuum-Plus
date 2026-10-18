@@ -76,7 +76,12 @@ function probe(url, { timeoutMs = 1600, httpImpl, httpsImpl } = {}) {
       });
       res.on("end", () => {
         try {
-          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          let parsed;
+          try {
+            parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          } catch {
+            throw new Error("That port does not identify a ComfyUI server (invalid JSON)");
+          }
           if (!parsed || typeof parsed.system !== "object" ||
               !Array.isArray(parsed.devices)) {
             throw new Error("That port does not identify a ComfyUI server");
