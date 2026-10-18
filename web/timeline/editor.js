@@ -1798,6 +1798,9 @@ export class TimelineEditor {
         this.edit((p) => { p.selection = [start, stop]; });
       }
       await this.save();
+      // Close during an asynchronous save must not start a background export
+      // after the user has dismissed the editor.
+      if (this.closed) return;
       // An explicit clip source is still mapped through source_in and speed,
       // never confused with project time zero.
       if (!Number.isSafeInteger(start) || !Number.isSafeInteger(stop) ||
@@ -1821,6 +1824,14 @@ export class TimelineEditor {
         }),
       });
       this.exportId = result.id;
+      if (this.closed) {
+        // The server may accept the job while the editor closes; cancel the
+        // newly created export even if close() happened before its ID arrived.
+        await request(this.api, "/export/" + result.id + "/cancel", {
+          method: "POST",
+        }).catch(() => {});
+        return;
+      }
       if (result.total_frames !== frames ||
           result.render_range?.[0] !== start ||
           result.render_range?.[1] !== stop) {
