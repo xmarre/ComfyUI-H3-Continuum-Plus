@@ -88,3 +88,98 @@ test("health probe returns actionable errors for unavailable ports", async () =>
     assert.ok(port > 0);
   });
 });
+
+const { verifyTimelineRuntime, NATIVE_PATH_CONTRACT } = require("./connection.cjs");
+
+function runtimeFetch({ backend = true, editor = true, entry = true, unsafe = false } = {}) {
+  const calls = [];
+  const fetchImpl = async (raw, options) => {
+    const url = new URL(raw);
+    calls.push({url:url.pathname,options});
+    let payload;
+    if (url.pathname === "/h3_continuum/timeline/runtime") {
+      if (!backend) return new Response("Not Found", {status:404});
+      payload = {
+        contract: NATIVE_PATH_CONTRACT,
+        transport: "native-selected-path",
+        drive_scan: false,
+        browser_movie_upload: false,
+        editor_url: unsafe ? "//example.com/hack/timeline/editor.js"
+          : "/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js",
+        entry_url: "/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js",
+      };
+      return new Response(JSON.stringify(payload), {
+        status:200,headers:{"content-type":"application/json"},
+      });
+    }
+    if (url.pathname.endsWith("/timeline/editor.js")) {
+      payload = editor
+        ? 'export const NATIVE_PATH_CONTRACT = "' + NATIVE_PATH_CONTRACT +
+          '"; native.linkFile(file, transaction)'
+        : 'this.message("Locating original on mounted Windows drives…");';
+      return new Response(payload, {status:200});
+    }
+    if (url.pathname.endsWith("/timeline_studio.js")) {
+      payload = entry
+        ? 'const H3_TIMELINE_ENTRY_CONTRACT = "' + NATIVE_PATH_CONTRACT +
+          '"; import("./timeline/editor.js?v=' + NATIVE_PATH_CONTRACT + '")'
+        : 'import "./timeline/editor.js";';
+      return new Response(payload, {status:200});
+    }
+    return new Response("Not Found", {status:404});
+  };
+  return {fetchImpl,calls};
+}
+
+test("runtime contract checks the actual served no-scan Python and JS code", async () => {
+  const mock = runtimeFetch();
+  const result = await verifyTimelineRuntime(new URL("http://localhost:8188/"),
+    {fetchImpl:mock.fetchImpl});
+  assert.equal(result.contract, NATIVE_PATH_CONTRACT);
+  assert.equal(mock.calls.length, 3);
+  assert.deepEqual(mock.calls.map(x=>x.url), [
+    "/h3_continuum/timeline/runtime",
+    "/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js",
+    "/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js",
+  ]);
+  for (const call of mock.calls) {
+    assert.equal(call.options.cache, "no-store");
+    assert.equal(call.options.method, "GET");
+  }
+});
+
+test("old ComfyUI Patcher overlay is explicitly rejected before editor load", async () => {
+  await assert.rejects(verifyTimelineRuntime("http://127.0.0.1:8188/",
+    {fetchImpl:runtimeFetch({backend:false}).fetchImpl}),
+    /Apply the current PR #51.*restart the ComfyUI Python process/);
+});
+
+test("stale browser editor or entry modules fail closed without scanning", async () => {
+  for (const condition of [{editor:false},{entry:false}]) {
+    const mock = runtimeFetch(condition);
+    await assert.rejects(verifyTimelineRuntime("http://127.0.0.1:8188/",
+      {fetchImpl:mock.fetchImpl}), /frontend is stale or mismatched/);
+    assert.equal(mock.calls.every(x=>x.options.method==="GET"),true);
+  }
+});
+
+test("runtime contract never fetches arbitrary or cross-origin editor URLs", async () => {
+  const mock = runtimeFetch({unsafe:true});
+  await assert.rejects(verifyTimelineRuntime("http://127.0.0.1:8188/",
+    {fetchImpl:mock.fetchImpl}), /unsafe frontend module path/);
+  assert.equal(mock.calls.length,1);
+});
+
+test("backend forbids any claimed scan or movie-upload fallback", async () => {
+  const mock = runtimeFetch();
+  const wrapped = async (raw,options) => {
+    const response = await mock.fetchImpl(raw,options);
+    if (new URL(raw).pathname !== "/h3_continuum/timeline/runtime") return response;
+    const data=await response.json();
+    data.drive_scan=true;
+    return new Response(JSON.stringify(data),{status:200});
+  };
+  await assert.rejects(verifyTimelineRuntime("http://127.0.0.1:8188/",
+    {fetchImpl:wrapped}), /backend is stale or incompatible/);
+  assert.equal(mock.calls.length,1);
+});
