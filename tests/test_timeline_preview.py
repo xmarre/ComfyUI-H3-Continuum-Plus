@@ -115,3 +115,32 @@ def test_preview_audio_routes_preserve_exact_production_mode(movie, tmp_path):
     render_preview_segment(p, store, output, 0, 48)
     assert output.is_file()
     assert abs(float(probe(output)["duration"]) - 2) < 0.12
+
+
+def test_hour_late_video_preview_uses_pre_input_seek_not_source_prefix(
+    movie, tmp_path, monkeypatch
+):
+    import ComfyUI_H3_Continuum_Join.timeline.preview as preview
+
+    p, store = project_with_original(movie, tmp_path)
+    clip = p["tracks"][0]["clips"][0]
+    clip["source_in"] = "3600"
+    # No long movie is needed: assert the exact native FFmpeg invocation
+    # without letting the fake one-hour source seek execute in CI.
+    used = []
+
+    def capture(args, *, cancel):
+        used.append(args)
+
+    monkeypatch.setattr(preview, "run_process", capture)
+    preview._quick_source_segment(
+        p, store, tmp_path / "not-encoded.mp4",
+        0, 48, (clip, False), cancel=lambda: None,
+    )
+    assert len(used) == 1
+    args = used[0]
+    assert args[args.index("-ss") + 1] == "3600.0"
+    assert args.index("-seek_timestamp") < args.index("-i")
+    assert args.index("-ss") < args.index("-i")
+    assert args[args.index("-t") + 1] == "2"
+    assert args[args.index("-threads") + 1] == "1"
