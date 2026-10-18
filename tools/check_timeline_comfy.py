@@ -236,6 +236,8 @@ def main():
                 )
             # Rendered take metadata fixtures exercise the real review API.
             # They do not stand in for trained-model sampling acceptance.
+            current = request("/h3_continuum/timeline/project/" + project["project_id"])
+            compiled = request("/h3_continuum/timeline/compile", current)
             take_id = "f" * 32
             project_dir = (
                 directory

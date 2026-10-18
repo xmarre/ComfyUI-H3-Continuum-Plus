@@ -43,7 +43,7 @@ export function split(p, ids, frame) {
   }
 }
 export function trim(p, ids, edge, frame, ripple = false) {
-  for (const [track, c] of selectedClips(p, ids)) {
+  for (const [, c] of selectedClips(p, ids)) {
     const old = clone(c);
     if (edge === "start") {
       c.start = Math.min(c.end - 1, Math.max(0, frame));
@@ -55,18 +55,11 @@ export function trim(p, ids, edge, frame, ripple = false) {
         c.start = old.start;
         c.end = old.end + delta;
       }
-      // Ripple keeps every unlocked lane in sync with the edited one.
-      for (const lane of p.tracks)
-        if (!lane.locked)
-          for (const other of lane.clips)
-            if (other.id !== c.id && other.start >= old.end) {
-              other.start += delta;
-              other.end += delta;
-            }
-      p.duration_frames = Math.max(
-        p.duration_frames,
-        ...p.tracks.flatMap((t) => t.clips.map((x) => x.end)),
-      );
+      if (delta < 0) {
+        const start = edge === "start" ? old.start : c.end;
+        rippleCut(p, start, start - delta, c.id);
+      } else if (delta > 0)
+        rippleInsert(p, edge === "start" ? old.start : old.end, delta, c.id);
     }
   }
 }
@@ -103,49 +96,77 @@ export function remove(p, ids, ripple = false) {
     else intervals.push([c.start, c.end]);
   }
   // Close each removed span on every unlocked lane, latest span first.
-  for (const [start, end] of intervals.reverse()) {
-    const cut = end - start;
-    const at = (f) => (f <= start ? f : Math.max(start, f - cut));
-    for (const track of p.tracks)
-      if (!track.locked)
-        track.clips = track.clips.flatMap((c) => {
-          if (c.end <= start) return [c];
-          if (c.start >= end)
-            return [{ ...c, start: c.start - cut, end: c.end - cut }];
-          const result = [];
-          if (c.start < start) result.push({ ...c, end: start });
-          if (c.end > end)
-            result.push({
-              ...c,
-              id: result.length ? uid() : c.id,
-              start,
-              end: c.end - cut,
-              source_in: String(sourceAt(c, end)),
-            });
-          return result;
-        });
-    p.duration_frames = Math.max(
-      1,
-      p.duration_frames - cut,
-      ...p.tracks.flatMap((t) => t.clips.map((c) => c.end)),
-    );
-    if (p.selection) {
-      const a = Math.min(at(p.selection[0]), p.duration_frames - 1);
-      p.selection = [
-        a,
-        Math.max(a + 1, Math.min(at(p.selection[1]), p.duration_frames)),
-      ];
-    }
-    if (p.markers)
-      p.markers = p.markers.flatMap((m) => {
-        const stop = m.end ?? m.frame + 1;
-        if (m.frame >= start && stop <= end) return [];
-        const frame = at(m.frame),
-          after = at(stop);
-        return after > frame
-          ? [{ ...m, frame, ...(m.end == null ? {} : { end: after }) }]
-          : [];
+  for (const [start, end] of intervals.reverse()) rippleCut(p, start, end);
+}
+function rippleCut(p, start, end, skipId) {
+  const cut = end - start;
+  const at = (f) => (f <= start ? f : Math.max(start, f - cut));
+  for (const track of p.tracks)
+    if (!track.locked)
+      track.clips = track.clips.flatMap((c) => {
+        if (c.id === skipId) return [c];
+        if (c.end <= start) return [c];
+        if (c.start >= end)
+          return [{ ...c, start: c.start - cut, end: c.end - cut }];
+        const result = [];
+        if (c.start < start) result.push({ ...c, end: start });
+        if (c.end > end)
+          result.push({
+            ...c,
+            id: result.length ? uid() : c.id,
+            start,
+            end: c.end - cut,
+            source_in: String(sourceAt(c, end)),
+          });
+        return result;
       });
+  p.duration_frames = Math.max(
+    1,
+    p.duration_frames - cut,
+    ...p.tracks.flatMap((t) => t.clips.map((c) => c.end)),
+  );
+  if (p.selection) {
+    const a = Math.min(at(p.selection[0]), p.duration_frames - 1);
+    p.selection = [
+      a,
+      Math.max(a + 1, Math.min(at(p.selection[1]), p.duration_frames)),
+    ];
+  }
+  if (p.markers)
+    p.markers = p.markers.flatMap((m) => {
+      const stop = m.end ?? m.frame + 1;
+      if (m.frame >= start && stop <= end) return [];
+      const frame = at(m.frame),
+        after = at(stop);
+      return after > frame
+        ? [{ ...m, frame, ...(m.end == null ? {} : { end: after }) }]
+        : [];
+    });
+}
+function rippleInsert(p, frame, count, skipId) {
+  for (const track of p.tracks)
+    if (!track.locked)
+      track.clips = track.clips.flatMap((c) => {
+        if (c.id === skipId || c.end <= frame) return [c];
+        if (c.start >= frame)
+          return [{ ...c, start: c.start + count, end: c.end + count }];
+        return [
+          { ...c, end: frame },
+          {
+            ...c,
+            id: uid(),
+            start: frame + count,
+            end: c.end + count,
+            source_in: String(sourceAt(c, frame)),
+          },
+        ];
+      });
+  p.duration_frames += count;
+  if (p.selection)
+    p.selection = p.selection.map((f) => (f >= frame ? f + count : f));
+  for (const marker of p.markers || []) {
+    if (marker.frame >= frame) marker.frame += count;
+    if (marker.end >= frame) marker.end += count;
   }
 }
 export function paste(p, clipboard, frame) {

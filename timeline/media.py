@@ -79,7 +79,7 @@ def _file_stamp(path):
 
 
 def probe(path):
-    """ffprobe stream summary, memoized by file identity (path, size, mtime)."""
+    """ffprobe stream summary, memoized by stat-qualified file identity."""
     key = _file_stamp(path)
     with _probe_lock:
         cached = _probe_cache.get(key)
@@ -185,6 +185,7 @@ class AssetStore:
         except FileExistsError:
             self.verify(asset_id)
         else:
+            temporary.unlink()  # Stabilize link-count/ctime before memoizing.
             self._remember(final, self._stamp(final))
         return {
             "id": asset_id,
@@ -293,11 +294,12 @@ def video_frames(
 def _decode_audio_stream(path, info, rate, channels, output, *, limit, cancel, first=0):
     """Decode the stream from its first sample onto the absolute output grid.
 
-    Output sample ``j`` is stream-origin time ``j / rate``. Packet PTS in
+    Sample indices are relative to the stream origin, including ``first``.
+    Packet PTS in
     Matroska can be quantized to milliseconds; seeking and time trimming
     independently would introduce one-sample shifts between windows, so the
     stream is always decoded sequentially from its start and selected by
-    sample index. ``limit`` stops decoding after that many output samples.
+    sample index. ``first`` and ``limit`` bound the samples written to disk.
     """
     channel_filter = (
         "pan=stereo|c0=c0|c1=c0,"
@@ -339,7 +341,7 @@ def _decode_audio_stream(path, info, rate, channels, output, *, limit, cancel, f
 class PcmCache:
     """Disk cache of whole decoded audio streams, one file per (media, rate).
 
-    The first window of a source pays one sequential decode; later windows are
+    For streams fitting the budget, the first window pays one sequential decode; later windows are
     memory-mapped slices, so long exports and waveform scrolling stay linear in
     the requested duration. Least recently used files beyond ``limit_bytes``
     are removed. ``H3_TIMELINE_PCM_CACHE_GB`` overrides the default 16 GiB.

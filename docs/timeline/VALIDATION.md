@@ -2,7 +2,7 @@
 
 ## Executed evidence
 
-The standalone Python suite passes **539 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **9 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
+The standalone Python suite passes **552 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **12 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
 
 The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10, 3.11, 3.12 and 3.13, including publisher-toolchain verification. Final commit checks are authoritative on the implementation PR.
 
@@ -11,13 +11,15 @@ The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10
 | Temporal compiler | Exact `[0,7)` / `[7,14)` source windows; absolute 44.1/48 kHz sample boundaries; long prompt lists; exact outer-header isolation; malformed-text fallback | Deterministic logical scheduling and role separation |
 | Actual native sequence loop with CPU sampler fixtures | Invocation-local reference changes under both compiler modes; changed chunk 2 preserves chunk 1; equal encoder inputs reuse conditioning while changed references do not | Runtime routing, causal prefix and cache integration; not H3 output quality |
 | Real media | FFmpeg/PyAV 25 fps, VFR and nonzero-PTS sources; mono/stereo normalization; exact guide-frame padding and original source selections | Source decoding and normalized time/sample behavior |
-| Audio windows | Cached whole-stream PCM slices equal the sequential decode sample for sample; one decode serves every window; a measured 1 s window late in a 30-minute AAC source drops from about 5 s per call to a cached slice | Linear-cost previews, waveforms and export after a source's first decode |
+| Audio windows | Cached PCM slices equal sequential decoding sample for sample; one cache decode serves repeated windows; oversized streams retain only selected samples; a forced concurrent eviction cannot remove an unopened mapping; cache waits cancel | Bounded selected-window memory and safe cache lifetime; oversized streams use repeated prefix decoding |
 | Prompt transport | Timed regions compile through the native physical compiler onto each invocation's clock, including continuation context; no neighboring chunk text | Correct physical-local prompt timing; not H3 prompt adherence |
 | Long source | A real two-hour video, with a selected seven-second window, decodes fewer than 64 source frames including seek context | No complete-film decode on the selected video path; does not quantify every codec's memory use |
-| Composition | Lossless normalized RGB and float PCM comparisons; replacement interval with unchanged original frames and soundtrack outside it; cancellation cleanup | Working retained/generated composition and normalized export |
+| Composition | Lossless normalized RGB and float PCM comparisons; replacement interval with unchanged original frames and soundtrack outside it; generated-audio fallback against partial/muted final audio; cancellation cleanup | Working retained/generated composition and normalized export |
 | Persistence | Atomic project saves, revision conflicts, registered-asset verification, missing/stale path rejection and relinking identities | Disk/project identity behavior |
-| Real ComfyUI server | Import, save/reopen, compile, thumbnails, waveform, bounded composition preview and export endpoints; four registered nodes; actual queued Studio→Export execution | HTTP/node integration without trained weights |
-| Real ComfyUI frontend | Open, split, undo/redo, save/reload, typing isolation, view state kept out of the prompt input, A/B transport, composed AV preview, independent cloning and repeated paste, multi-job reroll queued in order with a fresh nonce, workflow disposal, graph serialization and delivered sampler-workflow serialization | Browser integration on ComfyUI 0.41.0 / frontend 1.55.17; the extended check (view state, paste identity, queue order) on ComfyUI 0.30.0 / frontend 1.55.17 |
+| Real ComfyUI server | Import, save/reopen, compile, thumbnails, waveform, bounded composition preview and export endpoints; four registered nodes; actual queued Studio→Export execution; accept/reject/restore through rendered take metadata fixtures | HTTP/node integration without trained weights |
+| Real ComfyUI frontend | Open, split, undo/redo, save/reload, typing isolation, view state kept out of the prompt input, A/B transport, composed AV preview, independent cloning and repeated paste, multi-job reroll queued in order with a fresh nonce, workflow disposal, graph serialization, delivered sampler-workflow serialization, 70-job cancellation ownership after reopening and a pending-to-running cancellation race | Browser integration on ComfyUI 0.41.0 / frontend 1.55.18; earlier coverage on frontend 1.55.17 |
+
+Ripple editing tests cover spanning soundtracks, source coordinates, locked tracks, timeline duration, markers and selection. Native storage tests exclude rejected exact, fallback and preferred revisions; take staleness follows rejected ancestors and the actual multi-job audio encode scope.
 
 The browser run reported zero page exceptions. The offline frontend emitted unrelated missing-static-resource and blocked update-check messages. No sampling-quality result is inferred from those browser tests.
 

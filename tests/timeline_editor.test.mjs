@@ -137,3 +137,46 @@ test("ripple delete cuts a spanning soundtrack on the same source boundaries", (
   assert.deepEqual(p.selection, [168, 336]);
   assert.deepEqual(p.markers, [{ frame: 232, end: 282 }]);
 });
+
+test("ripple trim cuts spanning audio and preserves later source mapping", () => {
+  for (const [edge, frame, cutStart, rightSource] of [
+    ["start", 192, 168, "8"],
+    ["end", 312, 312, "14"],
+  ]) {
+    const p = project();
+    p.tracks.push({
+      id: "audio",
+      clips: [{ id: "sound", start: 0, end: 504, source_in: "0", speed: "1" }],
+    });
+    trim(p, ["c"], edge, frame, true);
+    assert.deepEqual(
+      p.tracks[1].clips.map((c) => [c.start, c.end, c.source_in]),
+      [
+        [0, cutStart, "0"],
+        [cutStart, 480, rightSource],
+      ],
+    );
+    assert.deepEqual(
+      [p.tracks[0].clips[0].start, p.tracks[0].clips[0].end],
+      [168, 312],
+    );
+    assert.equal(p.duration_frames, 480);
+  }
+});
+
+test("ripple extension inserts time in spanning audio instead of shifting its earlier part", () => {
+  const p = project();
+  p.tracks.push({
+    id: "audio",
+    clips: [{ id: "sound", start: 0, end: 504, source_in: "0", speed: "1" }],
+  });
+  trim(p, ["c"], "end", 360, true);
+  assert.deepEqual(
+    p.tracks[1].clips.map((c) => [c.start, c.end, c.source_in]),
+    [
+      [0, 336, "0"],
+      [360, 528, "14"],
+    ],
+  );
+  assert.equal(p.duration_frames, 528);
+});

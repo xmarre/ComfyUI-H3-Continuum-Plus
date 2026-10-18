@@ -1453,7 +1453,7 @@ export class TimelineEditor {
   async cancelSampling() {
     const response = await this.api.fetchApi("/queue");
     if (!response.ok) throw new Error("Cannot read the sampling queue");
-    const queue = await response.json();
+    let queue = await response.json();
     const live = new Set(
       [...(queue.queue_pending || []), ...(queue.queue_running || [])].map(
         (row) => row[1],
@@ -1470,12 +1470,24 @@ export class TimelineEditor {
       });
       if (!removed.ok)
         throw new Error("Could not cancel pending timeline jobs");
-      for (const id of pending) this.queuedIds.delete(id);
+      // A pending job can start while DELETE is in flight. Re-read before
+      // deciding whether its execution needs an interrupt.
+      const refreshed = await this.api.fetchApi("/queue");
+      if (!refreshed.ok) throw new Error("Cannot verify sampling cancellation");
+      queue = await refreshed.json();
     }
     const active = (queue.queue_running || []).some((row) =>
       this.queuedIds.has(row[1]),
     );
     if (active) await this.api.interrupt();
+    const remaining = new Set(
+      [...(queue.queue_pending || []), ...(queue.queue_running || [])].map(
+        (row) => row[1],
+      ),
+    );
+    this.queuedIds = new Set(
+      [...this.queuedIds].filter((id) => remaining.has(id)),
+    );
     this.persistView();
     this.message(
       active

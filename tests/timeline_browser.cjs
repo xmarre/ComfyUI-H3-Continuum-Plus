@@ -237,7 +237,10 @@ const { chromium } = require("playwright");
     ]);
     // A long queued cut may exceed 64 jobs; reopening must retain ownership
     // of its earliest pending job so Cancel cannot orphan it.
-    await page.locator(".h3ts").getByRole("button", { name: "Close", exact: true }).click();
+    await page
+      .locator(".h3ts")
+      .getByRole("button", { name: "Close", exact: true })
+      .click();
     await page.evaluate(() => {
       const app = window.comfyAPI.app.app,
         api = window.comfyAPI.api.api;
@@ -247,6 +250,10 @@ const { chromium } = require("playwright");
       const ids = Array.from({ length: 70 }, (_, i) => "owned-" + i);
       studio.properties.h3_timeline_view.queuedPrompts = ids;
       const original = api.fetchApi.bind(api);
+      window.__h3Interrupted = 0;
+      api.interrupt = async () => {
+        window.__h3Interrupted++;
+      };
       api.fetchApi = async (path, options) => {
         if (path !== "/queue") return original(path, options);
         if (options?.method === "POST") {
@@ -255,18 +262,22 @@ const { chromium } = require("playwright");
         }
         return new Response(
           JSON.stringify({
-            queue_pending: ids.map((id, i) => [i, id]),
-            queue_running: [],
+            queue_pending: window.__h3Cancelled
+              ? []
+              : ids.map((id, i) => [i, id]),
+            queue_running: window.__h3Cancelled ? [[0, ids[0]]] : [],
           }),
         );
       };
       studio.widgets.find((w) => w.name === "Open Timeline Studio").callback();
     });
     await page
-      .locator(".h3ts").getByRole("button", { name: "Cancel sampling", exact: true })
+      .locator(".h3ts")
+      .getByRole("button", { name: "Cancel sampling", exact: true })
       .click();
     await page.waitForFunction(() => window.__h3Cancelled?.length === 70);
     assert.equal(await page.evaluate(() => window.__h3Cancelled[0]), "owned-0");
+    await page.waitForFunction(() => window.__h3Interrupted === 1);
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);
     console.log(

@@ -371,6 +371,9 @@ def test_duplicate_import_keeps_registered_file_identity(movie, tmp_path):
     store = AssetStore(tmp_path / "assets")
     with movie.open("rb") as source:
         first = store.register(source, "a.mkv")
+    store.verify(
+        first["id"], cancel=lambda: pytest.fail("Freshly registered media was rehashed")
+    )
     before = store.path(first["id"]).stat()
     with movie.open("rb") as source:
         second = store.register(source, "b.mkv")

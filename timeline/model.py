@@ -388,7 +388,8 @@ def compile_window(p, index, guide_scope=None):
         return {
             k: v
             for k, v in i.items()
-            if k not in {"audio_role", "audio_fallback", "role", "alias", "text", "override"}
+            if k
+            not in {"audio_role", "audio_fallback", "role", "alias", "text", "override"}
         }
 
     guide = [audio_identity(i) for i in inputs if i["audio_role"] in {"guide", "both"}]
