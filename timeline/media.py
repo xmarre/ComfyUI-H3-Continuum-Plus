@@ -628,7 +628,59 @@ def audio_window(
     return result
 
 
-def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
+def preview_audio_window(path, start, end, rate, *, channels=2,
+                         padding="silence", cancel=check_cancel):
+    """Seek only the requested audio window for interactive *preview*.
+
+    Sampling and lossless export continue using audio_window's exact absolute
+    sample grid. This path is approximate at source codec seek boundaries but
+    never decodes a two-hour prefix to hear two seconds late in the movie.
+    """
+    start, end = rational(start), rational(end)
+    count = round(end * rate) - round(start * rate)
+    if count <= 0:
+        return np.zeros((channels, 0), dtype=np.float32)
+    info = probe(path)
+    if not info["audio"]:
+        if padding != "silence":
+            raise ValueError("Selected preview audio has no audio stream")
+        return np.zeros((channels, count), dtype=np.float32)
+    origin = rational(info["audio"].get("start_time", "0"))
+    duration = rational(info["audio"].get("duration", info["duration"]))
+    if padding == "error" and (start < origin or end > origin + duration):
+        raise ValueError("Preview audio selection extends beyond source")
+    out = np.zeros((channels, count), dtype=np.float32)
+    seek = max(start, origin)
+    last = min(end, origin + duration)
+    if last <= seek:
+        return out
+    # Input seeking is timestamp-aware, unlike the exact production decoder.
+    # -seek_timestamp=1 keeps the nonzero source PTS mapping aligned.
+    with tempfile.TemporaryDirectory(prefix="h3-preview-audio-") as directory:
+        output = Path(directory) / "audio.f32"
+        run_process(
+            [
+                "ffmpeg", "-v", "error", "-nostdin", "-threads", "1",
+                "-seek_timestamp", "1", "-ss", str(float(seek)),
+                "-protocol_whitelist", "file,pipe",
+                "-format_whitelist", MEDIA_FORMATS, "-i", str(path),
+                "-t", str(float(last - seek)), "-vn",
+                "-map", "0:a:0", "-ac", str(channels),
+                "-ar", str(rate), "-f", "f32le", str(output),
+            ],
+            cancel=cancel,
+        )
+        samples = np.fromfile(output, dtype="<f4")
+    n = min(samples.size // channels, count)
+    offset = min(count, max(0, round(seek * rate) - round(start * rate)))
+    n = min(n, count - offset)
+    if n:
+        out[:, offset : offset + n] = samples[:n * channels].reshape(-1, channels).T
+    return out
+
+
+def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel,
+              preview=False):
     """Deterministic sample-grid mix. Route is guide, final or reference."""
     from .model import active_clips
 
@@ -646,15 +698,19 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
         left, right = max(start, c["start"]), min(end, c["end"])
         sa, sb = source_time(c, left), source_time(c, right)
         speed = rational(c["speed"])
-        pcm = audio_window(
-            assets.verify(c["asset_id"], cancel=cancel),
-            min(sa, sb),
-            max(sa, sb),
-            rate,
-            padding=c["padding"],
-            cancel=cancel,
-            cache=getattr(assets, "pcm_cache", None),
-        )
+        if preview:
+            pcm = preview_audio_window(
+                assets.verify(c["asset_id"], cancel=cancel),
+                min(sa, sb), max(sa, sb), rate,
+                padding=c["padding"], cancel=cancel,
+            )
+        else:
+            pcm = audio_window(
+                assets.verify(c["asset_id"], cancel=cancel),
+                min(sa, sb), max(sa, sb), rate,
+                padding=c["padding"], cancel=cancel,
+                cache=getattr(assets, "pcm_cache", None),
+            )
         if speed < 0:
             pcm = pcm[:, ::-1]
         n = sample_boundary(right, rate) - sample_boundary(left, rate)
