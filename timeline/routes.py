@@ -9,6 +9,7 @@ from pathlib import Path
 import os
 import subprocess
 import threading
+import time
 import uuid
 
 from aiohttp import web
@@ -505,6 +506,7 @@ def register_routes():
         from .model import digest
         from .preview import MAX_SEGMENT_FRAMES, render_preview_segment
 
+        started_at = time.perf_counter()
         data = await request.json()
         p = validate(data["project"])
         start = max(0, min(p["duration_frames"] - 1, int(data.get("start", 0))))
@@ -530,7 +532,8 @@ def register_routes():
         root = store.root / "composition_previews"
         root.mkdir(exist_ok=True)
         output = root / (key + ".mp4")
-        if not output.is_file():
+        cache_hit = output.is_file()
+        if not cache_hit:
             stop_requested = threading.Event()
 
             def cancel():
@@ -570,7 +573,9 @@ def register_routes():
             _prune(root, "*.mp4", 512 * 1024**2, output)
         return web.json_response(
             {"url": _PREFIX + "/composition/" + key,
-             "start": start, "end": stop}
+             "start": start, "end": stop,
+             "cache_hit": cache_hit,
+             "prepare_ms": round((time.perf_counter() - started_at) * 1000)}
         )
 
     @endpoint("get", "/composition/{asset_id}")
