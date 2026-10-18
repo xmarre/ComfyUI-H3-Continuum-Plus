@@ -625,7 +625,7 @@ def register_routes():
 
     @endpoint("post", "/export")
     async def export(request):
-        from .compose import export_project
+        from .compose import export_project, export_dimensions
         import folder_paths
 
         data = await request.json()
@@ -634,9 +634,14 @@ def register_routes():
         if codec not in ("lossless", "h264"):
             raise ValueError("Unknown export codec")
         start, stop = selected_export_range(p, data.get("render_range"))
-        verify_export_clip_selection(
-            p, data.get("selected_clip_ids", []), start, stop
+        clip_ids = data.get("selected_clip_ids", [])
+        verify_export_clip_selection(p, clip_ids, start, stop)
+        resolution = data.get("resolution", "timeline")
+        width, height = export_dimensions(
+            p, project_store(), start, stop, resolution, clip_ids
         )
+        if codec == "h264" and (width % 2 or height % 2):
+            raise ValueError("H.264 requires even dimensions; use FFV1 or Timeline canvas")
         frames = stop - start
         active = sum(t["status"] == "running" for t in _tasks.values())
         if active >= 2:
@@ -656,6 +661,7 @@ def register_routes():
             "cancel": event, "filename": output.name,
             "frames_done": 0, "total_frames": frames,
             "render_range": [start, stop],
+            "resolution": resolution, "width": width, "height": height,
             "elapsed_seconds": 0, "started_at": started,
         }
         _tasks[job] = item
@@ -674,6 +680,7 @@ def register_routes():
                     export_project, p, project_store(), output,
                     codec=codec, cancel=cancel, on_progress=progress,
                     render_range=(start, stop),
+                    resolution=resolution, selected_clip_ids=clip_ids,
                 )
                 progress(stage="complete", frames_done=frames)
                 item["status"] = "complete"
@@ -689,6 +696,7 @@ def register_routes():
         return web.json_response({
             "id": job, "status": "running",
             "render_range": [start, stop], "total_frames": frames,
+            "resolution": resolution, "width": width, "height": height,
         })
 
     @endpoint("get", "/export/{job_id}")
