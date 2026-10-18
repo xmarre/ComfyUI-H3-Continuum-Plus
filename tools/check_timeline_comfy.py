@@ -234,11 +234,60 @@ def main():
                 subprocess.run(
                     ["node", str(args.browser_test.resolve())], env=env, check=True
                 )
+            # Rendered take metadata fixtures exercise the real review API.
+            # They do not stand in for trained-model sampling acceptance.
+            take_id = "f" * 32
+            project_dir = (
+                directory
+                / "input"
+                / "h3_timeline_studio"
+                / "projects"
+                / project["project_id"]
+            )
+            record = {
+                "id": take_id,
+                "indices": [0],
+                "range": [0, 48],
+                "output_range": [0, 48],
+                "selection": [0, 48],
+                "parent_take": None,
+                "status": "sampled",
+                "guide_scope": compiled["jobs"][0]["guide_scope"],
+                "input_hashes": [compiled["jobs"][0]["windows"][0]["generation_hash"]],
+            }
+            (project_dir / f"take-{take_id}.json").write_text(
+                json.dumps(record), encoding="utf-8"
+            )
+            (project_dir / f"render-{take_id}.json").write_text(
+                json.dumps({"asset": asset}), encoding="utf-8"
+            )
+            for action in ("accept", "reject", "accept"):
+                current = request(
+                    "/h3_continuum/timeline/project/" + project["project_id"]
+                )
+                reviewed = request(
+                    "/h3_continuum/timeline/take/select",
+                    {
+                        "project_id": project["project_id"],
+                        "take_id": take_id,
+                        "action": action,
+                        "expected_revision": current["revision"],
+                    },
+                )
+                if action == "accept":
+                    assert take_id not in reviewed.get("rejected", [])
+                    generated = next(
+                        t for t in reviewed["tracks"] if t["role"] == "generated"
+                    )
+                    assert generated["clips"][0]["audio_fallback"] is True
+                    assert generated["clips"][0]["audio_role"] == "final"
+                else:
+                    assert take_id in reviewed["rejected"]
             print(
                 json.dumps(
                     {
                         "comfy_nodes": 4,
-                        "http": "import/save/reopen/compile/thumbnail/waveform/export passed",
+                        "http": "import/save/reopen/compile/thumbnail/waveform/export/accept-reject-restore passed",
                         "graph": "real CPU queue execution passed",
                         "gpu_sampling": "not exercised",
                     },

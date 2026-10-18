@@ -235,13 +235,45 @@ const { chromium } = require("playwright");
       [0, 0, 1],
       [0, 1, 1],
     ]);
+    // A long queued cut may exceed 64 jobs; reopening must retain ownership
+    // of its earliest pending job so Cancel cannot orphan it.
+    await page.locator(".h3ts").getByRole("button", { name: "Close", exact: true }).click();
+    await page.evaluate(() => {
+      const app = window.comfyAPI.app.app,
+        api = window.comfyAPI.api.api;
+      const studio = app.graph._nodes.find(
+        (n) => n.comfyClass === "H3ContinuumTimelineStudio",
+      );
+      const ids = Array.from({ length: 70 }, (_, i) => "owned-" + i);
+      studio.properties.h3_timeline_view.queuedPrompts = ids;
+      const original = api.fetchApi.bind(api);
+      api.fetchApi = async (path, options) => {
+        if (path !== "/queue") return original(path, options);
+        if (options?.method === "POST") {
+          window.__h3Cancelled = JSON.parse(options.body).delete;
+          return new Response("{}");
+        }
+        return new Response(
+          JSON.stringify({
+            queue_pending: ids.map((id, i) => [i, id]),
+            queue_running: [],
+          }),
+        );
+      };
+      studio.widgets.find((w) => w.name === "Open Timeline Studio").callback();
+    });
+    await page
+      .locator(".h3ts").getByRole("button", { name: "Cancel sampling", exact: true })
+      .click();
+    await page.waitForFunction(() => window.__h3Cancelled?.length === 70);
+    assert.equal(await page.evaluate(() => window.__h3Cancelled[0]), "owned-0");
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);
     console.log(
       JSON.stringify({
         browser: "real ComfyUI",
         editor:
-          "open/split/undo/redo/save/reload/typing/view-state/close/paste identity/queue order/workflow disposal passed",
+          "open/split/undo/redo/save/reload/typing/view-state/close/paste identity/queue order/long queue cancellation/workflow disposal passed",
         pageErrors: errors,
       }),
     );

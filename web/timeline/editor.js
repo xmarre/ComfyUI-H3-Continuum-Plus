@@ -90,7 +90,7 @@ export class TimelineEditor {
         Math.max(0.2, ((innerWidth - 700) * 24) / this.p.duration_frames),
       );
     this.abort = new AbortController();
-    this.queuedIds = new Set((view.queuedPrompts || []).slice(-64));
+    this.queuedIds = new Set(view.queuedPrompts || []);
     this.proxy = false;
     this.closed = false;
     this.editVersion = 0;
@@ -140,7 +140,7 @@ export class TimelineEditor {
       playhead: this.playhead,
       zoom: this.zoom,
       selected: [...this.selected],
-      queuedPrompts: [...this.queuedIds].slice(-64),
+      queuedPrompts: [...this.queuedIds],
       scroll: this.scroller?.scrollLeft || 0,
       previewMode: this.previewMode,
     };
@@ -1454,6 +1454,12 @@ export class TimelineEditor {
     const response = await this.api.fetchApi("/queue");
     if (!response.ok) throw new Error("Cannot read the sampling queue");
     const queue = await response.json();
+    const live = new Set(
+      [...(queue.queue_pending || []), ...(queue.queue_running || [])].map(
+        (row) => row[1],
+      ),
+    );
+    this.queuedIds = new Set([...this.queuedIds].filter((id) => live.has(id)));
     const pending = (queue.queue_pending || [])
       .filter((row) => this.queuedIds.has(row[1]))
       .map((row) => row[1]);
@@ -1464,11 +1470,13 @@ export class TimelineEditor {
       });
       if (!removed.ok)
         throw new Error("Could not cancel pending timeline jobs");
+      for (const id of pending) this.queuedIds.delete(id);
     }
     const active = (queue.queue_running || []).some((row) =>
       this.queuedIds.has(row[1]),
     );
     if (active) await this.api.interrupt();
+    this.persistView();
     this.message(
       active
         ? "Timeline sampling cancellation requested"

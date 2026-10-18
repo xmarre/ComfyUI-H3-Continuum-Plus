@@ -488,6 +488,45 @@ def test_pcm_cache_wait_is_cancellable(movie, tmp_path, monkeypatch):
         lock.release()
 
 
+def test_pcm_eviction_cannot_remove_a_window_before_mapping(
+    movie, tmp_path, monkeypatch
+):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from ComfyUI_H3_Continuum_Join.timeline.media import PcmCache
+
+    other = tmp_path / "other.mkv"
+    other.write_bytes(movie.read_bytes())
+    cache = PcmCache(tmp_path / "pcm", limit_bytes=14 * 1000 * 8)
+    expected = audio_window(movie, "0", "1", 1000, cache=cache)
+    first_file = next(cache.root.glob("*.f32"))
+    entering, proceed, evicted = threading.Event(), threading.Event(), threading.Event()
+    original_map, original_evict = cache._map, cache._evict
+
+    def mapping(file, channels):
+        if file == first_file:
+            entering.set()
+            assert proceed.wait(5)
+        return original_map(file, channels)
+
+    def evict(**kwargs):
+        original_evict(**kwargs)
+        evicted.set()
+
+    monkeypatch.setattr(cache, "_map", mapping)
+    monkeypatch.setattr(cache, "_evict", evict)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reading = pool.submit(audio_window, movie, "0", "1", 1000, cache=cache)
+        assert entering.wait(5)
+        eviction = pool.submit(audio_window, other, "0", "1", 1000, cache=cache)
+        try:
+            evicted.wait(0.2)  # A broken guard permits eviction before mapping.
+        finally:
+            proceed.set()
+        np.testing.assert_array_equal(reading.result(timeout=5), expected)
+        np.testing.assert_array_equal(eviction.result(timeout=5), expected)
+
+
 def test_project_store_round_trips_non_ascii_text_as_utf8(tmp_path):
     store = ProjectStore(tmp_path / "store")
     p = blank_project()

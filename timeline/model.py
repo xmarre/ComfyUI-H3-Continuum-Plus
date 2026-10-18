@@ -197,6 +197,7 @@ def clip_input(p, t, c, start, end):
         "speed": str(rational(c["speed"])),
         "padding": c["padding"],
         "audio_role": c["audio_role"],
+        "audio_fallback": bool(c.get("audio_fallback")),
         "gain": str(rational(c.get("gain", 1))),
         "fade_in": c.get("fade_in", 0),
         "fade_out": c.get("fade_out", 0),
@@ -387,7 +388,7 @@ def compile_window(p, index, guide_scope=None):
         return {
             k: v
             for k, v in i.items()
-            if k not in {"audio_role", "role", "alias", "text", "override"}
+            if k not in {"audio_role", "audio_fallback", "role", "alias", "text", "override"}
         }
 
     guide = [audio_identity(i) for i in inputs if i["audio_role"] in {"guide", "both"}]

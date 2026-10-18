@@ -315,8 +315,8 @@ def _sampling_contract(
     )
 
 
-@pytest.mark.parametrize("preferred", [None, "d" * 16])
-def test_timeline_rejected_revision_is_never_a_prefix_candidate(tmp_path, monkeypatch, preferred):
+@pytest.mark.parametrize("preferred,exact", [(False,False), (True,False), (False,True), (True,True)])
+def test_timeline_rejected_revision_is_never_a_prefix_candidate(tmp_path, monkeypatch, preferred, exact):
     import ComfyUI_H3_Continuum_Join.run_storage as storage
     import ComfyUI_H3_Continuum_Join.graph_contract as graph_contract
     controller, _ = _controller(tmp_path)
@@ -324,12 +324,15 @@ def test_timeline_rejected_revision_is_never_a_prefix_candidate(tmp_path, monkey
     assert safe, reasons
     monkeypatch.setattr(storage, "build_sampling_contract", lambda **k: (copy.deepcopy(contract), True, []))
     monkeypatch.setattr(graph_contract, "build_upstream_graph_contract", lambda *a, **k: ({}, True, []))
-    controller.preferred_revision = preferred
-    controller.excluded_revisions = {"d" * 16}
-    directory = controller.revisions_root / ("d" * 16)
+    revision, contract_sha = revision_identity(contract)
+    rejected = revision if exact else "d" * 16
+    controller.preferred_revision = rejected if preferred else None
+    controller.excluded_revisions = {rejected}
+    directory = controller.revisions_root / rejected
     directory.mkdir(parents=True)
     (directory / "manifest.json").write_text(json.dumps({
-        "revision_id": "d" * 16, "run_storage_schema_version": storage.RUN_STORAGE_SCHEMA_VERSION,
+        "revision_id": rejected, "contract_sha256": contract_sha,
+        "run_storage_schema_version": storage.RUN_STORAGE_SCHEMA_VERSION,
     }))
     def rejected_read(*args):
         pytest.fail("Rejected revision reached prefix loading")
