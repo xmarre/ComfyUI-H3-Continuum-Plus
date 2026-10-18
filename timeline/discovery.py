@@ -7,16 +7,32 @@ The second pass checks *every* byte before an asset identity is published.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
+import shutil
 import stat
+import subprocess
 import time
 
 CHUNK_BYTES = 16 * 1024 * 1024
 MAX_BYTES = 128 * 1024**3
-MAX_SEARCH_SECONDS = 600
+MAX_SEARCH_SECONDS = 55
+INDEX_TIMEOUT_SECONDS = 8
+# Windows filesystem traversal through /mnt/<drive> is considerably more
+# expensive than Windows' native indexed search. Never blindly spend ten
+# minutes crawling C: on every drag.
+SKIP_SYSTEM_DIRS = frozenset({
+    "windows", "program files", "program files (x86)", "programdata",
+    "system volume information", "$recycle.bin", "$windows.~bt",
+    "recovery", "msocache",
+})
+MEDIA_DIRS = (
+    "Videos", "Downloads", "Desktop", "Documents", "Movies", "Media",
+    "Films", "Filme", "Video", "Clips",
+)
 
 
 def wsl_drive_roots(mount_root=None):
@@ -79,80 +95,220 @@ def _quick_match(path, size, hashes, cancel):
     return True
 
 
-def find_original(fingerprint, roots, *, cancel=lambda: None):
-    """Find exactly one matching accessible original; never guess a path.
+def _index_script(name, size):
+    """Windows Search SQL, not a filesystem walk; input never executes as code."""
+    escaped_name = name.replace("'", "''")
+    sql = (
+        "SELECT TOP 256 System.ItemPathDisplay FROM SYSTEMINDEX "
+        f"WHERE System.FileName = '{escaped_name}' AND System.Size = {size}"
+    )
+    encoded_sql = base64.b64encode(sql.encode("utf-8")).decode("ascii")
+    return (
+        "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        "$db = $null; $rs = $null\n"
+        "try {\n"
+        "  $db = New-Object -ComObject ADODB.Connection\n"
+        "  $db.Open(\"Provider=Search.CollatorDSO;Extended Properties='Application=Windows';\")\n"
+        f"  $sql = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_sql}'))\n"
+        "  $rs = $db.Execute($sql)\n"
+        "  while (-not $rs.EOF) {\n"
+        "    [Console]::WriteLine([string]$rs.Fields.Item('System.ItemPathDisplay').Value)\n"
+        "    $rs.MoveNext()\n"
+        "  }\n"
+        "} catch { } finally {\n"
+        "  if ($rs -ne $null) { $rs.Close() }\n"
+        "  if ($db -ne $null) { $db.Close() }\n"
+        "}\n"
+    )
 
-    First compare filesize/name, then widely spaced chunk digests. AssetStore
-    independently verifies the complete chunk sequence before publishing.
+
+def windows_index_candidates(name, size, roots, *, cancel=lambda: None):
+    """Best-effort Windows Search index, accessed through built-in WSL interop.
+
+    On a system without indexed drives, disabled Windows Search or blocked
+    PowerShell interop, return no candidates and use bounded directory lookup.
+    A fast empty index is never interpreted as proof that a file is absent.
+    """
+    exe = shutil.which("powershell.exe")
+    if not exe:
+        return ()
+    script = _index_script(name, size)
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    try:
+        process = subprocess.Popen(
+            [exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return ()
+    try:
+        deadline = time.monotonic() + INDEX_TIMEOUT_SECONDS
+        while True:
+            cancel()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return ()
+            try:
+                output, _ = process.communicate(timeout=min(0.2, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode or len(output) > 1024 * 1024:
+            return ()
+        root_map = {
+            root.name.casefold(): root
+            for root in roots
+            if re.fullmatch(r"[a-zA-Z]", root.name)
+        }
+        results = []
+        for value in output.decode("utf-8-sig", errors="replace").splitlines():
+            # Accept drive-qualified paths only. Never use a UNC, relative,
+            # device or arbitrary browser-controlled path from the index.
+            path = PureWindowsPath(value)
+            drive = path.drive
+            if not re.fullmatch(r"[a-zA-Z]:", drive):
+                continue
+            root = root_map.get(drive[0].casefold())
+            if root:
+                results.append(root.joinpath(*path.parts[1:]))
+        return tuple(results)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate()
+
+
+def _candidate(path, *, roots, name, size, hashes, seen, cancel):
+    """A matching source must be a regular file inside one approved root."""
+    try:
+        st = path.stat(follow_symlinks=False)
+        identity = (st.st_dev, st.st_ino) if st.st_ino else str(path)
+        if (
+            not stat.S_ISREG(st.st_mode)
+            or st.st_size != size
+            or path.name.casefold() != name.casefold()
+            or identity in seen
+        ):
+            return None
+        seen.add(identity)
+        real = path.resolve(strict=True)
+        if not any(real.is_relative_to(root) for root in roots):
+            return None
+        return real if _quick_match(real, size, hashes, cancel) else None
+    except OSError:
+        return None
+
+
+def _priority_dirs(roots):
+    """Nearby media paths are tested before expensive general recursion."""
+    for root in roots:
+        yield root
+        for directory in MEDIA_DIRS:
+            yield root / directory
+        # Windows profile directories are common landing spots for Explorer
+        # downloads. This is a shallow scan, not recursive traversal.
+        profiles = root / "Users"
+        if profiles.is_dir():
+            try:
+                with os.scandir(profiles) as entries:
+                    for item in entries:
+                        if not item.is_dir(follow_symlinks=False):
+                            continue
+                        for directory in MEDIA_DIRS:
+                            yield Path(item.path) / directory
+            except OSError:
+                pass
+
+
+def find_original(fingerprint, roots, *, cancel=lambda: None,
+                  indexed_candidates=windows_index_candidates):
+    """Find a matching original promptly without exhausting mounted drives.
+
+    Query the native Windows Search index first, then check likely media
+    directories, then attempt a bounded background traversal. The *first*
+    cryptographically sampled candidate is returned immediately; AssetStore
+    verifies every supplied chunk before committing a path pointer. Other
+    identical copies are interchangeable by content identity but their actual
+    path is not knowable from the standard browser File API.
     """
     name, size, hashes = validate_fingerprint(fingerprint)
     roots = tuple(dict.fromkeys(Path(root).resolve() for root in roots))
     if not roots:
-        raise ValueError(
-            "No server-accessible media drives found. Check WSL drive mounts."
-        )
+        raise ValueError("No server-accessible media drives found")
+    seen = set()
     deadline = time.monotonic() + MAX_SEARCH_SECONDS
-    matching = []
-    seen_files = set()
+    for path in indexed_candidates(name, size, roots, cancel=cancel):
+        cancel()
+        match = _candidate(Path(path), roots=roots, name=name, size=size,
+                           hashes=hashes, seen=seen, cancel=cancel)
+        if match:
+            return match, hashes
+
+    # Search direct common folders without walking system trees first.
+    for directory in _priority_dirs(roots):
+        cancel()
+        if time.monotonic() >= deadline:
+            break
+        try:
+            path = directory / name
+            # NTFS is case-insensitive, but Python/DrvFS case sensitivity
+            # varies. Probe direct path and local filename entries.
+            if path.is_file():
+                match = _candidate(path, roots=roots, name=name, size=size,
+                                   hashes=hashes, seen=seen, cancel=cancel)
+                if match:
+                    return match, hashes
+            if directory.is_dir():
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if entry.name.casefold() != name.casefold():
+                            continue
+                        match = _candidate(Path(entry.path), roots=roots,
+                                           name=name, size=size, hashes=hashes,
+                                           seen=seen, cancel=cancel)
+                        if match:
+                            return match, hashes
+        except OSError:
+            continue
+
     for root in roots:
         if not root.is_dir():
             continue
 
         def onerror(_error):
-            # Windows system directories may be unreadable by an unprivileged
-            # ComfyUI server. Only accessible candidates can be linked.
             cancel()
 
         for directory, dirs, filenames in os.walk(
             root, topdown=True, followlinks=False, onerror=onerror
         ):
             cancel()
-            if time.monotonic() > deadline:
+            if time.monotonic() >= deadline:
                 raise ValueError(
-                    "Timed out locating the original movie on mounted drives; "
-                    "no movie was uploaded."
+                    "Source lookup exceeded 55 seconds on unindexed Windows "
+                    "drives. The movie was not copied or uploaded."
                 )
-            # Never recurse into directory symlinks or another mounted volume.
+            # Do not recursively enter Windows installations, caches or
+            # symlinked folders. They contain large numbers of irrelevant
+            # files and can be very slow over WSL DrvFS.
             dirs[:] = [
                 d for d in dirs
                 if not (Path(directory) / d).is_symlink()
+                and not (
+                    root.name.casefold() == "c"
+                    and d.casefold() in SKIP_SYSTEM_DIRS
+                )
             ]
             for filename in filenames:
                 if filename.casefold() != name.casefold():
                     continue
-                path = Path(directory) / filename
-                try:
-                    identity = path.stat(follow_symlinks=False)
-                    # Some network/DrvFS implementations expose inode=0,
-                    # which is not a usable file identity for deduplication.
-                    identity_key = (
-                        (identity.st_dev, identity.st_ino)
-                        if identity.st_ino
-                        else str(path.resolve())
-                    )
-                    if (
-                        not stat.S_ISREG(identity.st_mode)
-                        or identity.st_size != size
-                        or identity_key in seen_files
-                    ):
-                        continue
-                    seen_files.add(identity_key)
-                    resolved = path.resolve(strict=True)
-                    if not resolved.is_relative_to(root):
-                        continue
-                    if _quick_match(resolved, size, hashes, cancel):
-                        matching.append(resolved)
-                        if len(matching) > 1:
-                            raise ValueError(
-                                "Multiple identical candidates found on mounted "
-                                "drives; original location is ambiguous. "
-                                "No movie was uploaded."
-                            )
-                except OSError:
-                    continue
-    if not matching:
-        raise ValueError(
-            "Original movie not found on WSL-mounted Windows drives. "
-            "No movie was uploaded or copied."
-        )
-    return matching[0], hashes
+                match = _candidate(Path(directory) / filename, roots=roots,
+                                   name=name, size=size, hashes=hashes,
+                                   seen=seen, cancel=cancel)
+                if match:
+                    return match, hashes
+
+    raise ValueError(
+        "Original movie could not be located in the Windows Search index or "
+        "mounted drives; nothing was uploaded or copied."
+    )
