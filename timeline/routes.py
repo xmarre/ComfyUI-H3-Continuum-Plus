@@ -10,6 +10,7 @@ import os
 import subprocess
 import threading
 import uuid
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -18,6 +19,9 @@ from .model import compile_project, validate
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
+# Changes only when the installed browser transport/contract changes.
+# The native desktop refuses stale servers instead of invoking old drive scans.
+NATIVE_PATH_CONTRACT = "h3-timeline-native-path-only-no-scan-v2"
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
 # Registered media is content addressed, so derived views never change.
@@ -89,6 +93,41 @@ def register_routes():
             return fn
 
         return decorate
+
+    @endpoint("get", "/runtime")
+    async def runtime_compatibility(request):
+        """Expose the actually loaded server/frontend code, not GitHub PR metadata.
+
+        This guards against an older ComfyUI Patcher overlay, a second installed
+        copy of the extension, or an Electron/browser session using stale code.
+        No file search, media access, or arbitrary filesystem path is involved.
+        """
+        import nodes
+
+        expected = (Path(__file__).resolve().parent.parent / "web").resolve()
+        matches = [
+            name
+            for name, directory in nodes.EXTENSION_WEB_DIRS.items()
+            if Path(directory).resolve() == expected
+        ]
+        if len(matches) != 1:
+            return web.json_response(
+                {"error": "Timeline Studio frontend registration is missing or ambiguous",
+                 "contract": NATIVE_PATH_CONTRACT},
+                status=503, headers={"Cache-Control": "no-store"},
+            )
+        prefix = "/extensions/" + quote(matches[0], safe="") + "/"
+        return web.json_response(
+            {
+                "contract": NATIVE_PATH_CONTRACT,
+                "transport": "native-selected-path",
+                "drive_scan": False,
+                "browser_movie_upload": False,
+                "editor_url": prefix + "timeline/editor.js",
+                "entry_url": prefix + "timeline_studio.js",
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @endpoint("post", "/compile")
     async def compile_route(request):
