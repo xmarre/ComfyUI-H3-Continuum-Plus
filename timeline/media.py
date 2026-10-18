@@ -487,7 +487,7 @@ class PcmCache:
     For streams fitting the budget, the first window pays one sequential decode; later windows are
     memory-mapped slices, so long exports and waveform scrolling stay linear in
     the requested duration. Least recently used files beyond ``limit_bytes``
-    are removed. ``H3_TIMELINE_PCM_CACHE_GB`` overrides the default 16 GiB.
+    are removed. Whole-stream caching is disabled by default; opt in with ``H3_TIMELINE_PCM_CACHE_GB``.
     """
 
     _locks = weakref.WeakValueDictionary()
@@ -498,7 +498,7 @@ class PcmCache:
         self.root.mkdir(parents=True, exist_ok=True)
         if limit_bytes is None:
             limit_bytes = int(
-                float(os.environ.get("H3_TIMELINE_PCM_CACHE_GB", "16")) * 1024**3
+                float(os.environ.get("H3_TIMELINE_PCM_CACHE_GB", "0")) * 1024**3
             )
         self.limit = limit_bytes
 
