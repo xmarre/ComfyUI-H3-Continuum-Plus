@@ -189,7 +189,7 @@ class AssetStore:
         """A fresh temporary path inside the store, on the assets' filesystem."""
         return self.root / ("upload-" + uuid.uuid4().hex)
 
-    def link(self, source, *, cancel=check_cancel):
+    def link(self, source, *, cancel=check_cancel, expected_chunks=None):
         """Register an explicitly permitted server-local file without copying bytes.
 
         Store only a small path pointer; each use still verifies the content hash
@@ -198,10 +198,28 @@ class AssetStore:
         source = self._allowed_source(source)
         start_stamp = self._stamp(source)
         h = hashlib.sha256()
+        if expected_chunks is not None:
+            from .discovery import CHUNK_BYTES
+
+            expected_chunks = tuple(expected_chunks)
+            if len(expected_chunks) != (start_stamp[2] + CHUNK_BYTES - 1) // CHUNK_BYTES:
+                raise ValueError("Dropped file chunk count does not match source size")
         with source.open("rb") as inp:
-            while block := inp.read(1024 * 1024):
-                cancel()
-                h.update(block)
+            if expected_chunks is None:
+                while block := inp.read(1024 * 1024):
+                    cancel()
+                    h.update(block)
+            else:
+                for expected in expected_chunks:
+                    cancel()
+                    block = inp.read(CHUNK_BYTES)
+                    if hashlib.sha256(block).hexdigest() != expected:
+                        raise AssetContentChanged(
+                            "Dropped file does not match candidate source contents"
+                        )
+                    h.update(block)
+                if inp.read(1):
+                    raise AssetContentChanged("Candidate source grew during linking")
         cancel()
         info = probe(source)
         if self._stamp(source) != start_stamp:
