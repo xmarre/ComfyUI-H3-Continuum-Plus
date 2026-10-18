@@ -351,7 +351,7 @@ def test_cached_audio_windows_match_sequential_decode_and_decode_once(
 ):
     import ComfyUI_H3_Continuum_Join.timeline.media as media
 
-    cache = media.PcmCache(tmp_path / "pcm")
+    cache = media.PcmCache(tmp_path / "pcm", limit_bytes=32 * 1024**2)
     calls = []
     original = media._decode_audio_stream
     monkeypatch.setattr(
@@ -550,7 +550,7 @@ def test_pcm_cache_wait_is_cancellable(movie, tmp_path, monkeypatch):
     import threading
     from ComfyUI_H3_Continuum_Join.timeline.media import PcmCache
 
-    cache = PcmCache(tmp_path / "pcm")
+    cache = PcmCache(tmp_path / "pcm", limit_bytes=32 * 1024**2)
     lock = threading.Lock()
     lock.acquire()
     monkeypatch.setattr(cache, "_lock", lambda _: lock)
