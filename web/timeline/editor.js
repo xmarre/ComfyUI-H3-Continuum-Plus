@@ -253,7 +253,8 @@ export class TimelineEditor {
     this.image = el("img", { class: "h3ts-image", alt: "Reference image" });
     this.image.hidden = true;
     this.video.addEventListener("error", () => {
-      if (this.previewAsset && !this.proxy)
+      if (!this.closed && !this.video.hidden && this.previewAsset &&
+          !this.proxy && !this.playWanted)
         this.guard(() => this.preview(true));
     });
     this.video.addEventListener("ended", () => {
@@ -1364,6 +1365,16 @@ export class TimelineEditor {
       this.video.hidden = true;
       this.image.hidden = false;
       this.image.src = BASE + "/thumbnail/" + asset.id + "?pts=" + source;
+      return;
+    }
+    if (!forceProxy) {
+      // Single-frame inspection never needs an expensive transcoded video.
+      // Scrubbing a two-hour source therefore does not start FFmpeg jobs.
+      this.video.pause();
+      this.video.hidden = true;
+      this.image.hidden = false;
+      this.image.src = BASE + "/thumbnail/" + asset.id +
+        "?pts=" + source.toFixed(6);
       return;
     }
     this.video.hidden = false;
