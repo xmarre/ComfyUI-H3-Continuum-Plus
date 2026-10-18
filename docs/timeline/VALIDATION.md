@@ -143,3 +143,20 @@ direct file downloads for both formats; this *script is not included in the
 isolated CI matrix*, and needs a real ComfyUI server run before declaring HTTP
 integration qualified. The *actual user's two-hour WSL MKV* also remains
 untested, and no subsecond runtime claim is made from synthetic fixtures.
+
+## Selected export versus entire movie (2026-10-18)
+
+A user demonstrated that `Render [in,out) = 0–336` still triggered an export
+that made only 1% progress after 104 seconds. The backend incorrectly called
+`export_project` without `render_range`, causing it to render
+`[0,project.duration_frames)` regardless of the selection. The corrected
+frontend POST includes an explicit `render_range`; the route enforces exact
+agreement with validated `p.selection`, reports the selected range/total
+frames, and rejects clients missing the range. The native Export node and
+`export_project` default to `p.selection`, not the whole project. Tests
+include a 159000-frame project with 0–336 selected and assert a 14-second
+output plus a maximum decoded audio prefix of 14 seconds. A nonzero selection
+also must yield an output file with timestamps reset to zero. Existing exact
+export/generation audio semantics remain unchanged. Media selection from a
+late source position still incurs exact PCM prefix decoding up to that source
+position. HTTP acceptance script checks that a missing scope is rejected.
