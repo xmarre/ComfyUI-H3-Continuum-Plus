@@ -332,55 +332,81 @@ test("ripple extension inserts time in spanning audio instead of shifting its ea
   assert.equal(p.duration_frames, 528);
 });
 
-test("large browser media upload disables only its fetch response deadline", async () => {
+test("drag-only import sends SHA-256 fingerprints and never uploads movie bytes", async () => {
+  const data = new Uint8Array([1, 2, 3, 4, 5, 6]);
+  const file = Object.assign(new Blob([data]), { name: "two-hour.mkv" });
   const calls = [];
-  const file = { name: "two-hour.mkv", size: 8_000_000_000 };
+  const placed = [];
   const editor = {
     api: {
-      fetchApi: async (route, options) => {
-        calls.push([route, options]);
-        return new Response(JSON.stringify({ id: "a", name: file.name }));
+      fetchApi: async (path, options) => {
+        calls.push([path, options]);
+        return new Response(
+          JSON.stringify({ id: "a", name: file.name, storage: "linked" }),
+        );
       },
     },
     abort: new AbortController(),
     message: () => {},
-    addImportedAsset: () => {},
+    addImportedAsset: (asset) => placed.push(asset),
+    resolveOriginal(f) {
+      return TimelineEditor.prototype.resolveOriginal.call(this, f);
+    },
   };
   await TimelineEditor.prototype.importFiles.call(editor, [file]);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0][0], "/h3_continuum/timeline/import?name=two-hour.mkv");
-  assert.equal(calls[0][1].body, file);
-  assert.equal(calls[0][1].timeoutMs, null);
-  assert.equal(calls[0][1].signal, editor.abort.signal);
+  assert.equal(calls[0][0], "/h3_continuum/timeline/resolve-dropped");
+  const options = calls[0][1];
+  assert.equal(typeof options.body, "string");
+  assert.equal(options.method, "POST");
+  assert.equal(options.timeoutMs, null);
+  assert.equal(options.signal, editor.abort.signal);
+  const fingerprint = JSON.parse(options.body);
+  assert.equal(fingerprint.name, "two-hour.mkv");
+  assert.equal(fingerprint.size, data.length);
+  assert.equal(fingerprint.chunk_size, 16 * 1024 * 1024);
+  const expected = await crypto.subtle.digest("SHA-256", data);
+  assert.equal(
+    fingerprint.chunks[0],
+    Buffer.from(expected).toString("hex"),
+  );
+  assert.equal(fingerprint.chunks.length, 1);
+  assert.equal(placed[0].storage, "linked");
 });
 
-test("explicit server path is sent for no-copy import, not browser movie bytes", async () => {
-  const calls = [];
-  const added = [];
-  const original = globalThis.prompt;
-  try {
-    globalThis.prompt = () => "/mnt/media/a.mkv";
-    const editor = {
-      api: {
-        fetchApi: async (route, options) => {
-          calls.push([route, options]);
-          return new Response(
-            JSON.stringify({ id: "a", name: "a.mkv", storage: "linked" }),
-          );
-        },
-      },
-      abort: new AbortController(),
-      message: () => {},
-      addImportedAsset: (asset) => added.push(asset),
-    };
-    await TimelineEditor.prototype.linkServerFile.call(editor);
-    assert.equal(calls[0][0], "/h3_continuum/timeline/link");
-    assert.deepEqual(JSON.parse(calls[0][1].body), { path: "/mnt/media/a.mkv" });
-    assert.equal(calls[0][1].timeoutMs, null);
-    assert.equal(calls[0][1].signal, editor.abort.signal);
-    assert.equal(added.length, 1);
-    assert.equal(added[0].storage, "linked");
-  } finally {
-    globalThis.prompt = original;
-  }
+test("cancelled drag makes no server request or copied movie", async () => {
+  const file = Object.assign(new Blob([new Uint8Array([1, 2])]), {
+    name: "cancel.mkv",
+  });
+  const abort = new AbortController();
+  abort.abort(new Error("cancelled"));
+  let sent = false;
+  const editor = {
+    abort,
+    message: () => {},
+    api: { fetchApi: () => { sent = true; throw new Error("unexpected"); } },
+  };
+  await assert.rejects(
+    TimelineEditor.prototype.resolveOriginal.call(editor, file),
+    /cancelled/,
+  );
+  assert.equal(sent, false);
+});
+
+test("drag fingerprints bound memory to one chunk at a time", async () => {
+  const { fingerprintFile, CHUNK_BYTES } = await import(
+    "../web/timeline/file_identity.js"
+  );
+  const segments = [
+    new Uint8Array(CHUNK_BYTES).fill(17),
+    new Uint8Array([1, 2, 3]),
+  ];
+  const file = Object.assign(new Blob(segments), { name: "sample.mkv" });
+  const steps = [];
+  const result = await fingerprintFile(file, {
+    progress: (done) => steps.push(done),
+  });
+  assert.equal(result.chunks.length, 2);
+  assert.deepEqual(steps, [CHUNK_BYTES / file.size, 1]);
+  assert.notEqual(result.chunks[0], result.chunks[1]);
 });
