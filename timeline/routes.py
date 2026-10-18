@@ -7,8 +7,10 @@ import hashlib
 import json
 from pathlib import Path
 import os
+import re
 import subprocess
 import threading
+import time
 import uuid
 
 from aiohttp import web
@@ -22,6 +24,8 @@ _PREFIX = "/h3_continuum/timeline"
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
 _lookup_slots = asyncio.Semaphore(1)  # Avoid simultaneous full-drive traversals.
+_lookup_progress = {}
+_lookup_lock = threading.Lock()
 # Registered media is content addressed, so derived views never change.
 _IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}
 
@@ -114,6 +118,21 @@ def register_routes():
             )
         )
 
+    @endpoint("get", "/resolve-status/{lookup_id}")
+    async def resolve_status(request):
+        lookup_id = request.match_info["lookup_id"]
+        if not re.fullmatch("[0-9a-f]{32}", lookup_id):
+            raise ValueError("Invalid media lookup identifier")
+        with _lookup_lock:
+            state = _lookup_progress.get(lookup_id)
+            if state is None:
+                raise ValueError("Media lookup no longer active")
+            result = {
+                "stage": state["stage"],
+                "elapsed_seconds": int(time.monotonic() - state["started"]),
+            }
+        return web.json_response(result, headers={"Cache-Control": "no-store"})
+
     @endpoint("post", "/resolve-dropped")
     async def resolve_dropped(request):
         """Resolve a dropped File on mounted server drives without uploading it.
@@ -123,8 +142,27 @@ def register_routes():
         to copying a user's movie.
         """
         fingerprint = await request.json()
+        lookup_id = fingerprint.get("request_id") if isinstance(fingerprint, dict) else None
+        if lookup_id is not None and (
+            not isinstance(lookup_id, str)
+            or not re.fullmatch("[0-9a-f]{32}", lookup_id)
+        ):
+            raise ValueError("Invalid media lookup identifier")
         store = project_store()
         stopped = threading.Event()
+
+        def report(stage):
+            if lookup_id:
+                with _lookup_lock:
+                    if lookup_id in _lookup_progress:
+                        _lookup_progress[lookup_id]["stage"] = stage
+
+        if lookup_id:
+            with _lookup_lock:
+                _lookup_progress[lookup_id] = {
+                    "stage": "Waiting for media lookup slot",
+                    "started": time.monotonic(),
+                }
 
         def cancel_lookup():
             if stopped.is_set():
@@ -132,10 +170,13 @@ def register_routes():
 
         def discover_and_link():
             path, chunks = find_original(
-                fingerprint, store.assets.link_roots, cancel=cancel_lookup
+                fingerprint, store.assets.link_roots, cancel=cancel_lookup,
+                progress=report,
             )
+            report("Verifying original movie contents")
             return store.assets.link(
-                path, cancel=cancel_lookup, expected_chunks=chunks
+                path, cancel=cancel_lookup, expected_chunks=chunks,
+                progress=report,
             )
 
         async with _lookup_slots:
@@ -165,6 +206,9 @@ def register_routes():
             finally:
                 watcher.cancel()
                 await asyncio.gather(watcher, return_exceptions=True)
+                if lookup_id:
+                    with _lookup_lock:
+                        _lookup_progress.pop(lookup_id, None)
         if asset.get("video") and (
             asset["video"].get("nb_frames") == "1"
             or asset["name"].lower().endswith(
