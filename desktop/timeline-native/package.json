@@ -23,6 +23,7 @@
     "files": [
       "main.cjs",
       "preload.cjs",
+      "connection.cjs",
       "native_link.cjs",
       "package.json"
     ],
