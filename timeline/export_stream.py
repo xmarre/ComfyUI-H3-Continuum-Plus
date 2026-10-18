@@ -53,7 +53,7 @@ def _export_pcm_cache(p, store, start, stop, rate, workdir, *, cancel):
         if not info.get("audio"):
             continue
         duration = rational(
-            info["audio"].get("duration", info["duration"])
+            info["audio"].get("duration") or info["duration"]
         )
         expected += int(max(Fraction(0), duration) * rate) * (
             AUDIO_CHANNELS * BYTES_PER_SAMPLE
@@ -102,6 +102,10 @@ def encode_export(
     on_progress = on_progress or (lambda **info: None)
 
     try:
+        on_progress(
+            stage="preparing exact source audio",
+            frames_done=0, total_frames=total,
+        )
         with tempfile.TemporaryDirectory(
             prefix="h3-export-scratch-", dir=output.parent
         ) as scratch:
