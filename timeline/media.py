@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import tempfile
 import threading
@@ -149,22 +150,98 @@ class AssetStore:
             while len(cls._verified) > 512:
                 cls._verified.pop(next(iter(cls._verified)))
 
-    def __init__(self, root):
+    def __init__(self, root, *, link_roots=()):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        # A browser upload cannot reveal the user's original absolute path.
+        # Explicit linking is restricted to configured server-side directories.
+        self.link_roots = tuple(Path(p).expanduser().resolve() for p in link_roots)
         self.pcm_cache = PcmCache(self.root.parent / "pcm_cache")
+
+    def _allowed_source(self, source):
+        path = Path(source).expanduser().resolve(strict=True)
+        if (
+            not any(path.is_relative_to(root) for root in self.link_roots)
+            or path.is_relative_to(self.root.parent)
+            or not stat.S_ISREG(path.stat().st_mode)
+        ):
+            raise ValueError("Server media path is outside allowed link roots")
+        return path
 
     def path(self, asset_id):
         if not re.fullmatch(r"[a-f0-9]{64}", str(asset_id)):
             raise ValueError("Invalid registered media identifier")
-        p = (self.root / asset_id).resolve()
-        if p.parent != self.root or not p.is_file():
-            raise ValueError("Registered media is missing; import or relink it")
-        return p
+        entry = self.root / asset_id
+        if entry.is_file() and not entry.is_symlink():
+            return entry
+        pointer = self.root / (asset_id + ".link.json")
+        if pointer.is_file():
+            try:
+                source = json.loads(pointer.read_text(encoding="utf-8"))["path"]
+                return self._allowed_source(source)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise ValueError(
+                    "Linked source is unavailable or outside allowed roots; relink it"
+                ) from exc
+        raise ValueError("Registered media is missing; import or relink it")
 
     def upload_path(self):
         """A fresh temporary path inside the store, on the assets' filesystem."""
         return self.root / ("upload-" + uuid.uuid4().hex)
+
+    def link(self, source, *, cancel=check_cancel):
+        """Register an explicitly permitted server-local file without copying bytes.
+
+        Store only a small path pointer; each use still verifies the content hash
+        whenever the source's filesystem identity changes.
+        """
+        source = self._allowed_source(source)
+        start_stamp = self._stamp(source)
+        h = hashlib.sha256()
+        with source.open("rb") as inp:
+            while block := inp.read(1024 * 1024):
+                cancel()
+                h.update(block)
+        cancel()
+        info = probe(source)
+        if self._stamp(source) != start_stamp:
+            raise AssetContentChanged("Source changed during linking; try again")
+        asset_id = h.hexdigest()
+        final = self.root / asset_id
+        pointer = self.root / (asset_id + ".link.json")
+        with self._adoption_guard:
+            lock = self._adoption_locks.setdefault(str(final), threading.Lock())
+        while not lock.acquire(timeout=0.1):
+            cancel()
+        try:
+            cancel()
+            if final.exists() or final.is_symlink():
+                # A prior uploaded copy remains owned by the store. Never
+                # silently delete media while another consumer may read it.
+                self.verify(asset_id, cancel=cancel, force=True)
+                storage = "managed"
+            else:
+                temporary = self.upload_path()
+                try:
+                    with temporary.open("x", encoding="utf-8") as out:
+                        json.dump({"path": str(source)}, out)
+                        out.flush()
+                        os.fsync(out.fileno())
+                    # A repaired/relinked source supersedes an old path pointer.
+                    os.replace(temporary, pointer)
+                finally:
+                    temporary.unlink(missing_ok=True)
+                self._remember(source, start_stamp)
+                storage = "linked"
+        finally:
+            lock.release()
+        return {
+            "id": asset_id,
+            "name": source.name,
+            "kind": "video" if info["video"] else "audio",
+            "storage": storage,
+            **info,
+        }
 
     def register(self, source, name=None):
         """Stream a file-like source into immutable content-addressed storage."""
@@ -630,10 +707,10 @@ class ProjectStore:
 
     _lock = threading.RLock()
 
-    def __init__(self, root):
+    def __init__(self, root, *, link_roots=()):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        self.assets = AssetStore(self.root / "assets")
+        self.assets = AssetStore(self.root / "assets", link_roots=link_roots)
 
     def project_dir(self, project_id):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", str(project_id)):
