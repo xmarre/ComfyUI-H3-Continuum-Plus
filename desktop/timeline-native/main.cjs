@@ -2,7 +2,9 @@
 const { app, BrowserWindow, session, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
-const { localURL, candidates, probe, startupHTML } = require("./connection.cjs");
+const {
+  localURL, candidates, probe, startupHTML, verifyTimelineRuntime,
+} = require("./connection.cjs");
 
 function preferredServer() {
   const cli = process.argv.find(arg => arg.startsWith("--comfy-url="));
@@ -129,9 +131,31 @@ else {
         }
       }
       if (ticket !== serial || window.isDestroyed()) return;
+      try {
+        // Verify the actually running Python backend AND its served JS. A
+        // stale ComfyUI Patcher overlay must not run a recursive movie scan.
+        await verifyTimelineRuntime(url);
+      } catch (error) {
+        if (ticket === serial && !window.isDestroyed()) {
+          await display(
+            "Timeline Studio installation is outdated",
+            error.message,
+            url.href,
+            [{ url: url.href, reason: error.message }],
+          );
+        }
+        return;
+      }
+      if (ticket !== serial || window.isDestroyed()) return;
       selected = url;
       mode = "comfy";
       try {
+        // The desktop owns an isolated Electron cache; clearing it is safe
+        // and prevents an old extension ES module surviving a PR replacement.
+        await session.defaultSession.clearCache?.();
+        await session.defaultSession.clearStorageData?.({
+          storages: ["cachestorage", "serviceworkers"],
+        });
         await window.loadURL(url.href);
         if (ticket === serial && !window.isDestroyed()) {
           if (smoke) {
