@@ -597,3 +597,75 @@ test("audio-only final soundtrack can be previewed without a video track", async
   assert.equal(started,1);
   assert.equal(player.playWanted,true);
 });
+
+test("completed export displays a usable file link instead of only a filename", async () => {
+  const calls = [];
+  const id = "a".repeat(32);
+  const editor = {
+    exportPending: false,
+    closed: false,
+    p: {duration_frames:72},
+    exportLink: {hidden:true, textContent:""},
+    exportStatus: {textContent:""},
+    async save() {},
+    message(){},
+    api: {
+      fetchApi: async (url, options) => {
+        calls.push([url, options]);
+        let payload;
+        if (url.endsWith("/export") && options.method === "POST")
+          payload = {id, status:"running"};
+        else if (url.endsWith("/export/" + id))
+          payload = {
+            status:"complete",stage:"complete",
+            filename:"Timeline_" + id + ".mkv",
+            elapsed_seconds:2.1,
+          };
+        else throw new Error("Unexpected export URL: " + url);
+        return {ok:true,json:async()=>payload};
+      },
+    },
+  };
+  await TimelineEditor.prototype.export.call(editor,"lossless");
+  assert.equal(editor.exportPending,false);
+  assert.equal(editor.exportLink.hidden,false);
+  assert.equal(
+    editor.exportLink.href,
+    "/h3_continuum/timeline/export/" + id + "/file"
+  );
+  assert.match(editor.exportLink.textContent,/Download Timeline_/);
+  assert.equal(calls.length,2);
+});
+
+test("export error is visible and no duplicate jobs launch during running export", async () => {
+  let launches = 0;
+  const id = "b".repeat(32);
+  const editor = {
+    exportPending:false, closed:false,
+    p:{duration_frames:120},
+    exportLink:{hidden:true,textContent:""},
+    exportStatus:{textContent:""},
+    async save(){},
+    message(){},
+    api: {
+      fetchApi:async(url,options)=>{
+        if (url.endsWith("/export") && options.method==="POST") {
+          launches++;
+          return {ok:true,json:async()=>({id,status:"running"})};
+        }
+        return {
+          ok:true,
+          json:async()=>({
+            status:"running",stage:"encoding",
+            frames_done:48,total_frames:120,elapsed_seconds:3.4,
+          }),
+        };
+      },
+    },
+  };
+  await TimelineEditor.prototype.export.call(editor,"h264");
+  assert.match(editor.exportStatus.textContent,/40%/);
+  await TimelineEditor.prototype.export.call(editor,"h264");
+  assert.equal(launches,1);
+  clearTimeout(editor.exportTimer);
+});
