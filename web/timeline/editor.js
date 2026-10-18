@@ -510,14 +510,38 @@ export class TimelineEditor {
             "% · original stays in place",
         ),
     });
-    this.message("Locating original on mounted Windows drives…");
-    const asset = await request(this.api, "/resolve-dropped", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fingerprint),
-      signal: this.abort.signal,
-      timeoutMs: null,
-    });
+    const requestId = uid();
+    this.message("Searching Windows media index…");
+    let watching = true;
+    const status = async () => {
+      try {
+        const response = await this.api.fetchApi(
+          BASE + "/resolve-status/" + requestId,
+          { signal: this.abort.signal },
+        );
+        if (watching && response.ok) {
+          const { stage, elapsed_seconds: elapsed } = await response.json();
+          if (watching && !this.closed)
+            this.message(stage + " · " + elapsed + " s");
+        }
+      } catch {
+        // Status is advisory. Never mask the actual import error/cancellation.
+      }
+    };
+    const timer = setInterval(() => { void status(); }, 1200);
+    let asset;
+    try {
+      asset = await request(this.api, "/resolve-dropped", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...fingerprint, request_id: requestId }),
+        signal: this.abort.signal,
+        timeoutMs: null,
+      });
+    } finally {
+      watching = false;
+      clearInterval(timer);
+    }
     if (asset.storage !== "linked" && asset.storage !== "managed") {
       throw new Error("Media resolver returned an unknown storage type");
     }
