@@ -943,7 +943,13 @@ class H3ContinuumTimelineExport:
             "required": {
                 "timeline": ("H3_CONTINUUM_TIMELINE_PROJECT",),
                 "format": (["lossless", "h264"],),
-            }
+            },
+            "optional": {
+                "resolution": (["timeline", "source"], {
+                    "default": "timeline",
+                    "tooltip": "Timeline uses the H3 sampling canvas. Source uses native source pixel dimensions with composition re-encoding.",
+                }),
+            },
         }
 
     RETURN_TYPES = ("STRING",)
@@ -951,8 +957,13 @@ class H3ContinuumTimelineExport:
     FUNCTION = "export"
     CATEGORY = CATEGORY
     OUTPUT_NODE = True
+    DESCRIPTION = (
+        "Export selected timeline frames to ComfyUI output. Returns a file path; "
+        "H3 guidance travels through Timeline Project and Continuum Timeline "
+        "Sampler, not through an exported movie."
+    )
 
-    def export(self, timeline, format):
+    def export(self, timeline, format, resolution="timeline"):
         from .compose import export_project
         import folder_paths
 
@@ -964,7 +975,9 @@ class H3ContinuumTimelineExport:
             + uuid.uuid4().hex[:8]
             + (".mkv" if format == "lossless" else ".mp4")
         )
-        output = str(export_project(p, project_store(), path, codec=format))
+        output = str(export_project(
+            p, project_store(), path, codec=format, resolution=resolution
+        ))
         return {
             "ui": {"text": ["Timeline exported: " + Path(output).name]},
             "result": (output,),
