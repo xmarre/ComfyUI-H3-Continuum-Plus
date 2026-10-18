@@ -29,6 +29,53 @@ export function selectedClips(p, ids) {
       : t.clips.filter((c) => ids.includes(c.id)).map((c) => [t, c]),
   );
 }
+/**
+ * Render action target: a highlighted output clip takes precedence over the
+ * previously typed global [in,out) range. The clip's timeline timestamps
+ * remain absolute; its source_in/speed continue to determine input PTS.
+ *
+ * Multiple separately placed clips are ambiguous: never export the first
+ * range silently or merge widely separated footage into a long movie.
+ */
+export function exportTarget(p, selectedIds = []) {
+  const ids = new Set(selectedIds);
+  const candidates = p.tracks.flatMap((track) => {
+    if (track.muted) return [];
+    if (!["retained", "generated", "audio"].includes(track.role)) return [];
+    return track.clips
+      .filter((clip) => ids.has(clip.id) && !clip.muted &&
+        (track.role !== "audio" ||
+         ["final", "both"].includes(clip.audio_role)))
+      .map((clip) => ({ clip, track }));
+  });
+  if (candidates.length) {
+    const first = candidates[0].clip;
+    if (candidates.some(({ clip }) =>
+      clip.start !== first.start || clip.end !== first.end)) {
+      throw new Error(
+        "Selected clips have different timeline ranges. " +
+        "Select one clip or set Render [in,out) explicitly."
+      );
+    }
+    const start = first.start, stop = first.end;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(stop) ||
+        start < 0 || stop <= start || stop > p.duration_frames) {
+      throw new Error("Selected clip has an invalid timeline range");
+    }
+    return {
+      start, stop, kind: "clip",
+      clipIds: candidates.map(({ clip }) => clip.id),
+      sourceIn: first.source_in,
+    };
+  }
+  const [start, stop] = p.selection;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(stop) ||
+      start < 0 || stop <= start || stop > p.duration_frames) {
+    throw new Error("Invalid Render [in,out) selection");
+  }
+  return { start, stop, kind: "range", clipIds: [] };
+}
+
 export function split(p, ids, frame) {
   for (const [track, c] of selectedClips(p, ids)) {
     if (frame <= c.start || frame >= c.end) continue;
