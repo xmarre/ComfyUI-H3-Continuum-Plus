@@ -331,3 +331,56 @@ test("ripple extension inserts time in spanning audio instead of shifting its ea
   );
   assert.equal(p.duration_frames, 528);
 });
+
+test("large browser media upload disables only its fetch response deadline", async () => {
+  const calls = [];
+  const file = { name: "two-hour.mkv", size: 8_000_000_000 };
+  const editor = {
+    api: {
+      fetchApi: async (route, options) => {
+        calls.push([route, options]);
+        return new Response(JSON.stringify({ id: "a", name: file.name }));
+      },
+    },
+    abort: new AbortController(),
+    message: () => {},
+    addImportedAsset: () => {},
+  };
+  await TimelineEditor.prototype.importFiles.call(editor, [file]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "/h3_continuum/timeline/import?name=two-hour.mkv");
+  assert.equal(calls[0][1].body, file);
+  assert.equal(calls[0][1].timeoutMs, null);
+  assert.equal(calls[0][1].signal, editor.abort.signal);
+});
+
+test("explicit server path is sent for no-copy import, not browser movie bytes", async () => {
+  const calls = [];
+  const added = [];
+  const original = globalThis.prompt;
+  try {
+    globalThis.prompt = () => "/mnt/media/a.mkv";
+    const editor = {
+      api: {
+        fetchApi: async (route, options) => {
+          calls.push([route, options]);
+          return new Response(
+            JSON.stringify({ id: "a", name: "a.mkv", storage: "linked" }),
+          );
+        },
+      },
+      abort: new AbortController(),
+      message: () => {},
+      addImportedAsset: (asset) => added.push(asset),
+    };
+    await TimelineEditor.prototype.linkServerFile.call(editor);
+    assert.equal(calls[0][0], "/h3_continuum/timeline/link");
+    assert.deepEqual(JSON.parse(calls[0][1].body), { path: "/mnt/media/a.mkv" });
+    assert.equal(calls[0][1].timeoutMs, null);
+    assert.equal(calls[0][1].signal, editor.abort.signal);
+    assert.equal(added.length, 1);
+    assert.equal(added[0].storage, "linked");
+  } finally {
+    globalThis.prompt = original;
+  }
+});
