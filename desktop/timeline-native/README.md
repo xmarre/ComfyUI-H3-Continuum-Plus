@@ -81,3 +81,27 @@ failed and non-ComfyUI HTTP responses, local port selection, IPC origin
 restrictions and native cancellation. The test does not reproduce a physical
 Explorer mouse drag or run against your WSL instance. Further backend
 sampling/export qualification remains required.
+
+### Stale Timeline Studio detection
+
+If your desktop app shows the obsolete status
+`Locating original on mounted Windows drives…`, the running frontend is
+**not** the current no-scan implementation. This is a deployment/version
+mismatch; Electron alone does not update custom-node Python or frontend files
+in the running ComfyUI process.
+
+The desktop now checks **both** the actual Python backend route
+`/h3_continuum/timeline/runtime` and the installed JavaScript modules
+advertised by ComfyUI's registered extension directory **before loading
+the editor**. It rejects an old backend or old served module with a clear
+`Timeline Studio installation is outdated` screen. It refuses the obsolete
+scanner instead of allowing a new movie import, and discards Electron's
+HTTP/module caches when loading a compatible version.
+
+Apply the current PR #51 through your Patcher integration, then **fully
+stop and restart the ComfyUI Python server**, and reopen the corrected
+desktop executable. Loading a new executable by itself cannot replace the
+code in the old ComfyUI process. If the incompatibility screen persists, the
+server is still registering an older or duplicate installation. The screen
+shows the exact local server address being checked. No recursive filesystem
+search or movie upload is performed by this validation step.
