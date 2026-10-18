@@ -161,3 +161,23 @@ stream when only its first 14 seconds are needed), with no permanent movie
 copy. For a late source segment, the sample-exact audio decoder may still
 decode its preceding source prefix; that remaining random-access limitation
 must not be hidden by the progress bar.
+
+## Selected clip export identity and close teardown
+
+Clip highlight is UI state distinct from the saved project's general
+`selection`. On explicit export, exactly one highlighted retained/generated
+video (or same-bounds final audio group) determines the output interval;
+the editor commits that interval to `p.selection` and POSTs both its
+absolute [start,end) and highlighted clip IDs. The backend verifies clip IDs
+against output bounds, then the compositor resolves source timestamps with
+`source_time(c,frame)`, including nonzero `source_in` and arbitrary clip
+placement. If no compatible clip is highlighted, the explicit render in/out
+controls determine export. Disjoint highlight groups are not silently
+converted into an enormous union.
+
+The modal Close handler first closes/removes the dialog and signals the editor
+registry, *then* performs view-only persistence, request cancellation and
+best-effort media cleanup. It never invokes the potentially costly sampler
+refresh or HTMLMediaElement.load synchronously before detachment. Native
+Electron close uses main-process BrowserWindow.destroy followed by app.exit,
+so renderer beforeunload handlers cannot indefinitely veto the Windows X.
