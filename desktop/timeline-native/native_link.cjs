@@ -16,34 +16,4 @@ function toWSLPath(nativePath) {
   return "/mnt/" + match[1].toLowerCase() + "/" + components.join("/");
 }
 
-async function linkNativeFile(file, requestId, { getPathForFile, fetchImpl, pending }) {
-  if (typeof requestId !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(requestId)) {
-    throw new Error("Invalid native import transaction");
-  }
-  if (pending.has(requestId)) {
-    throw new Error("Duplicate native import transaction");
-  }
-  // getPathForFile is Electron's privileged API, *not* HTML File.name.
-  const source = toWSLPath(getPathForFile(file));
-  const controller = new AbortController();
-  pending.set(requestId, controller);
-  try {
-    const response = await fetchImpl("/h3_continuum/timeline/link", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: source }),
-      signal: controller.signal,
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result?.error || "Original media could not be linked");
-    if (result?.storage !== "linked" && result?.storage !== "managed") {
-      throw new Error("Unexpected Timeline Studio media registration response");
-    }
-    // Return media metadata only, never disclose a filesystem path to page JS.
-    return result;
-  } finally {
-    pending.delete(requestId);
-  }
-}
-
-module.exports = { toWSLPath, linkNativeFile };
+module.exports = { toWSLPath };
