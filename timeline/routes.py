@@ -148,7 +148,7 @@ def register_routes():
                 file.flush()
                 os.fsync(file.fileno())
             try:
-                asset = await asyncio.to_thread(
+                asset = await _media_cpu(
                     store.assets.adopt,
                     temporary,
                     digest.hexdigest(),
@@ -171,7 +171,10 @@ def register_routes():
 
     @endpoint("get", "/media/{asset_id}")
     async def media(request):
-        file = project_store().assets.path(request.match_info["asset_id"])
+        file = await asyncio.to_thread(
+            project_store().assets.verify, request.match_info["asset_id"],
+            cancel=_request_cancel,
+        )
         response = web.FileResponse(file)
         response.content_type = (
             request.query.get("type", "video/mp4")
@@ -185,7 +188,9 @@ def register_routes():
     async def proxy(request):
         store = project_store()
         asset_id = request.match_info["asset_id"]
-        file = store.assets.path(asset_id)
+        file = await asyncio.to_thread(
+            store.assets.verify, asset_id, cancel=_request_cancel
+        )
         root = store.root / "proxies"
         root.mkdir(exist_ok=True)
         # A bounded *window* proxy. Never transcode an entire two-hour import.
@@ -242,7 +247,10 @@ def register_routes():
         from PIL import Image
         import io
 
-        path = project_store().assets.path(request.match_info["asset_id"])
+        path = await asyncio.to_thread(
+            project_store().assets.verify, request.match_info["asset_id"],
+            cancel=_request_cancel,
+        )
         stamp = request.query.get("pts", "0")
         pixels = await _media_cpu(
             video_frames,
@@ -264,7 +272,9 @@ def register_routes():
         import numpy as np
 
         assets = project_store().assets
-        path = assets.path(request.match_info["asset_id"])
+        path = await asyncio.to_thread(
+            assets.verify, request.match_info["asset_id"], cancel=_request_cancel
+        )
         start = max(0, float(request.query.get("start", "0")))
         end = min(start + 60, float(request.query.get("end", str(start + 30))))
         pcm = await _media_cpu(
