@@ -472,7 +472,7 @@ test("blank timeline Play responds without sending a composition export request"
     playSegment() {throw new Error("Empty timeline must not render");},
   };
   await TimelineEditor.prototype.playComposition.call(editor);
-  assert.match(status.at(-1), /No video on the timeline/);
+  assert.match(status.at(-1), /No playable footage or final audio/);
 });
 
 test("playback fetch asks for a tiny 2s first window and has a timeout", async () => {
@@ -577,4 +577,23 @@ test("short-window prefetch does not duplicate the same future segment", async (
   assert.equal(requests,1);
   assert.equal(editor.nextPreview.start,48);
   editor.nextPreview.controller.abort();
+});
+
+test("audio-only final soundtrack can be previewed without a video track", async () => {
+  let started = 0;
+  const player = {
+    playWanted:false,playEpoch:0,video:{paused:true},
+    p:{duration_frames:504,tracks:[{
+      role:"audio",clips:[{start:0,end:504,audio_role:"final"}],
+    }]},
+    playhead:0,
+    playSegment(start,epoch) {
+      assert.equal(start,0);
+      assert.equal(epoch,1);
+      started++;
+    },
+  };
+  await TimelineEditor.prototype.playComposition.call(player);
+  assert.equal(started,1);
+  assert.equal(player.playWanted,true);
 });
