@@ -222,7 +222,7 @@ def _priority_dirs(roots):
 
 
 def find_original(fingerprint, roots, *, cancel=lambda: None,
-                  indexed_candidates=windows_index_candidates):
+                  indexed_candidates=windows_index_candidates, progress=None):
     """Find a matching original promptly without exhausting mounted drives.
 
     Query the native Windows Search index first, then check likely media
@@ -238,6 +238,12 @@ def find_original(fingerprint, roots, *, cancel=lambda: None,
         raise ValueError("No server-accessible media drives found")
     seen = set()
     deadline = time.monotonic() + MAX_SEARCH_SECONDS
+
+    def report(message):
+        if progress is not None:
+            progress(message)
+
+    report("Querying Windows Search index")
     for path in indexed_candidates(name, size, roots, cancel=cancel):
         cancel()
         match = _candidate(Path(path), roots=roots, name=name, size=size,
@@ -246,6 +252,7 @@ def find_original(fingerprint, roots, *, cancel=lambda: None,
             return match, hashes
 
     # Search direct common folders without walking system trees first.
+    report("Checking common movie and download folders")
     for directory in _priority_dirs(roots):
         cancel()
         if time.monotonic() >= deadline:
@@ -275,6 +282,13 @@ def find_original(fingerprint, roots, *, cancel=lambda: None,
     for root in roots:
         if not root.is_dir():
             continue
+        folders_scanned = 0
+        last_reported = 0
+        drive_label = (
+            root.name.upper() + ":" if re.fullmatch(r"[a-zA-Z]", root.name)
+            else "ComfyUI input"
+        )
+        report(f"Searching unindexed {drive_label} folders")
 
         def onerror(_error):
             cancel()
@@ -283,11 +297,16 @@ def find_original(fingerprint, roots, *, cancel=lambda: None,
             root, topdown=True, followlinks=False, onerror=onerror
         ):
             cancel()
-            if time.monotonic() >= deadline:
+            folders_scanned += 1
+            now = time.monotonic()
+            if now >= deadline:
                 raise ValueError(
                     "Source lookup exceeded 55 seconds on unindexed Windows "
                     "drives. The movie was not copied or uploaded."
                 )
+            if now - last_reported >= 2:
+                report(f"Searching {drive_label}: {folders_scanned:,} folders checked")
+                last_reported = now
             # Do not recursively enter Windows installations, caches or
             # symlinked folders. They contain large numbers of irrelevant
             # files and can be very slow over WSL DrvFS.
