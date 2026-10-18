@@ -99,6 +99,23 @@ else {
     let serial = 0;
     const pendingLinks = new Map();
 
+    // Never let a pending source hash/IPC request keep the desktop process
+    // alive after a normal Windows close. Aborting the fetch also disconnects
+    // the aiohttp request so the WSL backend stops its bounded source read.
+    window.on("close", () => {
+      ++serial;
+      for (const job of pendingLinks.values()) job.abort.abort();
+      pendingLinks.clear();
+    });
+    window.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" &&
+          input.control && input.shift &&
+          input.key?.toLowerCase() === "q") {
+        event.preventDefault();
+        window.close();
+      }
+    });
+
     async function display(heading, detail, url, attempts = []) {
       mode = "startup";
       const page = startupHTML({ heading, detail, url, attempts });
