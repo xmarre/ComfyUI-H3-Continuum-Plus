@@ -82,7 +82,8 @@ def write_video_frames(frames, path, fps=24):
 
 
 def export_project(
-    p, store, output, *, codec="lossless", cancel=check_cancel, render_range=None
+    p, store, output, *, codec="lossless", cancel=check_cancel,
+    render_range=None, preview=False
 ):
     """Stream a long composition in one-second CPU windows.
 
@@ -171,7 +172,10 @@ def export_project(
                 for a in range(start, stop, AUDIO_BLOCK_FRAMES):
                     cancel()
                     b = min(a + AUDIO_BLOCK_FRAMES, stop)
-                    pcm = mix_audio(p, store.assets, a, b, rate, "final", cancel=cancel)
+                    pcm = mix_audio(
+                        p, store.assets, a, b, rate, "final",
+                        cancel=cancel, preview=preview,
+                    )
                     wav.write(pcm.T.astype("<f4").tobytes())
             options = (
                 ["-c:v", "copy", "-c:a", "pcm_f32le"]
