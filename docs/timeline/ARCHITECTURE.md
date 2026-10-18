@@ -93,3 +93,22 @@ Sampler widgets follow V3.4’s order. Width and height are optional native INT 
 Chunk count and chunk seconds are project-bound canvas widgets, excluded from sampler parameter serialization. Their callbacks edit the connected Studio project and its open editor history, so compilation, frozen queue snapshots, timing display and undo share one source. Width/height widget edits also update the unlinked project canvas. Graph-connected INT inputs remain authoritative at execution.
 
 Visual reordering is separate from saved identity: positional legacy values migrate to names, reference sockets are sorted together, and every connected input updates its LiteGraph target slot without changing the link ID or origin. The editor’s per-job boundary/nonce overrides update both positional and named workflow values.
+
+## Low-latency transport and exact final rendering
+
+The viewer's Play/Pause path is not `export_project(..., render_range=30s)`.
+`timeline/preview.py` prepares at most eight seconds; first playback needs
+only two seconds, then six-second segments are prefetched with cancellation.
+Straightforward retained footage and its unmodified aligned soundtrack use a
+single short FFmpeg source seek and fast H.264/AAC encode. Complicated overlays,
+reverse/speed edits or mixed audio use the existing compositor but only for a
+small segment. Its `preview=True` audio path uses source PTS seeking,
+separate from the sample-exact generation/export decoder. Main export and
+native H3 audio samples remain unchanged. The editor shows measured prepare
+milliseconds and cached status, and ordinary seeking fetches a thumbnail
+rather than a background 30-second video transcode. Playback does not preload
+an entire two-hour movie or allocate a whole-film image tensor. A server-side
+thread event cancels FFmpeg work when the client disconnects; preview CPU
+slots are isolated from thumbnail/waveform slots. There can still be segment
+switch latency on slower WSL source drives; actual streaming smoothness
+requires physical runtime testing.
