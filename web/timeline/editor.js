@@ -439,10 +439,10 @@ export class TimelineEditor {
         this.exportStatus,
         this.exportLink,
         button("Review takes", () => this.guard(() => this.review())),
-        button("Export FFV1 / PCM", () =>
+        button("Export selection · FFV1 / PCM", () =>
           this.guard(() => this.export("lossless")),
         ),
-        button("Export H.264 / AAC", () =>
+        button("Export selection · H.264 / AAC", () =>
           this.guard(() => this.export("h264")),
         ),
         button("Cancel export", () =>
@@ -1786,20 +1786,44 @@ export class TimelineEditor {
     this.exportStatus.textContent = "Preparing export…";
     try {
       await this.save();
+      // Snapshot the committed [in,out) in output frames; never permit a
+      // backend default to silently export hours of source footage.
+      const [start, stop] = this.p.selection;
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(stop) ||
+          start < 0 || stop <= start || stop > this.p.duration_frames) {
+        throw new Error("Invalid Render [in,out) selection for export");
+      }
+      const frames = stop - start;
+      const descriptor = "frames " + start + "–" + stop +
+        " (" + (frames / 24).toFixed(2) + " seconds)";
+      this.exportStatus.textContent = "Exporting selection · " + descriptor;
       const result = await request(this.api, "/export", {
         method: "POST",
-        body: JSON.stringify({ project: this.p, codec }),
+        body: JSON.stringify({
+          project: this.p, codec, render_range: [start, stop],
+        }),
       });
+      if (result.total_frames !== frames ||
+          result.render_range?.[0] !== start ||
+          result.render_range?.[1] !== stop) {
+        throw new Error("Server export range differs from selected frames; cancel the job");
+      }
       this.exportId = result.id;
       const poll = async () => {
         if (this.closed) return;
         const status = await request(this.api, "/export/" + result.id);
         if (status.status === "running") {
           const done = Number(status.frames_done) || 0;
-          const total = Number(status.total_frames) || this.p.duration_frames;
-          const percent = Math.min(100, Math.round(100 * done / Math.max(1,total)));
+          const total = Number(status.total_frames);
+          if (total !== frames ||
+              status.render_range?.[0] !== start ||
+              status.render_range?.[1] !== stop) {
+            throw new Error("Export status returned a different timeline range");
+          }
+          const percent = Math.min(100, Math.round(100 * done / frames));
           this.exportStatus.textContent =
-            "Export " + (status.stage || "running") + " · " + percent +
+            "Export " + descriptor + " · " +
+            (status.stage || "running") + " · " + percent +
             "% · " + ((status.elapsed_seconds || 0)).toFixed(1) + " s";
           this.exportTimer = setTimeout(() => this.guard(poll), 1000);
           return;
@@ -1811,8 +1835,8 @@ export class TimelineEditor {
           this.exportLink.download = status.filename;
           this.exportLink.textContent = "Download " + status.filename;
           this.exportLink.hidden = false;
-          this.exportStatus.textContent = "Export complete · " +
-            ((status.elapsed_seconds || 0)).toFixed(1) + " s";
+          this.exportStatus.textContent = "Exported " + descriptor +
+            " · " + ((status.elapsed_seconds || 0)).toFixed(1) + " s";
           this.message("Export saved in ComfyUI output: " + status.filename);
         } else {
           this.exportStatus.textContent =
