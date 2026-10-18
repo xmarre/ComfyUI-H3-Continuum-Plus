@@ -1308,7 +1308,12 @@ export class TimelineEditor {
     }
     this.video.hidden = false;
     this.image.hidden = true;
-    const useProxy = forceProxy || asset.video?.codec_name === "ffv1";
+    // Browsers may reject Matroska even with H.264 video. Only encode the
+    // current 30-second window; never transcode the entire source movie.
+    const useProxy =
+      forceProxy ||
+      asset.video?.codec_name === "ffv1" ||
+      /\.mkv$/i.test(asset.name);
     const offset = useProxy
       ? Math.max(0, Math.floor((source - origin) / 20) * 20)
       : 0;
