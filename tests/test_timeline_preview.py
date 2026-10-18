@@ -65,6 +65,7 @@ def test_two_second_preview_seeks_original_video_without_full_composition(movie,
 def test_preview_source_audio_seek_uses_only_window_not_two_hour_prefix(movie, tmp_path, monkeypatch):
     import ComfyUI_H3_Continuum_Join.timeline.media as media
 
+    exact = audio_window(movie, "7", "8", 44100)
     original_run = media.run_process
     invocations = []
 
@@ -78,7 +79,6 @@ def test_preview_source_audio_seek_uses_only_window_not_two_hour_prefix(movie, t
     monkeypatch.setattr(media, "run_process", instrumented)
     fast = preview_audio_window(movie, "7", "8", 44100)
     assert fast.shape == (2, 44100)
-    exact = audio_window(movie, "7", "8", 44100)
     assert np.sqrt(np.mean((fast - exact)**2)) < 0.05
     assert len(invocations) == 1
 
