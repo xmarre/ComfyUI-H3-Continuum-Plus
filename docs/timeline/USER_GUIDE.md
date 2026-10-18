@@ -16,7 +16,7 @@ The implementation has been exercised with ComfyUI 0.41.0 and frontend 1.55.18, 
 4. Connect the typed timeline to **Continuum Timeline Sampler**. Its two latent lists go through Core video/audio VAE Decode, then **H3 Continuum Assemble V3.4**. Set **Timeline Output = Natural retained timeline (Refinement)**. Connect assembled images/audio and the sampler's take output to **Continuum Timeline Save Take**.
 5. Choose **Queue selection** to reuse matching results, or **Reroll selection** to request a fresh alternative; each editor reroll asks native Run Storage to allocate a fresh nonce under its run lock, so restoring an old widget value cannot repeat an earlier alternative. Both queue immutable graph/project snapshots in submission order, after any work already queued, splitting selections longer than 16 chunks into ordered jobs. Rejected takes are never reused as a cached result. Editing the project afterwards does not change those queued inputs.
 6. Open **Review takes**, preview an alternative, then accept/select it. The original take files remain available. Queue selection after rejecting the latest matching take requests a new native nonce, including when the graph is run directly. Normal queueing restores a selected rerolled take's stored seed schedule; explicit reroll inputs remain reproducible. The accepted take appears on the Generated takes lane. Generated audio automatically fills intervals without authored final audio; the authored soundtrack has precedence where it covers the accepted span.
-7. Set **Render [in,out)** to the exact output frames you want (e.g. **0–336** for 14 seconds at 24 fps). **Export selection · FFV1 / PCM** or **Export selection · H.264 / AAC** now renders **only that selected interval**, not the entire source movie or the full project. Export status and percentage are relative to those selected frames, and a completed file can be downloaded or found in ComfyUI's output directory. The native Export node also honors the same saved selection. To export the entire project intentionally, first select its full frame interval.
+7. To export a **specific movie snippet**, highlight its video clip in the timeline and use **Export highlighted clip / in-out · FFV1** or **Export highlighted clip / in-out · H.264**. The editor updates the displayed `Render [in,out)` to the clip's **absolute timeline start/end** before export. The input movie's separate **Source in** timestamp (e.g. 714 seconds) is preserved; it defines which part of the original movie fills that selected output interval. With **no retained/generated video clip highlighted**, the buttons export the explicitly configured `Render [in,out)` range. Multiple highlighted clips with different start/end times are rejected rather than silently exporting the wrong span. Export progress and duration refer to the actual snippet; completed files can be downloaded or found in ComfyUI's output directory. The native Export node honors the saved render range.
 
 ## Original sampler controls
 
@@ -156,3 +156,16 @@ CPU, media, HTTP, serializer and browser evidence is listed in `VALIDATION.md`. 
 ## Editor view
 
 ![Timeline Studio editing real source media](editor.png)
+
+## Closing an unresponsive desktop or editor
+
+The Timeline Studio **Close** button removes the modal immediately, before
+media release, canvas refresh or any workflow serialization; it also
+requests cancellation of an active Timeline export. The Windows desktop
+**title-bar X** now destroys the window and exits the Electron process from
+its native main process even if ComfyUI's renderer is unresponsive. The
+emergency shortcut **Ctrl+Shift+Q** uses the same unconditional native exit.
+This can discard unsaved in-memory UI changes; the editor persists ordinary
+edits as they occur. Exiting Electron does **not** itself kill the Python
+ComfyUI server or unrelated background tasks. If a separate task continues
+to consume resources, cancel it in ComfyUI.
