@@ -641,26 +641,38 @@ def register_routes():
         output = Path(folder_paths.get_output_directory()) / (
             "Timeline_" + job + (".mkv" if codec == "lossless" else ".mp4")
         )
-        item = {"status": "running", "cancel": event, "filename": output.name}
+        started = time.monotonic()
+        item = {
+            "status": "running", "stage": "queued",
+            "cancel": event, "filename": output.name,
+            "frames_done": 0, "total_frames": p["duration_frames"],
+            "elapsed_seconds": 0, "started_at": started,
+        }
         _tasks[job] = item
 
         def cancel():
             if event.is_set():
-                raise ValueError("Export cancelled")
+                raise InterruptedError("Export cancelled")
+
+        def progress(**updates):
+            item.update(updates)
+            item["elapsed_seconds"] = round(time.monotonic() - started, 1)
 
         async def work():
             try:
                 await asyncio.to_thread(
-                    export_project,
-                    p,
-                    project_store(),
-                    output,
-                    codec=codec,
-                    cancel=cancel,
+                    export_project, p, project_store(), output,
+                    codec=codec, cancel=cancel, on_progress=progress,
                 )
+                progress(stage="complete", frames_done=p["duration_frames"])
                 item["status"] = "complete"
             except Exception as exc:
-                item.update(status="failed", error=str(exc))
+                item.update(
+                    status="cancelled" if event.is_set() else "failed",
+                    error=str(exc),
+                    stage="cancelled" if event.is_set() else "failed",
+                    elapsed_seconds=round(time.monotonic() - started, 1),
+                )
 
         item["task"] = asyncio.create_task(work())
         return web.json_response({"id": job, "status": "running"})
@@ -668,9 +680,38 @@ def register_routes():
     @endpoint("get", "/export/{job_id}")
     async def status(request):
         job = request.match_info["job_id"]
+        if not re.fullmatch(r"[0-9a-f]{32}", job) or job not in _tasks:
+            raise web.HTTPNotFound(text="Unknown export job")
         item = _tasks[job]
+        if item["status"] == "running":
+            item["elapsed_seconds"] = round(
+                time.monotonic() - item.get("started_at", time.monotonic()), 1
+            )
         return web.json_response(
-            {k: v for k, v in item.items() if k not in ("cancel", "task")}
+            {k: v for k, v in item.items() if k not in ("cancel", "task", "started_at")}
+        )
+
+    @endpoint("get", "/export/{job_id}/file")
+    async def download_export(request):
+        job = request.match_info["job_id"]
+        if not re.fullmatch(r"[0-9a-f]{32}", job):
+            raise web.HTTPNotFound()
+        item = _tasks.get(job)
+        if not item or item["status"] != "complete":
+            raise web.HTTPNotFound(text="Export is not complete")
+        import folder_paths
+
+        filename = "Timeline_" + job + (
+            ".mkv" if item["filename"].endswith(".mkv") else ".mp4"
+        )
+        file = Path(folder_paths.get_output_directory()) / filename
+        if not file.is_file():
+            raise web.HTTPNotFound(text="Completed export file is missing")
+        return web.FileResponse(
+            file, headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "private, no-store",
+            },
         )
 
     @endpoint("post", "/export/{job_id}/cancel")
