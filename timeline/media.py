@@ -215,6 +215,10 @@ class AssetStore:
             cancel()
         try:
             cancel()
+            # A concurrent import can keep us waiting behind the publication
+            # lock. Recheck the linked source before committing its identity.
+            if self._stamp(source) != start_stamp:
+                raise AssetContentChanged("Source changed during linking; try again")
             if final.exists() or final.is_symlink():
                 # A prior uploaded copy remains owned by the store. Never
                 # silently delete media while another consumer may read it.
