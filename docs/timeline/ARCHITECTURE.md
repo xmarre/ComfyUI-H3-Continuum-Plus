@@ -140,3 +140,24 @@ editor window closes, and in-flight export cancellation is independent of
 ComfyUI sampler cancellation. The media preview path remains independently
 bounded and uses the **full timeline canvas resolution**, never a hidden
 480-pixel longest-edge reduction.
+
+
+## Explicit export range contract
+
+`Render [in,out)` is the editor's canonical selection. The editor sends
+`render_range: [in,out]` on every export. The backend compares it to the
+validated saved project selection and rejects omitted, mismatched, invalid or
+out-of-bounds ranges instead of defaulting to `[0,duration_frames)`.
+The native ComfyUI Timeline Export node also defaults to `p.selection`.
+The server status includes `render_range` and `total_frames=out-in`; the UI
+shows the exact exported frame range and duration in seconds and immediately
+cancels a backend job if its range does not match the editor request.
+
+For a 1h50 film project, selecting 0–336 renders exactly 336 frames/14 seconds
+regardless of the project's full duration. Only clips overlapping that window
+enter the compositor. The temporary exact PCM cache is sized to the latest
+required source sample for the selected clips (not the entire movie's audio
+stream when only its first 14 seconds are needed), with no permanent movie
+copy. For a late source segment, the sample-exact audio decoder may still
+decode its preceding source prefix; that remaining random-access limitation
+must not be hidden by the progress bar.
