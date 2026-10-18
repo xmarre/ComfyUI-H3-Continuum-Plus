@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import time
 import json
+import os
 from pathlib import Path
 import tempfile
 import uuid
@@ -21,7 +22,12 @@ CATEGORY = "MiniMax H3/Continuum/Timeline Studio"
 def project_store():
     import folder_paths
 
-    return ProjectStore(Path(folder_paths.get_input_directory()) / "h3_timeline_studio")
+    input_root = Path(folder_paths.get_input_directory()).resolve()
+    # Extra roots are an explicit server-operator opt-in, not browser-supplied.
+    extra = [p for p in os.environ.get("H3_TIMELINE_LINK_ROOTS", "").split(os.pathsep) if p]
+    return ProjectStore(
+        input_root / "h3_timeline_studio", link_roots=[input_root, *extra]
+    )
 
 
 def takes(store, project_id):
