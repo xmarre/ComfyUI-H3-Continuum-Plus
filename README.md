@@ -16,7 +16,7 @@ In Chrome the editor explicitly refuses zero-copy import; it does not scan,
 upload or silently create a managed copy. The desktop wrapper must be launched
 once instead of a normal Chrome tab; an ordinary ComfyUI custom node/Patcher
 install cannot grant browser-level native file permissions. The Windows desktop
-package still requires physical Explorer drag, WSL mount and signing validation.
+package still requires physical Explorer drag, WSL mount and signing validation. Startup now probes the local ComfyUI `/system_stats` API and presents visible connection diagnostics and a URL field when the configured local server is unreachable; path registration runs in Electron's privileged main process instead of using sandbox preload `fetch`.
 Whole-stream PCM disk caching is disabled by default. Existing V3.4 nodes
 remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md),
 [architecture](docs/timeline/ARCHITECTURE.md),
