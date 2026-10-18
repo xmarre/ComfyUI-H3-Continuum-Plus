@@ -28,6 +28,32 @@ _media_slots = asyncio.Semaphore(2)
 _IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}
 
 
+def native_runtime_manifest(extension_dirs, web_root):
+    """Describe the exact frontend directory ComfyUI registered at startup.
+
+    No recursive scan is performed. Duplicate/missing registrations are unsafe
+    because the browser may execute old Studio code from another directory.
+    """
+    expected = Path(web_root).resolve()
+    matches = [
+        name for name, directory in extension_dirs.items()
+        if Path(directory).resolve() == expected
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "Timeline Studio frontend registration is missing or ambiguous"
+        )
+    prefix = "/extensions/" + quote(matches[0], safe="") + "/"
+    return {
+        "contract": NATIVE_PATH_CONTRACT,
+        "transport": "native-selected-path",
+        "drive_scan": False,
+        "browser_movie_upload": False,
+        "editor_url": prefix + "timeline/editor.js",
+        "entry_url": prefix + "timeline_studio.js",
+    }
+
+
 def _prune(root, pattern, limit_bytes, keep):
     """Keep a derived-media directory under ``limit_bytes``, oldest first."""
     import re
@@ -104,29 +130,18 @@ def register_routes():
         """
         import nodes
 
-        expected = (Path(__file__).resolve().parent.parent / "web").resolve()
-        matches = [
-            name
-            for name, directory in nodes.EXTENSION_WEB_DIRS.items()
-            if Path(directory).resolve() == expected
-        ]
-        if len(matches) != 1:
+        expected = Path(__file__).resolve().parent.parent / "web"
+        try:
+            manifest = native_runtime_manifest(
+                nodes.EXTENSION_WEB_DIRS, expected
+            )
+        except ValueError as exc:
             return web.json_response(
-                {"error": "Timeline Studio frontend registration is missing or ambiguous",
-                 "contract": NATIVE_PATH_CONTRACT},
+                {"error": str(exc), "contract": NATIVE_PATH_CONTRACT},
                 status=503, headers={"Cache-Control": "no-store"},
             )
-        prefix = "/extensions/" + quote(matches[0], safe="") + "/"
         return web.json_response(
-            {
-                "contract": NATIVE_PATH_CONTRACT,
-                "transport": "native-selected-path",
-                "drive_scan": False,
-                "browser_movie_upload": False,
-                "editor_url": prefix + "timeline/editor.js",
-                "entry_url": prefix + "timeline_studio.js",
-            },
-            headers={"Cache-Control": "no-store"},
+            manifest, headers={"Cache-Control": "no-store"},
         )
 
     @endpoint("post", "/compile")
