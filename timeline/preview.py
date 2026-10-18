@@ -16,7 +16,6 @@ from .model import active_clips, rational, source_time
 FIRST_SEGMENT_FRAMES = 48
 NEXT_SEGMENT_FRAMES = 144
 MAX_SEGMENT_FRAMES = 192
-PREVIEW_MAX_EDGE = 480
 
 
 def simple_source(p, start, stop):
