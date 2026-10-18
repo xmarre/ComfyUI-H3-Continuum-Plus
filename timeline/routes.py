@@ -17,7 +17,10 @@ from aiohttp import web
 
 from .media import MEDIA_FORMATS, preview_audio_window, run_process, video_frames
 from .protocol import NATIVE_PATH_CONTRACT, native_runtime_manifest
-from .model import compile_project, selected_export_range, validate
+from .model import (
+    compile_project, selected_export_range, validate,
+    verify_export_clip_selection,
+)
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
@@ -631,6 +634,9 @@ def register_routes():
         if codec not in ("lossless", "h264"):
             raise ValueError("Unknown export codec")
         start, stop = selected_export_range(p, data.get("render_range"))
+        verify_export_clip_selection(
+            p, data.get("selected_clip_ids", []), start, stop
+        )
         frames = stop - start
         active = sum(t["status"] == "running" for t in _tasks.values())
         if active >= 2:
