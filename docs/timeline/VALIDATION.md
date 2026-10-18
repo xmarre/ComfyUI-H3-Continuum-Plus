@@ -1,10 +1,19 @@
 # Validation and hardware acceptance
 
-## Executed evidence
+## Executed evidence and outstanding hardware acceptance
 
-The validated mirror GitHub Actions matrix passed **589 Python tests** on each of Python 3.10–3.13, **20 JavaScript editor tests**, and the publisher toolchain. Final-head checks on PR #51 remain authoritative. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript suite now contains **20 tests**, including drag-only transport and cancellation. Syntax, compileall and the repository's targeted Ruff checks pass.
+The earlier browser-fingerprint implementation passed 589 Python and 20
+JavaScript tests across a four-version CI matrix, but was rejected because it
+required recursive drive searches. Those results **do not qualify** the native
+desktop replacement. The current mirror/final CI must be checked separately.
 
-The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10, 3.11, 3.12 and 3.13, including publisher-toolchain verification. Final commit checks are authoritative on the implementation PR.
+Native desktop bridge validation adds direct-path mapping, refusal of UNC and
+traversal, no movie-byte upload, path privacy, transaction cancellation and
+explicit failure in ordinary Chrome. The Windows CI workflow builds an unsigned
+portable Electron executable as a validation artifact. A Windows packaging
+check is **not** equivalent to physically dragging an Explorer file into the
+actual ComfyUI UI and exercising live WSL link, playback, export and subsequent
+queued H3 jobs. That remains required before production release.
 
 | Layer | Executed check | What it establishes |
 | --- | --- | --- |
@@ -15,7 +24,7 @@ The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10
 | Prompt transport | Timed regions compile through the native physical compiler onto each invocation's clock, including continuation context; no neighboring chunk text | Correct physical-local prompt timing; not H3 prompt adherence |
 | Long source | A real two-hour video, with a selected seven-second window, decodes fewer than 64 source frames including seek context | No complete-film decode on the selected video path; does not quantify every codec's memory use |
 | Composition | Lossless normalized RGB and float PCM comparisons; replacement interval with unchanged original frames and soundtrack outside it; generated-audio fallback against partial/muted final audio; cancellation cleanup | Working retained/generated composition and normalized export |
-| Persistence / no-copy drop | Atomic project saves; incremental drag fingerprints and strict no-upload frontend requests; unique original matching across server directories; SHA-256 checks for every chunk, even outside quick samples; ambiguous/absent originals, unsafe paths and changed source rejection; link persistence across reopen; PCM cache opt-in | Disk/project identity behavior, unsupported-hard-link fault injection, concurrent fallback imports, corrupt-copy repair including coarse filesystem timestamps, and verification cancellation |
+| Persistence / no-copy drop | Atomic project saves; incremental drag fingerprints and strict no-upload frontend requests; direct native-selected file linking without any directory scans; path allowlisting; missing/altered source rejection; link persistence across reopen; PCM cache opt-in | Disk/project identity behavior, unsupported-hard-link fault injection, concurrent fallback imports, corrupt-copy repair including coarse filesystem timestamps, and verification cancellation |
 | Real ComfyUI server | Import, save/reopen, compile, thumbnails, waveform, bounded composition preview and export endpoints; four registered nodes; actual queued Studio→Export execution; accept/reject/restore through rendered take metadata fixtures | HTTP/node integration without trained weights |
 | Real ComfyUI frontend | Open, split, undo/redo, save/reload, typing isolation, view state kept out of the prompt input, A/B transport, composed AV preview, independent cloning and repeated paste, multi-job reroll queued in order with a fresh nonce, workflow disposal, graph serialization, delivered sampler-workflow serialization, 70-job cancellation ownership after reopening and a pending-to-running cancellation race | Browser integration on ComfyUI 0.41.0 / frontend 1.55.18; earlier coverage on frontend 1.55.17 |
 

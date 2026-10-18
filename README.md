@@ -2,7 +2,27 @@
 
 ## Timeline Studio (draft integration)
 
-A separate compact Timeline Studio node opens a resizable editor for retained footage, scoped prompts/references/audio, native Continuum jobs, alternatives and final composition. Drag-and-drop or **Import media** locates an existing original on Windows drives mounted in WSL, using bounded client-side SHA-256 chunk hashes and server-side byte-for-byte verification. Movie bytes are never uploaded or duplicated; failed resolution never falls back to a copy. Whole-stream PCM disk caching is disabled by default. Cold-drive discovery, actual Windows/WSL runtime throughput, and browser-only file access outside mounted drives remain unqualified. See the [Timeline user guide](docs/timeline/USER_GUIDE.md) for link-root configuration and cache storage. Existing V3.4 nodes remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md), [architecture](docs/timeline/ARCHITECTURE.md), [validation and GPU acceptance](docs/timeline/VALIDATION.md), and [importable examples](examples/timeline). This integration still requires trained-H3 hardware qualification before production readiness.
+A compact Timeline Studio node opens a resizable editor for retained footage,
+scoped prompts/references/audio, native Continuum jobs, alternatives and final
+composition. **True no-copy Explorer drag requires the Windows
+[Continuum Timeline Desktop](desktop/timeline-native/README.md) wrapper**.
+Electron's native `webUtils.getPathForFile` supplies the actual selected path
+privately; the WSL backend links and hashes that exact source in place, stores
+only a small content-addressed pointer, and **never scans directories**.
+The native UI neither uploads nor duplicates the original movie.
+
+**Important:** ordinary Chrome cannot expose a dropped source's absolute path.
+In Chrome the editor explicitly refuses zero-copy import; it does not scan,
+upload or silently create a managed copy. The desktop wrapper must be launched
+once instead of a normal Chrome tab; an ordinary ComfyUI custom node/Patcher
+install cannot grant browser-level native file permissions. The Windows desktop
+package still requires physical Explorer drag, WSL mount and signing validation.
+Whole-stream PCM disk caching is disabled by default. Existing V3.4 nodes
+remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md),
+[architecture](docs/timeline/ARCHITECTURE.md),
+[validation](docs/timeline/VALIDATION.md), and
+[importable examples](examples/timeline). Trained-H3 hardware acceptance remains
+pending before production release.
 
 ## v3.4.11 — Comfy Registry ownership (17 October 2026)
 

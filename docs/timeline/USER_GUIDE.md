@@ -42,11 +42,40 @@ Saved Timeline workflows migrate positional widget values to named values before
 
 ## Importing and editing a movie
 
-**Drag a movie from Windows Explorer into Timeline Studio.** No source path, environment variable, upload choice or configuration is needed when the movie is on a Windows drive already mounted in WSL (normally `/mnt/c`, `/mnt/d`, etc.). **Import media** and **Relink** use the same no-copy resolver. The browser reads the dropped file in bounded 16 MiB chunks and sends only its basename, length and SHA-256 chunk hashes. **No movie bytes are uploaded.** ComfyUI searches mounted Windows drives and its input directory for the original, checks filename and size, compares widely spaced chunk hashes, then verifies **every chunk** before registering a tiny path record. It does not create a second movie or automatically fall back to uploading one. The original remains at its existing path. Library entries and soundtrack lanes are references, not copies. A failure to locate a unique match is reported without importing media.
+**Use Continuum Timeline Desktop on Windows, not an ordinary Chrome tab.**
+The desktop wrapper hosts your same ComfyUI frontend and uses Electron's
+native Explorer file-path API in an isolated preload. A one-time Windows
+portable application is required because browsers deliberately hide the
+original full path. See [Windows wrapper setup](../../desktop/timeline-native/README.md).
+After launching it, **drag the movie from Windows Explorer** into Timeline
+Studio or click Import media. No per-video paths, settings, scans, search
+indexing, uploads or movie duplicates. The same applies to Relink.
 
-The discovery covers drives *already mounted in WSL*, not arbitrary browser-only locations. A file on an inaccessible/unmounted drive, an unsupported browser origin without Web Crypto, or multiple indistinguishable source files can fail explicit resolution; Studio never silently copies the film. Cold discovery must traverse potentially large filesystem trees and is bounded to ten minutes; its speed on an actual multi-terabyte WSL drive has **not** been qualified. Files larger than 128 GiB are currently rejected. Existing previously uploaded managed media is not deleted when a matching original is discovered. For linked assets, moving, deleting or modifying the original invalidates its registered identity and requires dragging the file again. Registry pointers survive editor/browser/server restart as long as the same WSL drives remain mounted. The manual server-path endpoint remains for API compatibility but is not part of the drag workflow.
+The isolated desktop bridge privately translates the *selected* Windows drive
+path to its exact WSL mount location, e.g. `D:\\Videos\\film.mkv` to
+`/mnt/d/Videos/film.mkv`. It submits the path to the same-origin
+`/h3_continuum/timeline/link` endpoint, without disclosing the absolute path
+to page JavaScript. The backend checks that the source is a regular file under
+an allowed mounted root, reads it once to establish its SHA-256 identity, probes
+the media, and stores only a tiny persistent path pointer. There is **no
+recursive directory traversal**, Windows Search, guessing from file name,
+browser movie-byte transfer, or full source movie copy. A previously stored
+managed copy with an identical hash is retained instead of silently deleted.
+The original must remain at its current path and unchanged for subsequent
+playback, sampling and export, including after a ComfyUI restart. Invalid or
+missing drives fail explicitly; there is no upload fallback.
 
-By default Studio does **not** cache complete decoded audio streams to disk. The optional `H3_TIMELINE_PCM_CACHE_GB` setting enables that disk cache explicitly. Without it, repeated late audio windows can incur expensive sequential prefix decoding; this long-movie performance tradeoff still requires WSL measurement. Bounded thumbnail/proxy/composition windows, generated takes and exports still use storage as required. Imported media pointers live under `<ComfyUI input>/h3_timeline_studio/assets/`; the original movie remains outside this directory. Set project duration and render out to the intended movie duration. A two-hour movie is never decoded into an IMAGE batch; scrubbing, thumbnails and model inputs request bounded source windows.
+Ordinary Chrome **cannot** supply a native path and now displays an explicit
+zero-copy desktop requirement; it will not attempt a drive scan. The legacy
+`/import` HTTP API still exists solely for external clients and is not
+called by Studio drag, file-picker or relink.
+
+Full-stream decoded audio caching is off by default. Set
+`H3_TIMELINE_PCM_CACHE_GB` to opt into its disk cache; disabling it can slow
+repeated late audio seeks. Bounded preview proxies, generated takes and exports
+still consume disk, but **import never duplicates the original movie**.
+Set the project duration and render out as intended. Two-hour sources are
+decoded in selected video/audio windows, not into a full-film IMAGE batch.
 
 Drag an asset card onto an existing track to place another selection. Set the clip's source in and out in absolute source PTS seconds, and timeline in/out in output frames. Track order is bottom-to-top composition precedence: the last active footage track owns overlapping video. Hidden changes display; muted changes output. Locked tracks resist timeline editing operations.
 

@@ -22,11 +22,45 @@ Reference media is materialized at the actual invocation, and conditioning cache
 
 ## Media and server boundary
 
-`timeline/media.py` owns streamed, content-addressed managed uploads and explicit no-copy links to operator-allowlisted server files. Linked assets use SHA-256-named path pointers rather than copying movie bytes. Every source is verified at registration and after its filesystem identity changes; missing, modified, or disallowed source files fail closed. Browser drag-and-drop cannot reveal an absolute path, so `web/timeline/file_identity.js` hashes the local File in bounded 16 MiB chunks and POSTs only its name, byte length and chunk SHA-256 digests. `timeline/discovery.py` searches mounted WSL Windows drives and configured server roots for a unique metadata/quick-hash match; `AssetStore.link(expected_chunks=...)` then verifies every byte while computing the native content-addressed SHA-256, before publishing a tiny path pointer. The drop and picker never POST the movie and never silently fall back to a managed upload. Browser chunk hashing, cold-drive recursion and server verification cost I/O but not film-sized disk copies. Missing or ambiguous originals return an explicit error. The opt-in manual path endpoint and legacy upload endpoint remain for older external integrations, not the Studio UI. The module also owns PTS-based frame selection, exact sample-grid PCM windows with full-stream disk caching disabled by default (explicit opt-in), mixing and optimistic atomic project persistence. Probe results are memoized by file identity. Per-asset cancellable locks serialize publication and repair within the server. Re-import forces a content-hash check even when coarse filesystem timestamps match the verification cache. Healthy duplicate imports retain their file identity; a verified re-import repairs corrupt registered bytes. Publication prefers hard links and falls back to a same-filesystem move when links are unsupported. Import routes use request-local cancellation for verification as well as media decoding. PCM mappings are opened under the eviction guard; waiting readers remain cancellable. Streams larger than the configured PCM budget use sample-selected sequential decoding with bounded RAM/disk windows, at the cost of repeated prefix decoding. Browser-controlled paths are never opened. Playlist demuxers are excluded, and registered IDs are validated before lookup. Asset content is checked before sampling. Large-file upload streams in bounded chunks directly into the asset store, hashed as it arrives. Route-side media work uses request-local cancellation and never reads ComfyUI's execution interrupt flag, which reading would clear.
+The ordinary web File API cannot yield a real Windows source path. The
+`desktop/timeline-native` Electron wrapper is a separate loopback-only
+Windows host for the existing frontend, not another media backend. Its
+sandboxed/context-isolated preload calls `webUtils.getPathForFile` for an
+Explorer-selected File, validates and maps the drive-qualified path to
+`/mnt/<letter>/...`, and POSTs only that path to the existing allowlisted
+`/link` route. The page sees asset metadata, not the filesystem path.
+Invalid Windows paths, UNC shares and traversal sequences fail closed. The
+same UI running in ordinary Chrome rejects drop/picker/relink with a clear
+native-desktop requirement. No browser byte hashing or upload fallback.
 
-`timeline/compose.py` performs aspect-preserving nearest-PTS normalization and ordered retained/generated composition in one-second blocks. The lossless route is FFV1 plus float PCM; the delivery route is H.264/AAC. It is not compressed stream copy. Source media stays authoritative outside selected accepted replacements. Bounded composition previews use this same video/audio path.
+`timeline/mounts.py` enumerates immediate `/mnt` drive-letter mounts solely
+to configure the server allowlist; it never searches drive contents.
+`timeline/media.py` resolves and validates the precise native-selected path,
+streams a SHA-256 hash without copying, probes the file and stores a persistent
+SHA-256-named JSON pointer. Mutated, missing, symlink-escaping or disallowed
+sources are rejected. Browser drag/drop never calls the legacy `/import`
+endpoint, and the removed `/resolve-dropped` search endpoint cannot run.
+The legacy upload endpoint remains for external API compatibility only. The
+`/link` request watches disconnection and cancels hashing between blocks;
+long ffprobe subprocess operations may remain uninterruptible until return.
 
-`timeline/routes.py` registers same-origin project, import, allowlisted link, media, thumbnail, waveform, proxy, input compilation, take-selection, composition-preview and cancellable export endpoints. The current server instance owns its export tasks; projects and takes survive restart on disk. `timeline/nodes.py` is a UI facade over those modules and native Continuum.
+Media windows use FFmpeg/PyAV PTS-based frame selection, exact sample-grid PCM
+decoding, normalized final composition and bounded previews. Full-stream PCM
+disk caching is disabled by default, with explicit opt-in available. Repeated
+late audio seeks may therefore decode stream prefixes repeatedly; this and
+Windows/WSL actual Explorer drop behavior still require runtime qualification.
+Existing content-addressed adoption, repair, locks, source change checks,
+project persistence, audio routing and all V3.4 sampler controls are preserved.
+
+`timeline/compose.py` performs nearest-PTS video normalization and retained /
+accepted generated composition in one-second blocks, using FFV1/float PCM for
+lossless output or H.264/AAC for delivery. These derived outputs are not source
+movie copies and are separate from import.
+
+`timeline/routes.py` registers same-origin project, legacy import, native
+allowlisted link, thumbnail, waveform, bounded proxy, compilation, take
+selection, composition-preview and cancellable export endpoints. The native
+wrapper's privileged path bridge is not exposed to third-party origins.
 
 ## Frontend
 
