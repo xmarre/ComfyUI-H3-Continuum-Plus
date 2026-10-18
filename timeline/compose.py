@@ -1,0 +1,142 @@
+"""Bounded composition of retained footage and selected rendered alternatives."""
+
+from __future__ import annotations
+
+import math
+from fractions import Fraction
+from pathlib import Path
+
+import numpy as np
+
+from .media import check_cancel, mix_audio, run_process, video_frames
+from .model import active_clips, source_time
+
+AUDIO_BLOCK_FRAMES = 24 * 30
+
+
+def render_frames(
+    p,
+    assets,
+    start,
+    end,
+    width,
+    height,
+    *,
+    roles=None,
+    gap="black",
+    cancel=check_cancel,
+):
+    roles = roles or {"retained", "generated"}
+    count = end - start
+    output = np.zeros((count, height, width, 3), dtype=np.uint8)
+    coverage = np.zeros(count, dtype=bool)
+    # Process one clip window at a time. Last track/clip owns overlapping pixels.
+    for _, c in active_clips(p, start, end, roles):
+        a, b = max(start, c["start"]), min(end, c["end"])
+        stamps = [source_time(c, f) for f in range(a, b)]
+        frames = video_frames(
+            assets.verify(c["asset_id"], cancel=cancel),
+            stamps,
+            width,
+            height,
+            padding=c["padding"],
+            cancel=cancel,
+        )
+        output[a - start : b - start] = frames
+        coverage[a - start : b - start] = True
+    if gap == "error" and not coverage.all():
+        raise ValueError(
+            "Video guidance has a gap; add footage or remove guidance for this chunk"
+        )
+    if gap == "hold" and coverage.any() and not coverage.all():
+        # Uncovered guide frames repeat the nearest earlier covered frame, or
+        # the first covered frame before any coverage.
+        covered = np.flatnonzero(coverage)
+        source = covered[
+            np.clip(np.searchsorted(covered, np.arange(count), "right") - 1, 0, None)
+        ]
+        output = output[source]
+    return output
+
+
+def write_video_frames(frames, path, fps=24):
+    """Lossless CPU take encoding with an explicit RGB -> GBR pixel format."""
+    import av
+
+    with av.open(str(path), "w", format="matroska") as container:
+        stream = container.add_stream("ffv1", rate=fps)
+        stream.width = frames.shape[2]
+        stream.height = frames.shape[1]
+        stream.pix_fmt = "bgr0"
+        for i, pixels in enumerate(frames):
+            check_cancel()
+            frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
+            frame.pts = i
+            frame.time_base = Fraction(1, fps)
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def export_project(
+    p, store, output, *, codec="lossless", cancel=check_cancel,
+    render_range=None, preview=False, on_progress=None
+):
+    """Stream a long composition in one-second CPU windows.
+
+    FFV1 + PCM is pixel/sample preserving after declared scaling/time sampling.
+    H.264/AAC is a distribution re-encode, never claimed bit exact.
+    """
+    import av
+
+    start, stop = render_range or (0, p["duration_frames"])
+    # A retained render must never silently use stale generated footage.
+    from .nodes import stale_take, takes
+
+    records = takes(store, p["project_id"])
+    by_id = {r["id"]: r for r in records}
+    for track in p["tracks"]:
+        if track.get("muted") or track["role"] != "generated":
+            continue
+        for c in track["clips"]:
+            if c["end"] <= start or c["start"] >= stop:
+                continue
+            take_id = c.get("take_id")
+            if take_id and (
+                take_id not in by_id
+                or stale_take(
+                    p,
+                    by_id[take_id],
+                    records,
+                    end_frame=by_id[take_id].get(
+                        "output_range", by_id[take_id]["range"]
+                    )[0]
+                    + math.ceil(
+                        max(source_time(c, c["start"]), source_time(c, c["end"] - 1))
+                        * 24
+                        + 1
+                    ),
+                    check_selection=True,
+                )
+            ):
+                raise ValueError(
+                    "Selected generated footage has stale inputs or continuation; choose a valid take before export"
+                )
+    rate = int(
+        p.get(
+            "audio_sample_rate",
+            next(
+                (int(a["audio"]["sample_rate"]) for a in p["assets"] if a.get("audio")),
+                48000,
+            ),
+        )
+    )
+    from .export_stream import encode_export
+
+    return encode_export(
+        p, store, output, start, stop, rate,
+        codec=codec, cancel=cancel, preview=preview,
+        on_progress=on_progress,
+    )
+
