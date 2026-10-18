@@ -107,15 +107,28 @@ else {
       for (const job of pendingLinks.values()) job.abort.abort();
       pendingLinks.clear();
     };
-    window.on("close", stopPendingLinks);
+    // Electron's normal close() can wait forever for a busy ComfyUI renderer
+    // to complete its beforeunload handler. The OS window close must never
+    // depend on JS running inside that renderer.
+    let shuttingDown = false;
+    const forceQuit = (event) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      event?.preventDefault?.();
+      stopPendingLinks();
+      try {
+        if (!window.isDestroyed()) window.destroy();
+      } finally {
+        app.exit(0);
+      }
+    };
+    window.on("close", forceQuit);
     window.webContents.on("before-input-event", (event, input) => {
       if (input.type === "keyDown" &&
           input.control && input.shift &&
           input.key?.toLowerCase() === "q") {
         event.preventDefault();
-        // Emergency exit bypasses a stalled renderer's beforeunload handlers.
-        stopPendingLinks();
-        window.destroy();
+        forceQuit();
       }
     });
 
