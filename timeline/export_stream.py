@@ -72,18 +72,6 @@ def _export_pcm_cache(p, store, start, stop, rate, workdir, *, cancel):
     return PcmCache(Path(workdir) / "pcm", limit_bytes=required)
 
 
-def _make_audio_frame(av, pcm, first_sample, fmt):
-    pcm = np.asarray(pcm, dtype=np.float32)
-    if fmt == "fltp":
-        data = np.ascontiguousarray(pcm)
-    else:
-        data = np.ascontiguousarray(pcm.T.reshape(1, -1))
-    frame = av.AudioFrame.from_ndarray(data, format=fmt, layout="stereo")
-    frame.pts = first_sample
-    frame.time_base = Fraction(1, frame.sample_rate or 1)
-    return frame
-
-
 def encode_export(
     p,
     store,
@@ -95,6 +83,7 @@ def encode_export(
     codec,
     cancel=check_cancel,
     on_progress=None,
+    preview=False,
 ):
     """One-pass direct container mux, bounded per-second media preparation."""
     import av
@@ -116,8 +105,10 @@ def encode_export(
         with tempfile.TemporaryDirectory(
             prefix="h3-export-scratch-", dir=output.parent
         ) as scratch:
-            cache = _export_pcm_cache(
-                p, store, start, stop, rate, scratch, cancel=cancel
+            cache = (
+                None if preview else _export_pcm_cache(
+                    p, store, start, stop, rate, scratch, cancel=cancel
+                )
             )
             on_progress(stage="encoding", frames_done=0, total_frames=total)
             container_format = "matroska" if codec == "lossless" else "mp4"
@@ -134,7 +125,12 @@ def encode_export(
                 vstream.height = p["height"]
                 vstream.pix_fmt = "bgr0" if codec == "lossless" else "yuv420p"
                 if codec == "h264":
-                    vstream.options = {"crf": "16", "preset": "medium"}
+                    vstream.options = {
+                        "crf": "27" if preview else "16",
+                        "preset": "ultrafast" if preview else "medium",
+                    }
+                if preview:
+                    vstream.thread_count = 1
                 astream = container.add_stream(
                     "pcm_f32le" if codec == "lossless" else "aac", rate=rate
                 )
@@ -161,7 +157,8 @@ def encode_export(
                             container.mux(packet)
                     pcm = mix_audio(
                         p, store.assets, a, b, rate, "final",
-                        cancel=cancel, export_cache=cache,
+                        cancel=cancel, preview=preview,
+                        export_cache=cache,
                     )
                     for index in range(
                         0, pcm.shape[1], AUDIO_CHUNK_SAMPLES
