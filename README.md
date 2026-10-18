@@ -16,7 +16,7 @@ In Chrome the editor explicitly refuses zero-copy import; it does not scan,
 upload or silently create a managed copy. The desktop wrapper must be launched
 once instead of a normal Chrome tab; an ordinary ComfyUI custom node/Patcher
 install cannot grant browser-level native file permissions. The Windows desktop
-package has now passed a real packaged-Windows startup and OS-backed File IPC smoke test. Physical Explorer drag into actual WSL ComfyUI, media sampling/export and code signing still require qualification. Startup probes the local ComfyUI `/system_stats` API and presents connection diagnostics and a local URL field instead of a blank page; native path registration uses main-process IPC.
+package has now passed a real packaged-Windows startup and OS-backed File IPC smoke test. Physical Explorer drag into actual WSL ComfyUI, media sampling/export and code signing still require qualification. Startup also verifies the installed Timeline Python/frontend no-scan protocol rather than trusting a possibly stale Patcher overlay. It refuses the old recursive-search implementation with actionable diagnostics. Startup probes the local ComfyUI `/system_stats` API and presents connection diagnostics and a local URL field instead of a blank page; native path registration uses main-process IPC.
 Whole-stream PCM disk caching is disabled by default. Existing V3.4 nodes
 remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md),
 [architecture](docs/timeline/ARCHITECTURE.md),
