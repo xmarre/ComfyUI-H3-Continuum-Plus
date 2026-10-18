@@ -122,6 +122,23 @@ thumbnail/waveform/proxy requests are cancellable. These changes do not relax
 the generation/export audio phase contract. Long-source WSL performance and
 physical native playback still require runtime qualification.
 
+## Source-resolution export and explicit H3 guidance regression (2026-10-18)
+
+The editor originally wrote the selected movie clip through the project canvas
+(typically 768×512) even when its registered original was higher resolution.
+FFV1 only preserved those downscaled pixels. The source-resolution option now
+selects verified source geometry independently of H3's generation canvas. A
+CPU/FFmpeg fixture exercises 64×64 source footage with a 32×32 timeline,
+checks exact FFV1 output pixels at source size, keeps the existing canvas-size
+regression, and rejects ambiguous mixed sources and audio-only native export.
+The JS routing test verifies that one retained clip is placed directly onto a
+video-guidance track with exact source PTS, idempotently and without an export.
+The native-path protocol was bumped to require a correspondingly updated
+Windows host, served editor and ComfyUI backend. Real 1080p/HDR clips, desktop
+Explorer import and GPU sampling remain unqualified until exercised on target
+hardware; native spatial resolution does not preserve >8-bit precision or
+source VFR timestamps.
+
 ## Full-resolution playback and final export regression (2026-10-18)
 
 An earlier latency fix silently reduced composed playback to at most
