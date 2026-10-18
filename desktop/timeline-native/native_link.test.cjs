@@ -44,7 +44,7 @@ test("Bridge forbids empty native paths before making any request", async () => 
       fetchImpl: async () => { requested = true; },
       pending: new Map(),
     }),
-    /Windows Explorer/,
+    /drive-letter files mounted in WSL/,
   );
   assert.equal(requested, false);
 });
