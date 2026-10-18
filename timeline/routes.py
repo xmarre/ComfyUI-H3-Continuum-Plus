@@ -13,7 +13,6 @@ import uuid
 
 from aiohttp import web
 
-from .discovery import find_original
 from .media import MEDIA_FORMATS, audio_window, run_process, video_frames
 from .model import compile_project, validate
 from .nodes import project_store, stale_take, take_path, takes
@@ -21,7 +20,6 @@ from .nodes import project_store, stale_take, take_path, takes
 _PREFIX = "/h3_continuum/timeline"
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
-_lookup_slots = asyncio.Semaphore(1)  # Avoid simultaneous full-drive traversals.
 # Registered media is content addressed, so derived views never change.
 _IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}
 
@@ -113,66 +111,6 @@ def register_routes():
                 project_store().read, request.match_info["project_id"]
             )
         )
-
-    @endpoint("post", "/resolve-dropped")
-    async def resolve_dropped(request):
-        """Resolve a dropped File on mounted server drives without uploading it.
-
-        Only a basename, byte length and per-chunk hashes cross the browser
-        boundary. A content mismatch or ambiguous location never falls back
-        to copying a user's movie.
-        """
-        fingerprint = await request.json()
-        store = project_store()
-        stopped = threading.Event()
-
-        def cancel_lookup():
-            if stopped.is_set():
-                raise InterruptedError("Dropped-media lookup cancelled")
-
-        def discover_and_link():
-            path, chunks = find_original(
-                fingerprint, store.assets.link_roots, cancel=cancel_lookup
-            )
-            return store.assets.link(
-                path, cancel=cancel_lookup, expected_chunks=chunks
-            )
-
-        async with _lookup_slots:
-            task = asyncio.create_task(asyncio.to_thread(discover_and_link))
-
-            async def watch_disconnect():
-                # aiohttp's default handler lifecycle does not necessarily
-                # cancel a handler when its client aborts a fetch. Stop the
-                # drive traversal instead of occupying the singleton slot.
-                while not task.done():
-                    transport = request.transport
-                    if transport is None or transport.is_closing():
-                        stopped.set()
-                        return
-                    await asyncio.sleep(0.25)
-
-            watcher = asyncio.create_task(watch_disconnect())
-            try:
-                asset = await asyncio.shield(task)
-            except asyncio.CancelledError:
-                stopped.set()
-                try:
-                    await task
-                except InterruptedError:
-                    pass
-                raise
-            finally:
-                watcher.cancel()
-                await asyncio.gather(watcher, return_exceptions=True)
-        if asset.get("video") and (
-            asset["video"].get("nb_frames") == "1"
-            or asset["name"].lower().endswith(
-                (".png", ".jpg", ".jpeg", ".webp", ".bmp")
-            )
-        ):
-            asset["kind"] = "image"
-        return web.json_response(asset)
 
     @endpoint("post", "/link")
     async def link_server_media(request):

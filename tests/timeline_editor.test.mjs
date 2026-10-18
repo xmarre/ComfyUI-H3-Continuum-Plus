@@ -332,81 +332,69 @@ test("ripple extension inserts time in spanning audio instead of shifting its ea
   assert.equal(p.duration_frames, 528);
 });
 
-test("drag-only import sends SHA-256 fingerprints and never uploads movie bytes", async () => {
-  const data = new Uint8Array([1, 2, 3, 4, 5, 6]);
-  const file = Object.assign(new Blob([data]), { name: "two-hour.mkv" });
+test("native desktop drag links the original without issuing an upload", async () => {
+  const file = { name: "two-hour.mkv", size: 9000000000 };
+  const asset = { id: "abc", name: file.name, storage: "linked" };
+  const previous = globalThis.h3NativeMedia;
   const calls = [];
-  const placed = [];
-  const editor = {
-    api: {
-      fetchApi: async (path, options) => {
-        calls.push([path, options]);
-        return new Response(
-          JSON.stringify({ id: "a", name: file.name, storage: "linked" }),
-        );
+  try {
+    globalThis.h3NativeMedia = {
+      async linkFile(selected) {
+        calls.push(selected);
+        return asset;
       },
-    },
-    abort: new AbortController(),
-    message: () => {},
-    addImportedAsset: (asset) => placed.push(asset),
-    resolveOriginal(f) {
-      return TimelineEditor.prototype.resolveOriginal.call(this, f);
-    },
-  };
-  await TimelineEditor.prototype.importFiles.call(editor, [file]);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0][0], "/h3_continuum/timeline/resolve-dropped");
-  const options = calls[0][1];
-  assert.equal(typeof options.body, "string");
-  assert.equal(options.method, "POST");
-  assert.equal(options.timeoutMs, null);
-  assert.equal(options.signal, editor.abort.signal);
-  const fingerprint = JSON.parse(options.body);
-  assert.equal(fingerprint.name, "two-hour.mkv");
-  assert.equal(fingerprint.size, data.length);
-  assert.equal(fingerprint.chunk_size, 16 * 1024 * 1024);
-  const expected = await crypto.subtle.digest("SHA-256", data);
-  assert.equal(
-    fingerprint.chunks[0],
-    Buffer.from(expected).toString("hex"),
-  );
-  assert.equal(fingerprint.chunks.length, 1);
-  assert.equal(placed[0].storage, "linked");
+    };
+    const imported = [];
+    const editor = {
+      abort: new AbortController(),
+      message: () => {},
+      resolveOriginal(f) {
+        return TimelineEditor.prototype.resolveOriginal.call(this, f);
+      },
+      addImportedAsset(a) { imported.push(a); },
+      api: { fetchApi() { throw new Error("Full-file upload is forbidden"); } },
+    };
+    await TimelineEditor.prototype.importFiles.call(editor, [file]);
+    assert.deepEqual(calls, [file]);
+    assert.deepEqual(imported, [asset]);
+  } finally {
+    globalThis.h3NativeMedia = previous;
+  }
 });
 
-test("cancelled drag makes no server request or copied movie", async () => {
-  const file = Object.assign(new Blob([new Uint8Array([1, 2])]), {
-    name: "cancel.mkv",
-  });
-  const abort = new AbortController();
-  abort.abort(new Error("cancelled"));
-  let sent = false;
-  const editor = {
-    abort,
-    message: () => {},
-    api: { fetchApi: () => { sent = true; throw new Error("unexpected"); } },
-  };
-  await assert.rejects(
-    TimelineEditor.prototype.resolveOriginal.call(editor, file),
-    /cancelled/,
-  );
-  assert.equal(sent, false);
+test("ordinary browser drag fails without scanning or copying", async () => {
+  const previous = globalThis.h3NativeMedia;
+  try {
+    delete globalThis.h3NativeMedia;
+    const editor = {
+      abort: new AbortController(),
+      message: () => {},
+      api: { fetchApi() { throw new Error("No HTTP calls allowed"); } },
+    };
+    await assert.rejects(
+      TimelineEditor.prototype.resolveOriginal.call(editor, { name: "movie.mkv" }),
+      /Timeline Studio Desktop/,
+    );
+  } finally {
+    globalThis.h3NativeMedia = previous;
+  }
 });
 
-test("drag fingerprints bound memory to one chunk at a time", async () => {
-  const { fingerprintFile, CHUNK_BYTES } = await import(
-    "../web/timeline/file_identity.js"
-  );
-  const segments = [
-    new Uint8Array(CHUNK_BYTES).fill(17),
-    new Uint8Array([1, 2, 3]),
-  ];
-  const file = Object.assign(new Blob(segments), { name: "sample.mkv" });
-  const steps = [];
-  const result = await fingerprintFile(file, {
-    progress: (done) => steps.push(done),
-  });
-  assert.equal(result.chunks.length, 2);
-  assert.deepEqual(steps, [CHUNK_BYTES / file.size, 1]);
-  assert.notEqual(result.chunks[0], result.chunks[1]);
+test("cancelled native drop cannot start source registration", async () => {
+  const previous = globalThis.h3NativeMedia;
+  let called = false;
+  try {
+    globalThis.h3NativeMedia = { linkFile: () => { called = true; } };
+    const abort = new AbortController();
+    abort.abort(new Error("cancelled"));
+    await assert.rejects(
+      TimelineEditor.prototype.resolveOriginal.call({
+        abort, message: () => {},
+      }, { name: "cancel.mkv" }),
+      /cancelled/,
+    );
+    assert.equal(called, false);
+  } finally {
+    globalThis.h3NativeMedia = previous;
+  }
 });

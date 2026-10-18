@@ -14,7 +14,6 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { fingerprintFile } from "./file_identity.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
   "retained",
@@ -501,25 +500,20 @@ export class TimelineEditor {
     });
   }
   async resolveOriginal(file) {
-    this.message("Verifying " + file.name + " locally · no movie upload…");
-    const fingerprint = await fingerprintFile(file, {
-      signal: this.abort.signal,
-      progress: (done) =>
-        this.message(
-          "Checking " + file.name + " · " + Math.floor(done * 100) +
-            "% · original stays in place",
-        ),
-    });
-    this.message("Locating original on mounted Windows drives…");
-    const asset = await request(this.api, "/resolve-dropped", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fingerprint),
-      signal: this.abort.signal,
-      timeoutMs: null,
-    });
+    if (this.abort.signal.aborted) throw this.abort.signal.reason;
+    const native = globalThis.h3NativeMedia;
+    if (!native || typeof native.linkFile !== "function") {
+      throw new Error(
+        "Zero-copy drag requires Timeline Studio Desktop for Windows. " +
+        "An ordinary browser does not expose the file path; " +
+        "Studio will not scan drives or upload/copy the movie.",
+      );
+    }
+    this.message("Linking the selected original in place · no scan or upload…");
+    const asset = await native.linkFile(file);
+    if (this.abort.signal.aborted) throw this.abort.signal.reason;
     if (asset.storage !== "linked" && asset.storage !== "managed") {
-      throw new Error("Media resolver returned an unknown storage type");
+      throw new Error("Native media bridge did not return a registered asset");
     }
     return asset;
   }
