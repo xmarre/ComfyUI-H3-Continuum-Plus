@@ -321,6 +321,22 @@
   height: 25px;
   pointer-events: none;
 }
+.h3ts-input-route {
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #b7c9cf;
+  background: #1b2530;
+  border-bottom: 1px solid #303c49;
+  flex-shrink: 0;
+}
+.h3ts footer label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
 .h3ts footer {
   display: flex;
   gap: 8px;
