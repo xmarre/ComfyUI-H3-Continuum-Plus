@@ -21,7 +21,7 @@ import uuid
 import numpy as np
 
 from .media import PcmCache, check_cancel, mix_audio, probe
-from .model import active_clips, rational
+from .model import active_clips, rational, source_time
 
 AUDIO_CHUNK_SAMPLES = 1024
 AUDIO_CHANNELS = 2
@@ -37,27 +37,40 @@ def _export_pcm_cache(p, store, start, stop, rate, workdir, *, cancel):
     into a temporary PCM file and reused with absolute sample-index slices.
     The files are removed automatically when export completes or fails.
     """
-    assets = {a["id"]: a for a in p["assets"]}
-    final_ids = {
-        c["asset_id"]
-        for _, c in active_clips(p, start, stop)
-        if c.get("audio_role") in {"final", "both"}
-    }
-    if not final_ids:
+    # Scope exact PCM preparation to the output selection. A source can be
+    # 1h50 long while the requested output is just 14 seconds; making an
+    # entire 1h50 PCM copy here would silently defeat range-limited export.
+    clips_by_asset = {}
+    for _, clip in active_clips(p, start, stop):
+        if clip.get("audio_role") not in {"final", "both"}:
+            continue
+        left = max(start, clip["start"])
+        right = min(stop, clip["end"])
+        if left >= right:
+            continue
+        clips_by_asset.setdefault(clip["asset_id"], []).append(
+            max(source_time(clip, left), source_time(clip, right))
+        )
+    if not clips_by_asset:
         return None
+
+    caps = {}
     expected = 0
-    for asset_id in sorted(final_ids):
+    for asset_id, endpoints in sorted(clips_by_asset.items()):
         cancel()
         file = store.assets.verify(asset_id, cancel=cancel)
         info = probe(file)
         if not info.get("audio"):
             continue
-        duration = rational(
-            info["audio"].get("duration") or info["duration"]
-        )
-        expected += int(max(Fraction(0), duration) * rate) * (
-            AUDIO_CHANNELS * BYTES_PER_SAMPLE
-        )
+        origin = rational(info["audio"].get("start_time", "0"))
+        # audio_window computes absolute samples with round(end * rate)
+        # - round(origin * rate), not float time or an approximated seek.
+        highest = max(endpoints)
+        needed = max(0, round(highest * rate) - round(origin * rate))
+        if needed:
+            key = str(file.resolve())
+            caps[key] = max(caps.get(key, 0), needed)
+            expected += needed * AUDIO_CHANNELS * BYTES_PER_SAMPLE
     if not expected:
         return None
     available = shutil.disk_usage(workdir).free
@@ -69,7 +82,10 @@ def _export_pcm_cache(p, store, start, stop, rate, workdir, *, cancel):
             f"available {available / 1024**3:.2f} GiB. "
             "Free space in the ComfyUI output location or export a shorter range."
         )
-    return PcmCache(Path(workdir) / "pcm", limit_bytes=required)
+    return PcmCache(
+        Path(workdir) / "pcm", limit_bytes=required,
+        end_frames_by_path=caps,
+    )
 
 
 def encode_export(
