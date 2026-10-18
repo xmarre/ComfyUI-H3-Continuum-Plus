@@ -537,3 +537,44 @@ test("source proxy for a seek is not transcoded until specifically requested", a
   assert.match(source,/A seek preview needs only four seconds/);
   assert.doesNotMatch(source,/\/proxy\/[^\n]+duration=30/);
 });
+
+test("resuming a paused buffered composition never calls backend again", async () => {
+  let plays = 0;
+  const messages = [];
+  const editor = {
+    playWanted:false,playEpoch:2,playhead:20,
+    compositionStart:0,compositionEnd:48,
+    video:{
+      paused:true,dataset:{source:"/h3_continuum/timeline/composition/cached"},
+      play(){plays++;return Promise.resolve();},
+      pause(){},
+    },
+    p:{duration_frames:504,tracks:[{role:"retained",clips:[{start:0,end:504}]}]},
+    message(text){messages.push(text);},
+    prefetchSegment(start){assert.equal(start,48);},
+    playSegment(){throw new Error("resume must never render again");},
+  };
+  await TimelineEditor.prototype.playComposition.call(editor);
+  assert.equal(plays,1);
+  assert.equal(editor.playWanted,true);
+  assert.equal(messages.at(-1),"Playing");
+});
+
+test("short-window prefetch does not duplicate the same future segment", async () => {
+  let requests=0;
+  const editor = {
+    playWanted:true,closed:false,playEpoch:1,
+    p:{duration_frames:504},
+    fetchSegment(start,length,controller) {
+      requests++;
+      assert.equal(start,48);
+      assert.equal(length,144);
+      return new Promise(()=>{});
+    },
+  };
+  TimelineEditor.prototype.prefetchSegment.call(editor,48);
+  TimelineEditor.prototype.prefetchSegment.call(editor,48);
+  assert.equal(requests,1);
+  assert.equal(editor.nextPreview.start,48);
+  editor.nextPreview.controller.abort();
+});
