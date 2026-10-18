@@ -162,6 +162,7 @@ test("Native window keeps sandboxing and trusted ComfyUI microphone access", asy
     process: { argv: [] },
     URL,
     console,
+    __dirname,
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(options.webPreferences.sandbox, true);
