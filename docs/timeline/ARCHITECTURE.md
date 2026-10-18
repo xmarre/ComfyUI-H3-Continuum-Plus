@@ -126,8 +126,15 @@ The final export no longer constructs a full-film temporary FFV1 silent-video
 file, a separate full-film raw PCM file, and a second full-film FFmpeg
 transcode. `timeline/export_stream.py` muxes one-second video/audio blocks
 directly into a single atomic Matroska (FFV1/float PCM) or MP4 (H.264/AAC)
-output, preserving the configured project width/height and 24 fps timeline
-clock. It maintains absolute sample-index PCM mixing using a temporary
+output, at the explicitly selected delivery geometry (native video source or
+H3 canvas) and the fixed 24 fps timeline clock. Geometry resolution is done by
+`export_dimensions` using verified video stream metadata. Highlighted visual clips
+pick the source geometry; unhighlighted ranges require an unambiguous source size.
+Ambiguous or absent source footage fails clearly instead of silently reverting
+to the smaller sampling canvas. The compositor remains 8-bit RGB: native-sized
+FFV1 export is pixel-lossless after decode/color conversion and temporal sampling,
+not a bitstream copy or a 10-bit/HDR preservation guarantee. The output node's
+legacy default is H3 canvas; editor exports default to original source pixels. It maintains absolute sample-index PCM mixing using a temporary
 per-export `PcmCache` so a two-hour input soundtrack is decoded only once,
 not repeatedly from the start for every second. Scratch PCM is on the output
 volume, capacity-checked in advance, and removed whether export succeeds,
