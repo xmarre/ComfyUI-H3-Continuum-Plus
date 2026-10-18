@@ -1329,6 +1329,25 @@ export class TimelineEditor {
     }
     this.playWanted = true;
     const epoch = ++this.playEpoch;
+    // Resume an already-buffered segment without a new render or HTTP call.
+    if (this.compositionStart != null &&
+        this.playhead >= this.compositionStart &&
+        this.playhead < this.compositionEnd - 1 &&
+        this.video.dataset.source) {
+      try {
+        await this.video.play();
+        if (this.playWanted && this.playEpoch === epoch) {
+          this.message("Playing");
+          this.prefetchSegment(this.compositionEnd);
+        }
+      } catch (error) {
+        if (this.playWanted && this.playEpoch === epoch) {
+          this.stopPlayback();
+          this.message("Playback unavailable: " + error.message, true);
+        }
+      }
+      return;
+    }
     await this.playSegment(this.playhead, epoch);
   }
   async preview(forceProxy = false) {
