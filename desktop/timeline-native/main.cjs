@@ -49,6 +49,49 @@ else {
       },
     });
 
+    const smoke = process.env.H3_TIMELINE_DESKTOP_SMOKE === "1";
+
+    async function runPackagedSmoke() {
+      if (!smoke) return;
+      try {
+        const inputFile = process.argv.find(arg => arg.startsWith("--h3-smoke-file="));
+        if (!inputFile) throw new Error("Missing packaged smoke file");
+        const file = inputFile.slice("--h3-smoke-file=".length);
+        const debuggerAPI = window.webContents.debugger;
+        debuggerAPI.attach("1.3");
+        try {
+          const { root } = await debuggerAPI.sendCommand("DOM.getDocument");
+          const { nodeId } = await debuggerAPI.sendCommand("DOM.querySelector",
+            { nodeId: root.nodeId, selector: "#h3-smoke-file" });
+          if (!nodeId) throw new Error("Packaged smoke file-input element missing");
+          await debuggerAPI.sendCommand("DOM.setFileInputFiles", {
+            nodeId, files: [file],
+          });
+          const result = await window.webContents.executeJavaScript(
+            '(async () => {' +
+            '  if (!document.body.textContent.includes("H3_SMOKE_READY"))' +
+            '    throw new Error("ComfyUI mock document did not render");' +
+            '  if (!window.h3NativeMedia)' +
+            '    throw new Error("Sandboxed native preload did not load");' +
+            '  const input = document.querySelector("#h3-smoke-file");' +
+            '  const asset = await window.h3NativeMedia.linkFile(input.files[0], "smoke");' +
+            '  return { id: asset.id, storage: asset.storage };' +
+            '})()',
+          );
+          if (result.id !== "h3-smoke-asset" || result.storage !== "linked") {
+            throw new Error("Packaged native path IPC returned unexpected asset");
+          }
+          console.log("H3_NATIVE_DESKTOP_SMOKE_PASSED");
+          app.exit(0);
+        } finally {
+          debuggerAPI.detach();
+        }
+      } catch (error) {
+        console.error("H3_NATIVE_DESKTOP_SMOKE_FAILED:", error);
+        app.exit(9);
+      }
+    }
+
     let selected = null;
     let mode = "startup";
     let serial = 0;
@@ -91,6 +134,10 @@ else {
       try {
         await window.loadURL(url.href);
         if (ticket === serial && !window.isDestroyed()) {
+          if (smoke) {
+            await runPackagedSmoke();
+            return;
+          }
           storeServer(url);
           window.setTitle("Continuum Timeline Desktop — " + url.host);
         }
