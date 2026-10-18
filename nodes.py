@@ -400,3 +400,8 @@ for _node_id, _node_class in NODE_CLASS_MAPPINGS.items():
     _display_name = NODE_DISPLAY_NAME_MAPPINGS.get(_node_id, _node_id)
     if not _display_name.startswith("[Legacy]"):
         NODE_DISPLAY_NAME_MAPPINGS[_node_id] = f"[Legacy] {_display_name}"
+
+# Timeline Studio has an independent editor lifecycle and typed sampler facade.
+from .timeline.nodes import NODE_CLASS_MAPPINGS as _TIMELINE_NODES, NODE_DISPLAY_NAME_MAPPINGS as _TIMELINE_NAMES
+NODE_CLASS_MAPPINGS.update(_TIMELINE_NODES)
+NODE_DISPLAY_NAME_MAPPINGS.update(_TIMELINE_NAMES)

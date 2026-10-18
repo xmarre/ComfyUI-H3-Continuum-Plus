@@ -1,5 +1,35 @@
 # ComfyUI-H3-Continuum-Plus
 
+## Timeline Studio (draft integration)
+
+A compact Timeline Studio node opens a resizable editor for retained footage,
+scoped prompts/references/audio, native Continuum jobs, alternatives and final
+composition. **True no-copy Explorer drag requires the Windows
+[Continuum Timeline Desktop](desktop/timeline-native/README.md) wrapper**.
+Electron's native `webUtils.getPathForFile` supplies the actual selected path
+privately; the WSL backend links and hashes that exact source in place, stores
+only a small content-addressed pointer, and **never scans directories**.
+The native UI neither uploads nor duplicates the original movie.
+
+**Important:** ordinary Chrome cannot expose a dropped source's absolute path.
+In Chrome the editor explicitly refuses zero-copy import; it does not scan,
+upload or silently create a managed copy. The desktop wrapper must be launched
+once instead of a normal Chrome tab; an ordinary ComfyUI custom node/Patcher
+install cannot grant browser-level native file permissions. The Windows desktop
+package has now passed a real packaged-Windows startup and OS-backed File IPC smoke test. Physical Explorer drag into actual WSL ComfyUI, media sampling/export and code signing still require qualification. Startup also verifies the installed Timeline Python/frontend no-scan protocol rather than trusting a possibly stale Patcher overlay. It refuses the old recursive-search implementation with actionable diagnostics. Startup probes the local ComfyUI `/system_stats` API and presents connection diagnostics and a local URL field instead of a blank page; native path registration uses main-process IPC.
+The editor distinguishes **source-native export resolution** from the lower H3
+sampling canvas. Export creates a file, not H3 guidance; select retained footage
+and click **Guide H3 with selected clip**, then **Queue selection**, to condition
+MiniMax-H3 directly on the registered media and its source timing. Recreate uses
+retained footage as guidance automatically in eligible windows. Source-size FFV1
+remains an 8-bit RGB re-encode rather than an original-bitstream copy.
+Whole-stream PCM disk caching is disabled by default. Existing V3.4 nodes
+remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md),
+[architecture](docs/timeline/ARCHITECTURE.md),
+[validation](docs/timeline/VALIDATION.md), and
+[importable examples](examples/timeline). Trained-H3 hardware acceptance remains
+pending before production release.
+
 ## v3.4.11 — Comfy Registry ownership (17 October 2026)
 
 The Plus fork is configured for publishing with **`PublisherId = "xmarre"`** and its own Registry node ID, **`comfyui-h3-continuum-plus`**. This identifies the maintained Plus fork separately from upstream `ukr8b3g-cmyk/ComfyUI-H3-Continuum`. The original author is still credited in the package metadata.
