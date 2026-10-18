@@ -621,3 +621,79 @@ def test_reimport_repairs_corrupted_asset_with_request_cancel(movie, tmp_path):
     assert polled  # the caller's cancel, not ComfyUI's interrupt flag
     assert store.verify(asset["id"]).read_bytes() == movie.read_bytes()
     assert not temporary.exists()
+
+
+def test_concurrent_imports_without_hard_links_keep_one_published_file(
+    movie, tmp_path, monkeypatch
+):
+    import errno
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    import ComfyUI_H3_Continuum_Join.timeline.media as media
+
+    first_move, release, second_move = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    original = media.os.replace
+    calls = []
+
+    def move(source, target):
+        calls.append(str(target))
+        if len(calls) == 1:
+            first_move.set()
+            assert release.wait(5)
+        else:
+            second_move.set()
+        return original(source, target)
+
+    def unsupported(*args):
+        raise OSError(errno.EPERM, "hard links unsupported")
+
+    monkeypatch.setattr(media.os, "link", unsupported)
+    monkeypatch.setattr(media.os, "replace", move)
+    store = AssetStore(tmp_path / "assets")
+
+    def register():
+        with movie.open("rb") as source:
+            return store.register(source)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(register)
+        assert first_move.wait(5)
+        second = pool.submit(register)
+        try:
+            second_move.wait(0.2)
+        finally:
+            release.set()
+        a, b = first.result(timeout=5), second.result(timeout=5)
+    assert a["id"] == b["id"]
+    assert len(calls) == 1
+    assert store.verify(a["id"]).read_bytes() == movie.read_bytes()
+
+
+def test_value_error_cancellation_during_duplicate_verification_never_repairs(
+    movie, tmp_path
+):
+    store = AssetStore(tmp_path / "assets")
+    with movie.open("rb") as source:
+        asset = store.register(source)
+    path = store.path(asset["id"])
+    before = path.stat().st_ino
+    AssetStore._verified.clear()
+    temporary = store.upload_path()
+    temporary.write_bytes(movie.read_bytes())
+    calls = []
+
+    def cancel():
+        calls.append(1)
+        if len(calls) > 1:
+            raise ValueError("request cancelled")
+
+    try:
+        with pytest.raises(ValueError, match="request cancelled"):
+            store.adopt(temporary, asset["id"], cancel=cancel)
+        assert path.stat().st_ino == before
+    finally:
+        temporary.unlink(missing_ok=True)

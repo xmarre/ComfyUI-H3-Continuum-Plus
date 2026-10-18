@@ -420,3 +420,68 @@ def test_rejected_causal_parent_invalidates_descendant():
     assert not stale_take(p, child, [parent, child])
     p["rejected"] = [parent["id"]]
     assert stale_take(p, child, [parent, child])
+
+
+def test_normal_queue_after_reject_requests_native_auto_nonce_without_reusing_rejected_schedule():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import take_seed_request
+
+    p = blank_project()
+    p["selection"] = [168, 336]
+    p["accepted_windows"] = [{"first_chunk": 0, "stop_chunk": 3, "take_id": "b" * 32}]
+    job = compile_project(p)["jobs"][0]
+    latest = {
+        "id": "a" * 32,
+        "indices": [job["start_chunk"]],
+        "settings_hash": "settings",
+    }
+    p["rejected"] = [latest["id"]]
+    boundary, nonce, note = take_seed_request(
+        p, job, [latest], None, "settings", "storage", 0, 7
+    )
+    assert boundary == 2 and nonce == 0 and "fresh" in note
+    # A resumed causal job must start at its first physical invocation.
+    job["requires_previous_job"] = True
+    assert take_seed_request(p, job, [latest], None, "settings", "storage", 0, 7)[
+        :2
+    ] == (1, 0)
+    # User-entered explicit reroll parameters retain deterministic replay.
+    assert take_seed_request(p, job, [latest], None, "settings", "storage", 1, 7)[
+        :2
+    ] == (1, 7)
+
+
+def test_normal_queue_restores_selected_reroll_seed_contract():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import take_seed_request
+    from ComfyUI_H3_Continuum_Join.run_storage import _apply_nonce_contract
+
+    p = blank_project()
+    job = compile_project(p)["jobs"][0]
+    selected = {
+        "storage_name": "storage",
+        "sampling_contract": {"reroll_from_chunk": 2, "effective_reroll_nonce": 7},
+    }
+    boundary, nonce, _ = take_seed_request(
+        p, job, [], selected, "settings", "storage", 0, 0
+    )
+    assert (boundary, nonce) == (2, 7)
+    contract = {
+        "global": {},
+        "prompt_hashes": ["a", "b", "c"],
+        "chunk_count": 3,
+        "last_frame_hash": "",
+        "nonce_lineage_sha256": "x",
+        "nonce_request_sha256": "y",
+    }
+    original = _apply_nonce_contract(
+        {**contract, "reroll_from_chunk": 2}, requested_nonce=7, effective_nonce=7
+    )
+    restored = _apply_nonce_contract(
+        {**contract, "reroll_from_chunk": boundary},
+        requested_nonce=nonce,
+        effective_nonce=nonce,
+    )
+    assert original["chunk_contract_hashes"] == restored["chunk_contract_hashes"]
+    baseline = _apply_nonce_contract(
+        {**contract, "reroll_from_chunk": 0}, requested_nonce=0, effective_nonce=0
+    )
+    assert original["chunk_contract_hashes"] != baseline["chunk_contract_hashes"]

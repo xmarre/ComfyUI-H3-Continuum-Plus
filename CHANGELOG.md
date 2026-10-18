@@ -6,6 +6,7 @@
 - Preserve existing V3.4 identifiers, widget ordering, native continuation and external accelerator ownership.
 - Route timed prompt regions through native physical re-basing; serve audio windows from a bounded whole-stream PCM cache; queue multi-job selections in order and give each reroll a fresh nonce; keep editor view state out of prompt inputs; scope guide-audio invalidation to each job.
 - Harden PCM eviction/cancellation and oversized-stream fallback, duplicate-import identity checks, exact multi-job guide scope and rejected-revision reuse; preserve strict inner prompt schedules and fill generated-audio gaps against the current final soundtrack. Ripple cuts and extensions preserve spanning-clip source coordinates. Long queue ownership survives reopening, and cancellation rechecks jobs that start while pending deletion is in flight.
+- Support imports without hard links and verified repair of corrupt assets, with cancellable per-asset publication. Move reject requeueing to the sampler, preserve selected reroll seed schedules, and prune finished queue IDs without dropping newly queued work.
 - Add real-media, editor-operation, ComfyUI HTTP/queue and browser verification plus importable workflows. Trained-H3 quality, AV phase and accelerator/performance qualification remain pending; no release version is assigned.
 
 ## 3.4.11

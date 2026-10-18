@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { TimelineEditor } from "../web/timeline/editor.js";
 import {
   History,
   split,
@@ -18,6 +19,30 @@ const project = () => ({
       clips: [{ id: "c", start: 168, end: 336, source_in: "35", speed: "1" }],
     },
   ],
+});
+test("delayed open-time pruning preserves newly queued ids and does not resurrect cancelled ids", async () => {
+  let respond;
+  const editor = {
+    queuedIds: new Set(["done", "running"]),
+    closed: false,
+    persistView() {},
+    api: {
+      fetchApi: () =>
+        new Promise((resolve) => {
+          respond = resolve;
+        }),
+    },
+  };
+  const pending = TimelineEditor.prototype.pruneQueued.call(editor);
+  editor.queuedIds.delete("running");
+  editor.queuedIds.add("newly-queued");
+  respond(
+    new Response(
+      JSON.stringify({ queue_pending: [], queue_running: [[0, "running"]] }),
+    ),
+  );
+  await pending;
+  assert.deepEqual([...editor.queuedIds], ["newly-queued"]);
 });
 test("split preserves noncontiguous source timestamps", () => {
   const p = project();

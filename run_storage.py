@@ -1010,6 +1010,7 @@ class RunStorageController:
         request = str(contract["nonce_request_sha256"])
         highest = 0
         matching: dict[int, dict[str, Any]] = {}
+        excluded = set(getattr(self, "excluded_revisions", ()))
         if self.revisions_root.exists():
             for path in self.revisions_root.glob("*/manifest.json"):
                 try:
@@ -1019,6 +1020,8 @@ class RunStorageController:
                         continue
                     nonce = int(lifecycle.get("effective_nonce", 0))
                     highest = max(highest, nonce)
+                    if path.parent.name in excluded or manifest.get("revision_id") in excluded:
+                        continue
                     if str(lifecycle.get("request_sha256", "")) == request:
                         current = matching.get(nonce)
                         if current is None or str(manifest.get("updated_utc", "")) >= str(current.get("updated_utc", "")):

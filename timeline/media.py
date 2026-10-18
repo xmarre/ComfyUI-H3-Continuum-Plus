@@ -7,6 +7,7 @@ are retained; no source movie is materialized as a full IMAGE batch.
 from __future__ import annotations
 
 from fractions import Fraction
+import errno
 import hashlib
 import json
 import os
@@ -126,9 +127,15 @@ def probe(path):
     return info
 
 
+class AssetContentChanged(ValueError):
+    """Registered bytes no longer match their immutable content identity."""
+
+
 class AssetStore:
     _verified = {}
     _verification_lock = threading.RLock()
+    _adoption_locks = weakref.WeakValueDictionary()
+    _adoption_guard = threading.Lock()
 
     @staticmethod
     def _stamp(path):
@@ -178,6 +185,25 @@ class AssetStore:
         """Register a complete upload written to :meth:`upload_path`."""
         info = probe(temporary)
         final = self.root / asset_id
+        # One server may import the same content on multiple HTTP workers.
+        # Serialize the check/move fallback and repairs as well as hard links.
+        with self._adoption_guard:
+            lock = self._adoption_locks.setdefault(str(final), threading.Lock())
+        while not lock.acquire(timeout=0.1):
+            cancel()
+        try:
+            cancel()
+            self._publish(temporary, final, asset_id, cancel)
+        finally:
+            lock.release()
+        return {
+            "id": asset_id,
+            "name": Path(name or "Media").name,
+            "kind": "video" if info["video"] else "audio",
+            **info,
+        }
+
+    def _publish(self, temporary, final, asset_id, cancel):
         # Publish without replacing a concurrent import's open file. Existing
         # bytes must be verified before they can be remembered as this hash.
         try:
@@ -185,8 +211,17 @@ class AssetStore:
             published = True
         except FileExistsError:
             published = False
-        except OSError:
+        except OSError as exc:
             # No hard links on this filesystem (FAT/exFAT, some shares).
+            if exc.errno not in {
+                errno.EPERM,
+                errno.EACCES,
+                errno.ENOTSUP,
+                errno.ENOSYS,
+                errno.EXDEV,
+                errno.EINVAL,
+            }:
+                raise
             published = not final.is_file()
             if published:
                 os.replace(temporary, final)
@@ -195,18 +230,13 @@ class AssetStore:
         else:
             try:
                 self.verify(asset_id, cancel=cancel)
-            except ValueError:
+            except AssetContentChanged:
                 # The stored copy no longer matches its hash. This upload was
                 # just hashed as ``asset_id``, so it repairs the asset.
                 os.replace(temporary, final)
         if published or not temporary.exists():
             self._remember(final, self._stamp(final))
-        return {
-            "id": asset_id,
-            "name": Path(name or "Media").name,
-            "kind": "video" if info["video"] else "audio",
-            **info,
-        }
+        temporary.unlink(missing_ok=True)
 
     def verify(self, asset_id, *, cancel=check_cancel):
         path = self.path(asset_id)
@@ -220,7 +250,7 @@ class AssetStore:
                 cancel()
                 h.update(block)
         if h.hexdigest() != asset_id or self._stamp(path) != stamp:
-            raise ValueError(
+            raise AssetContentChanged(
                 "Registered asset content changed; relink it before rendering"
             )
         self._remember(path, stamp)

@@ -104,6 +104,50 @@ def retained_anchor(p, store, frame):
     return torch.from_numpy(pixels).float() / 255, note
 
 
+def take_seed_request(
+    p, job, records, previous, settings_hash, storage_name, boundary, nonce
+):
+    """Resolve normal queueing against immutable take seed schedules.
+
+    Explicit reroll inputs remain reproducible. A normal queue after rejecting
+    the latest matching take asks native Run Storage to allocate a new nonce.
+    """
+    boundary, nonce = int(boundary), int(nonce)
+    if boundary:
+        return boundary, nonce, None
+    matching = [
+        r
+        for r in records
+        if r["indices"][0] == job["start_chunk"]
+        and r.get("settings_hash") == settings_hash
+    ]
+    if matching and matching[-1]["id"] in p.get("rejected", []):
+        first = max(1, p["selection"][0] // p["chunk_frames"] - job["start_chunk"] + 1)
+        if job["requires_previous_job"] or job.get("resume_parent_take"):
+            first = 1
+        return (
+            first,
+            0,
+            "Latest matching take was rejected; native storage allocates a fresh seed nonce",
+        )
+    if previous and previous.get("storage_name") == storage_name:
+        saved = previous.get("sampling_contract")
+        if not saved:
+            return (
+                1,
+                0,
+                "Native storage resolves the interrupted take's missing seed schedule",
+            )
+        first = int(saved.get("reroll_from_chunk", 0))
+        if 0 < first <= len(job["windows"]):
+            return (
+                first,
+                int(saved["effective_reroll_nonce"]),
+                "Restoring the selected take's stored seed schedule",
+            )
+    return 0, nonce, None
+
+
 class H3ContinuumTimelineStudio:
     @classmethod
     def INPUT_TYPES(cls):
@@ -432,6 +476,20 @@ class H3ContinuumTimelineSampler:
             }
             if previous and previous.get("storage_name") == storage_name:
                 storage.preferred_revision = previous.get("revision_id")
+            native_boundary, native_nonce, seed_note = (
+                take_seed_request(
+                    p,
+                    job,
+                    all_takes,
+                    previous,
+                    settings_hash,
+                    storage_name,
+                    regenerate_from,
+                    reroll_nonce,
+                )
+                if not emit_refine_state
+                else (1, int(reroll_nonce), None)
+            )
 
             def checkpoint(entries, identity_hash, first_frame_hash, last_frame_hash):
                 partial_record = {
@@ -439,6 +497,7 @@ class H3ContinuumTimelineSampler:
                     "status": "partial",
                     "storage_name": storage_name,
                     "revision_id": storage.revision_id,
+                    "sampling_contract": copy.deepcopy(storage.manifest["contract"]),
                 }
                 store.atomic_json(
                     take_path(store, p["project_id"], take_id), partial_record
@@ -464,8 +523,8 @@ class H3ContinuumTimelineSampler:
                     audio_continuity=True,
                     exact_total_duration=False,
                     diagnostics_mode=DIAGNOSTICS_FULL,
-                    reroll_from_chunk=1 if emit_refine_state else int(regenerate_from),
-                    reroll_nonce=int(reroll_nonce),
+                    reroll_from_chunk=native_boundary,
+                    reroll_nonce=native_nonce,
                     strict_compatibility=False,
                     debug=False,
                     latent_only=True,
@@ -533,6 +592,8 @@ class H3ContinuumTimelineSampler:
             report += "\nSession auto reuse disabled: " + "; ".join(reasons)
         if anchor_note:
             report += "\n" + anchor_note
+        if seed_note:
+            report += "\n" + seed_note
         for w in job["windows"]:
             for warning in w.get("warnings", []):
                 report += "\nTimeline warning: " + warning
