@@ -177,6 +177,7 @@ export class TimelineEditor {
       `${this.p.chunk_frames} f chunks · render ${(this.p.selection[0] / 24).toFixed(2)}–${(this.p.selection[1] / 24).toFixed(2)} s`,
     ];
     this.node.setDirtyCanvas?.(true, true);
+    this.node.__timelineRefreshSamplers?.();
   }
   async save() {
     const version = this.editVersion;
@@ -1459,9 +1460,13 @@ export class TimelineEditor {
         );
         if (serialized?.widgets_values) {
           for (const key of ["job_index", "regenerate_from", "reroll_nonce"]) {
-            const index = sampler.widgets.findIndex((w) => w.name === key);
+            const index = sampler.widgets
+              .filter((w) => w.serialize !== false)
+              .findIndex((w) => w.name === key);
             if (index >= 0 && key in actual)
               serialized.widgets_values[index] = actual[key];
+            if (serialized.widgets_values_named && key in actual)
+              serialized.widgets_values_named[key] = actual[key];
           }
         }
         // Number 0 appends in submission order; -1 would queue each later job

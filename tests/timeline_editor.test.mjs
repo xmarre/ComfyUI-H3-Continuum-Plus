@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { TimelineEditor } from "../web/timeline/editor.js";
 import {
+  changeTiming,
+  migrateSamplerWorkflow,
+  orderSampler,
+} from "../web/timeline/sampler_layout.js";
+import {
   History,
   split,
   trim,
@@ -19,6 +24,96 @@ const project = () => ({
       clips: [{ id: "c", start: 168, end: 336, source_in: "35", speed: "1" }],
     },
   ],
+});
+test("sampler socket ordering updates live link targets without changing link identities", () => {
+  const inputNames = [
+    "timeline",
+    "model",
+    "audio_vae",
+    "reference_image_1",
+    "reference_video_1",
+    "driving_audio",
+    "sequence_prompt",
+    "reference_image_4",
+  ];
+  const node = {
+    inputs: inputNames.map((name, i) => ({ name, link: i + 1 })),
+    graph: {
+      links: Object.fromEntries(
+        inputNames.map((_, i) => [
+          i + 1,
+          { id: i + 1, origin_id: 100 + i, target_slot: i },
+        ]),
+      ),
+    },
+    widgets: [],
+  };
+  orderSampler(node);
+  assert.deepEqual(
+    node.inputs.map((i) => i.name),
+    [
+      "timeline",
+      "model",
+      "sequence_prompt",
+      "reference_image_1",
+      "reference_image_4",
+      "reference_video_1",
+      "driving_audio",
+      "audio_vae",
+    ],
+  );
+  for (const [slot, input] of node.inputs.entries()) {
+    assert.equal(node.graph.links[input.link].target_slot, slot);
+    assert.equal(node.graph.links[input.link].origin_id, 99 + input.link);
+  }
+});
+test("legacy sampler values migrate by name and inherit their connected project canvas", () => {
+  const p = { width: 960, height: 704 };
+  const data = {
+    nodes: [
+      {
+        id: 1,
+        type: "H3ContinuumTimelineStudio",
+        widgets_values: [JSON.stringify(p)],
+      },
+      {
+        id: 8,
+        type: "H3ContinuumTimelineSampler",
+        inputs: [{ name: "timeline", link: 5 }],
+        widgets_values: [0, 123, "Strong — 39 frames", "native", 2, 17, false],
+      },
+    ],
+    links: [[5, 1, 0, 8, 0, "H3_CONTINUUM_TIMELINE_PROJECT"]],
+  };
+  migrateSamplerWorkflow(data, {
+    width: 1344,
+    height: 768,
+    prompt_mode: "Auto",
+  });
+  const sampler = data.nodes[1];
+  assert.equal(sampler.widgets_values_named.width, 960);
+  assert.equal(sampler.widgets_values_named.height, 704);
+  assert.equal(sampler.widgets_values_named.base_seed, 123);
+  assert.equal(sampler.widgets_values_named.regenerate_from, 2);
+  assert.equal(sampler.widgets_values_named.reroll_nonce, 17);
+  sampler.widgets_values_named.width = 1024;
+  migrateSamplerWorkflow(data, {
+    width: 1344,
+    height: 768,
+    prompt_mode: "Auto",
+  });
+  assert.equal(sampler.widgets_values_named.width, 1024);
+});
+test("sampler timing controls edit the actual project selection and frame-grid chunk length", () => {
+  const p = { chunk_frames: 168, selection: [0, 504], duration_frames: 504 };
+  changeTiming(p, "chunks", 2);
+  assert.deepEqual(p.selection, [0, 336]);
+  changeTiming(p, "chunk_seconds", 5);
+  assert.equal(p.chunk_frames, 120);
+  assert.deepEqual(p.selection, [0, 240]);
+  changeTiming(p, "chunks", 17);
+  assert.equal(p.duration_frames, 2040);
+  assert.deepEqual(p.selection, [0, 2040]);
 });
 test("delayed open-time pruning preserves newly queued ids and does not resurrect cancelled ids", async () => {
   let respond;

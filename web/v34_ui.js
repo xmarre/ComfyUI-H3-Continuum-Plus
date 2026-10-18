@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { installProjectWidgets, orderSampler, refreshProjectWidgets } from "./timeline/sampler_layout.js";
 
 const SAMPLER = "H3ContinuumSamplerV34";
 const TIMELINE_SAMPLER = "H3ContinuumTimelineSampler";
@@ -161,6 +162,10 @@ function reconcileContinuity(node) {
 function refreshSampler(node) {
     const timeline = node.comfyClass === TIMELINE_SAMPLER;
     reconcileReferences(node);
+    if (timeline) {
+        orderSampler(node);
+        refreshProjectWidgets(node);
+    }
     reconcileContinuity(node);
     const project = findWidget(node, "project_id");
     if (!timeline && project && !String(project.value || "").trim()) project.value = createProjectId();
@@ -182,7 +187,7 @@ function refreshSampler(node) {
     const storage = findWidget(node, "run_storage");
     const nonce = findWidget(node, "reroll_nonce");
     const runName = findWidget(node, "run_name");
-    if (chunks && regenerate) {
+    if (!timeline && chunks && regenerate) {
         regenerate.options ||= {};
         regenerate.options.values = regenerateOptions(chunks.value);
         if (!regenerate.options.values.includes(regenerate.value)) regenerate.value = "Auto";
@@ -202,7 +207,7 @@ function refreshSampler(node) {
     );
     if (timeline && node.computeSize && node.setSize) {
         const requiredSize = node.computeSize();
-        node.setSize([Math.max(node.size[0], requiredSize[0]), requiredSize[1]]);
+        node.setSize([Math.max(node.size[0], requiredSize[0], 420), requiredSize[1]]);
     }
     node.setDirtyCanvas?.(true, true);
     return project;
@@ -242,6 +247,10 @@ function install(node) {
     const type = String(node.comfyClass || node.type || "");
     if (!isSampler(type) && type !== ASSEMBLER) return;
     node.__h3ContinuumV34Installed = true;
+    if (type === TIMELINE_SAMPLER) {
+        installProjectWidgets(node);
+        orderSampler(node);
+    }
     const refresh = () => {
         if (isSampler(type)) refreshSampler(node);
         else refreshAssembler(node);

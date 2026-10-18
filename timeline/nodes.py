@@ -241,6 +241,8 @@ class H3ContinuumTimelineSampler:
             "Optional native prompt source. When connected, replaces Studio's prompt script for the full project; prompt clips still belong to Studio when disconnected."
         )
         schema["optional"]["prompt_mode"] = native["required"]["prompt_mode"]
+        for name in ("width", "height"):
+            schema["optional"][name] = native["required"][name]
         return schema
 
     @classmethod
@@ -269,8 +271,8 @@ class H3ContinuumTimelineSampler:
     FUNCTION = "sample"
     CATEGORY = CATEGORY
     DESCRIPTION = (
-        "Native V3.4 sampling with Timeline takes. Studio owns output dimensions, "
-        "duration, chunk length and scoped prompts. Persistent references precede "
+        "Native V3.4 sampling with Timeline takes. Width and height control sampling; "
+        "Studio supplies the render selection, chunk timing and scoped prompts. Persistent references precede "
         "scoped pictures; scoped video replaces persistent Video Reference only "
         "in its active windows. Connected Driving Audio overrides guide lanes."
     )
@@ -311,6 +313,8 @@ class H3ContinuumTimelineSampler:
         driving_audio=None,
         sequence_prompt=None,
         prompt_mode="Auto",
+        width=None,
+        height=None,
         **reference_images,
     ):
         from ..v2.sequence import run_sequence
@@ -337,6 +341,11 @@ class H3ContinuumTimelineSampler:
         from ..temporal import align_frame_count_up
 
         p = copy.deepcopy(timeline["project"])
+        source_canvas = [p["width"], p["height"]]
+        if width is not None:
+            p["width"] = int(width)
+        if height is not None:
+            p["height"] = int(height)
         if not 0 <= int(job_index) < len(timeline["jobs"]):
             raise ValueError(
                 "Timeline job index is outside the compiled selection; use Queue selection or choose an existing job"
@@ -408,6 +417,14 @@ class H3ContinuumTimelineSampler:
                 for r in all_takes
                 if r["indices"][-1] == job["start_chunk"] - 1
                 and r.get("status") == "sampled"
+                and r.get(
+                    "generation_size",
+                    [
+                        r.get("project_snapshot", {}).get("width"),
+                        r.get("project_snapshot", {}).get("height"),
+                    ],
+                )
+                == [p["width"], p["height"]]
                 and r["id"] not in rejected
                 and not stale_take(
                     p,
@@ -579,6 +596,8 @@ class H3ContinuumTimelineSampler:
             "operation": p["operation"],
             "selection": p["selection"],
             "project_snapshot": p,
+            "source_canvas": source_canvas,
+            "generation_size": [p["width"], p["height"]],
         }
         from ..run_storage import run_storage_scope, resolve_run_storage_name
 

@@ -108,8 +108,6 @@ def test_every_native_control_has_an_explicit_timeline_owner():
     owners = {
         "chunks": "Studio duration / selection",
         "chunk_seconds": "Studio chunk length",
-        "width": "Studio output width",
-        "height": "Studio output height",
         "reroll_from_chunk": "regenerate_from",
         "emit_refine_conditioning": "emit_refine_state",
     }
@@ -121,10 +119,43 @@ def test_every_native_control_has_an_explicit_timeline_owner():
         "reference_size",
         "video_reference_size",
         "conditioning_lookahead",
+        "width",
+        "height",
     ):
         assert available[name] == {**native["required"], **native["optional"]}[name]
     assert schema["required"]["base_seed"][1]["control_after_generate"]
     assert nodes.H3ContinuumTimelineSampler.RETURN_NAMES[-1] == "driving_audio"
+
+
+def test_dimensions_reach_native_latents_and_invalidate_storage(runtime):
+    args, calls, _, _, _ = runtime
+    args.update(width=128, height=96)
+    original = copy.deepcopy(args["timeline"])
+    first = nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert first[0][0]["samples"].shape[-2:] == (6, 8)
+    assert first[3]["source_canvas"] == [96, 64]
+    assert first[3]["generation_size"] == [128, 96]
+    assert args["timeline"] == original
+    second = nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert second[3]["reused_chunks"] == 3
+    assert len(calls) == 3
+    args["width"] = 160
+    third = nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert third[0][0]["samples"].shape[-2:] == (6, 10)
+    assert third[3]["reused_chunks"] == 0
+
+
+def test_dimension_change_never_silently_reuses_a_different_resolution_parent(runtime):
+    args, calls, _, _, _ = runtime
+    p = args["timeline"]["project"]
+    p.update(duration_frames=120 * 17, selection=[0, 120 * 17])
+    args["timeline"] = compile_project(p)
+    nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls) == 16
+    args.update(job_index=1, width=128, height=96)
+    with pytest.raises(ValueError, match="preceding job's valid continuation state"):
+        nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls) == 16
 
 
 def test_public_controls_reach_native_sampling_and_storage_off(runtime):

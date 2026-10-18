@@ -2,7 +2,13 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { TimelineEditor } from "./timeline/editor.js";
 import { uid } from "./timeline/core.js";
+import {
+  migrateSamplerWorkflow,
+  refreshProjectWidgets,
+  samplerStudio,
+} from "./timeline/sampler_layout.js";
 const editors = new Map();
+const samplerDefaults = {};
 function summary(node) {
   const w = node.widgets?.find((x) => x.name === "project_json");
   if (!w) return;
@@ -54,6 +60,15 @@ document.head.append(style);
 app.registerExtension({
   name: "H3Continuum.TimelineStudio",
   beforeRegisterNodeDef(nodeType, nodeData) {
+    if (nodeData.name === "H3ContinuumTimelineSampler") {
+      for (const [name, definition] of Object.entries({
+        ...nodeData.input.required,
+        ...nodeData.input.optional,
+      }))
+        if (definition[1] && "default" in definition[1])
+          samplerDefaults[name] = definition[1].default;
+      return;
+    }
     if (nodeData.name !== "H3ContinuumTimelineStudio") return;
     const created = nodeType.prototype.onNodeCreated,
       removed = nodeType.prototype.onRemoved,
@@ -69,6 +84,26 @@ app.registerExtension({
         if (w.inputEl) w.inputEl.style.display = "none";
       }
       independent(this);
+      this.__timelineRefreshSamplers = () => {
+        for (const node of this.graph?._nodes || [])
+          if (
+            node.comfyClass === "H3ContinuumTimelineSampler" &&
+            samplerStudio(node) === this
+          )
+            refreshProjectWidgets(node, true);
+      };
+      this.__timelineEditProject = (mutate) => {
+        const editor = editors.get(this);
+        if (editor) editor.edit(mutate);
+        else {
+          const project = JSON.parse(w.value);
+          mutate(project);
+          w.value = JSON.stringify(project);
+          summary(this);
+          this.__timelineRefreshSamplers();
+          this.setDirtyCanvas?.(true, true);
+        }
+      };
       this.addWidget("button", "Open Timeline Studio", null, () => {
         if (editors.has(this)) {
           editors.get(this).root.focus();
@@ -150,14 +185,6 @@ app.registerExtension({
   beforeConfigureGraph(graphData) {
     for (const editor of editors.values()) editor.close();
     editors.clear();
-    // The first Timeline schema had no seed control widget. Insert its
-    // fixed default before LiteGraph assigns positional serialized values.
-    for (const node of graphData?.nodes || []) {
-      if (
-        node.type === "H3ContinuumTimelineSampler" &&
-        node.widgets_values?.length === 7
-      )
-        node.widgets_values.splice(2, 0, "fixed");
-    }
+    migrateSamplerWorkflow(graphData, samplerDefaults);
   },
 });

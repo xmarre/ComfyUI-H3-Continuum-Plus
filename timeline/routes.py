@@ -326,6 +326,11 @@ def register_routes():
                 ).read_text(encoding="utf-8")
             )
             asset = render["asset"]
+            # A graph-connected dimension is resolved at execution, after the
+            # project snapshot was frozen. Adopt it only while the canvas still
+            # matches that snapshot; a later explicit canvas edit takes precedence.
+            if record.get("source_canvas") == [p["width"], p["height"]]:
+                p["width"], p["height"] = record["generation_size"]
             if asset["id"] not in {a["id"] for a in p["assets"]}:
                 p["assets"].append(asset)
             selected = p.setdefault("accepted", {})
