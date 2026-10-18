@@ -2,7 +2,7 @@
 
 ## Executed evidence
 
-The CI Python suite is expected to contain **588 tests**; final-head CI must be checked separately. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript suite now contains **20 tests**, including drag-only transport and cancellation. Syntax, compileall and the repository's targeted Ruff checks pass.
+The validated mirror GitHub Actions matrix passed **589 Python tests** on each of Python 3.10–3.13, **20 JavaScript editor tests**, and the publisher toolchain. Final-head checks on PR #51 remain authoritative. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript suite now contains **20 tests**, including drag-only transport and cancellation. Syntax, compileall and the repository's targeted Ruff checks pass.
 
 The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10, 3.11, 3.12 and 3.13, including publisher-toolchain verification. Final commit checks are authoritative on the implementation PR.
 
