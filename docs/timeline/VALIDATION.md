@@ -2,7 +2,7 @@
 
 ## Executed evidence
 
-The standalone Python suite passes **575 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **17 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
+The standalone Python suite passes **580 tests**. This includes the existing Continuum regression suite plus Timeline Studio's model, runtime, media and composition tests. The JavaScript editing suite passes **19 tests**. Syntax, compileall and the repository's targeted Ruff checks pass.
 
 The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10, 3.11, 3.12 and 3.13, including publisher-toolchain verification. Final commit checks are authoritative on the implementation PR.
 
@@ -15,7 +15,7 @@ The implementation checkpoint's GitHub Actions test matrix passed on Python 3.10
 | Prompt transport | Timed regions compile through the native physical compiler onto each invocation's clock, including continuation context; no neighboring chunk text | Correct physical-local prompt timing; not H3 prompt adherence |
 | Long source | A real two-hour video, with a selected seven-second window, decodes fewer than 64 source frames including seek context | No complete-film decode on the selected video path; does not quantify every codec's memory use |
 | Composition | Lossless normalized RGB and float PCM comparisons; replacement interval with unchanged original frames and soundtrack outside it; generated-audio fallback against partial/muted final audio; cancellation cleanup | Working retained/generated composition and normalized export |
-| Persistence | Atomic project saves, revision conflicts, registered-asset verification, missing/stale path rejection and relinking identities | Disk/project identity behavior, unsupported-hard-link fault injection, concurrent fallback imports, corrupt-copy repair including coarse filesystem timestamps, and verification cancellation |
+| Persistence | Atomic project saves, revision conflicts, registered-asset verification, no-copy server-local pointers, blocked paths and escaping symlinks, missing/stale path rejection and relinking identities | Disk/project identity behavior, unsupported-hard-link fault injection, concurrent fallback imports, corrupt-copy repair including coarse filesystem timestamps, and verification cancellation |
 | Real ComfyUI server | Import, save/reopen, compile, thumbnails, waveform, bounded composition preview and export endpoints; four registered nodes; actual queued Studio→Export execution; accept/reject/restore through rendered take metadata fixtures | HTTP/node integration without trained weights |
 | Real ComfyUI frontend | Open, split, undo/redo, save/reload, typing isolation, view state kept out of the prompt input, A/B transport, composed AV preview, independent cloning and repeated paste, multi-job reroll queued in order with a fresh nonce, workflow disposal, graph serialization, delivered sampler-workflow serialization, 70-job cancellation ownership after reopening and a pending-to-running cancellation race | Browser integration on ComfyUI 0.41.0 / frontend 1.55.18; earlier coverage on frontend 1.55.17 |
 
