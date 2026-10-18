@@ -19,9 +19,9 @@ MAX_BYTES = 128 * 1024**3
 MAX_SEARCH_SECONDS = 600
 
 
-def wsl_drive_roots():
+def wsl_drive_roots(mount_root=None):
     """Mounted Windows drive letters only; never scan the entire WSL root."""
-    mount_root = Path("/mnt")
+    mount_root = Path("/mnt") if mount_root is None else Path(mount_root)
     if not mount_root.is_dir():
         return ()
     return tuple(
@@ -33,7 +33,8 @@ def wsl_drive_roots():
                 and path.is_dir()
                 and os.path.ismount(path)
             ),
-            key=str,
+            # Data drives are usually smaller to traverse than Windows C:.
+            key=lambda path: (path.name.lower() == "c", path.name.lower()),
         )
     )
 
@@ -122,13 +123,20 @@ def find_original(fingerprint, roots, *, cancel=lambda: None):
                 path = Path(directory) / filename
                 try:
                     identity = path.stat(follow_symlinks=False)
+                    # Some network/DrvFS implementations expose inode=0,
+                    # which is not a usable file identity for deduplication.
+                    identity_key = (
+                        (identity.st_dev, identity.st_ino)
+                        if identity.st_ino
+                        else str(path.resolve())
+                    )
                     if (
                         not stat.S_ISREG(identity.st_mode)
                         or identity.st_size != size
-                        or (identity.st_dev, identity.st_ino) in seen_files
+                        or identity_key in seen_files
                     ):
                         continue
-                    seen_files.add((identity.st_dev, identity.st_ino))
+                    seen_files.add(identity_key)
                     resolved = path.resolve(strict=True)
                     if not resolved.is_relative_to(root):
                         continue
