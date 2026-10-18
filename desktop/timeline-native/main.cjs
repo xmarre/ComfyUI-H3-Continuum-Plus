@@ -102,17 +102,20 @@ else {
     // Never let a pending source hash/IPC request keep the desktop process
     // alive after a normal Windows close. Aborting the fetch also disconnects
     // the aiohttp request so the WSL backend stops its bounded source read.
-    window.on("close", () => {
+    const stopPendingLinks = () => {
       ++serial;
       for (const job of pendingLinks.values()) job.abort.abort();
       pendingLinks.clear();
-    });
+    };
+    window.on("close", stopPendingLinks);
     window.webContents.on("before-input-event", (event, input) => {
       if (input.type === "keyDown" &&
           input.control && input.shift &&
           input.key?.toLowerCase() === "q") {
         event.preventDefault();
-        window.close();
+        // Emergency exit bypasses a stalled renderer's beforeunload handlers.
+        stopPendingLinks();
+        window.destroy();
       }
     });
 
