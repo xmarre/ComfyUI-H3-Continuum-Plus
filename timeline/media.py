@@ -189,7 +189,7 @@ class AssetStore:
         """A fresh temporary path inside the store, on the assets' filesystem."""
         return self.root / ("upload-" + uuid.uuid4().hex)
 
-    def link(self, source, *, cancel=check_cancel, expected_chunks=None):
+    def link(self, source, *, cancel=check_cancel, expected_chunks=None, progress=None):
         """Register an explicitly permitted server-local file without copying bytes.
 
         Store only a small path pointer; each use still verifies the content hash
@@ -210,7 +210,8 @@ class AssetStore:
                     cancel()
                     h.update(block)
             else:
-                for expected in expected_chunks:
+                last_update = 0.0
+                for index, expected in enumerate(expected_chunks):
                     cancel()
                     block = inp.read(CHUNK_BYTES)
                     if hashlib.sha256(block).hexdigest() != expected:
@@ -218,6 +219,14 @@ class AssetStore:
                             "Dropped file does not match candidate source contents"
                         )
                     h.update(block)
+                    if progress is not None:
+                        now = time.monotonic()
+                        if now - last_update >= 1 or index + 1 == len(expected_chunks):
+                            progress(
+                                "Verifying original movie contents: "
+                                f"{(index + 1) * 100 // len(expected_chunks)}%"
+                            )
+                            last_update = now
                 if inp.read(1):
                     raise AssetContentChanged("Candidate source grew during linking")
         cancel()
