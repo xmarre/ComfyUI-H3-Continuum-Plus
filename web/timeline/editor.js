@@ -1803,12 +1803,20 @@ export class TimelineEditor {
           project: this.p, codec, render_range: [start, stop],
         }),
       });
+      this.exportId = result.id;
       if (result.total_frames !== frames ||
           result.render_range?.[0] !== start ||
           result.render_range?.[1] !== stop) {
-        throw new Error("Server export range differs from selected frames; cancel the job");
+        // The server is stale or wrong. Cancel it rather than leaving a
+        // potentially hour-long export running after frontend rejection.
+        await request(this.api, "/export/" + result.id + "/cancel", {
+          method: "POST",
+        }).catch(() => {});
+        throw new Error(
+          "Server ignored selected in/out frames; export cancelled. " +
+          "Update the Patcher overlay and restart ComfyUI."
+        );
       }
-      this.exportId = result.id;
       const poll = async () => {
         if (this.closed) return;
         const status = await request(this.api, "/export/" + result.id);
@@ -1818,7 +1826,12 @@ export class TimelineEditor {
           if (total !== frames ||
               status.render_range?.[0] !== start ||
               status.render_range?.[1] !== stop) {
-            throw new Error("Export status returned a different timeline range");
+            await request(this.api, "/export/" + result.id + "/cancel", {
+              method: "POST",
+            }).catch(() => {});
+            throw new Error(
+              "Export status changed its selected frame range; job cancelled"
+            );
           }
           const percent = Math.min(100, Math.round(100 * done / frames));
           this.exportStatus.textContent =
