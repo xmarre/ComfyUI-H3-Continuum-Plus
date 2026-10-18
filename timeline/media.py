@@ -174,7 +174,7 @@ class AssetStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def adopt(self, temporary, asset_id, name=None):
+    def adopt(self, temporary, asset_id, name=None, *, cancel=check_cancel):
         """Register a complete upload written to :meth:`upload_path`."""
         info = probe(temporary)
         final = self.root / asset_id
@@ -182,10 +182,24 @@ class AssetStore:
         # bytes must be verified before they can be remembered as this hash.
         try:
             os.link(temporary, final)
+            published = True
         except FileExistsError:
-            self.verify(asset_id)
+            published = False
+        except OSError:
+            # No hard links on this filesystem (FAT/exFAT, some shares).
+            published = not final.is_file()
+            if published:
+                os.replace(temporary, final)
+        if published:
+            temporary.unlink(missing_ok=True)  # Stabilize link-count/ctime.
         else:
-            temporary.unlink()  # Stabilize link-count/ctime before memoizing.
+            try:
+                self.verify(asset_id, cancel=cancel)
+            except ValueError:
+                # The stored copy no longer matches its hash. This upload was
+                # just hashed as ``asset_id``, so it repairs the asset.
+                os.replace(temporary, final)
+        if published or not temporary.exists():
             self._remember(final, self._stamp(final))
         return {
             "id": asset_id,

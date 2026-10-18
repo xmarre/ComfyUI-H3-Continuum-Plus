@@ -132,6 +132,7 @@ def register_routes():
                     temporary,
                     digest.hexdigest(),
                     request.query.get("name", "Media"),
+                    cancel=_request_cancel,
                 )
             except subprocess.CalledProcessError as exc:
                 raise ValueError("Unsupported or unreadable media file") from exc

@@ -114,6 +114,21 @@ export class TimelineEditor {
     this.render();
     this.scroller.scrollLeft = view.scroll || 0;
     this.root.focus();
+    this.guard(() => this.pruneQueued());
+  }
+  // Keep only prompt ids the server still has pending or running.
+  async pruneQueued() {
+    if (!this.queuedIds.size) return;
+    const response = await this.api.fetchApi("/queue");
+    if (!response.ok) return;
+    const queue = await response.json();
+    const live = new Set(
+      [...(queue.queue_pending || []), ...(queue.queue_running || [])].map(
+        (row) => row[1],
+      ),
+    );
+    this.queuedIds = new Set([...this.queuedIds].filter((id) => live.has(id)));
+    if (!this.closed) this.persistView();
   }
   get p() {
     return this.history.value;
@@ -1396,6 +1411,17 @@ export class TimelineEditor {
         "Connect this project to one Timeline Sampler before queueing",
       );
     const sampler = samplers[0];
+    // Seeds are deterministic: re-queueing a rejected take unchanged would
+    // render it again into the same stored revision. Request a new one.
+    let autoReroll = false;
+    if (!reroll) {
+      const records = await request(this.api, "/takes/" + this.p.project_id);
+      const latest = records
+        .filter((r) => r.indices?.[0] === plan.jobs[0]?.start_chunk)
+        .at(-1);
+      autoReroll = !!latest && (this.p.rejected || []).includes(latest.id);
+      reroll = autoReroll;
+    }
     const frozen = await this.app.graphToPrompt();
     frozen.output[String(this.node.id)].inputs.project_json =
       JSON.stringify(snapshot);
@@ -1447,7 +1473,7 @@ export class TimelineEditor {
       this.persistView();
     }
     this.message(
-      `${plan.jobs.length} immutable job snapshot(s) queued. Connect decoded assembly to Save Take for review.`,
+      `${plan.jobs.length} immutable job snapshot(s) queued${autoReroll ? " as a reroll because the latest take was rejected" : ""}. Connect decoded assembly to Save Take for review.`,
     );
   }
   async cancelSampling() {

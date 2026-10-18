@@ -388,13 +388,14 @@ def test_duplicate_import_does_not_certify_corrupt_registered_bytes(movie, tmp_p
     with movie.open("rb") as source:
         asset = store.register(source)
     store.path(asset["id"]).write_bytes(b"corrupted registered media")
-    try:
-        with movie.open("rb") as source:
-            store.register(source)
-    except ValueError:
-        pass
+    AssetStore._verified.clear()
     with pytest.raises(ValueError, match="changed"):
         store.verify(asset["id"])
+    # Re-importing the real content replaces the corrupt copy; the corrupt
+    # bytes are never accepted as the registered asset.
+    with movie.open("rb") as source:
+        store.register(source)
+    assert store.verify(asset["id"]).read_bytes() == movie.read_bytes()
 
 
 def test_uncached_audio_only_reads_the_selected_samples(movie, monkeypatch):
@@ -587,3 +588,36 @@ def test_partial_video_guide_holds_nearest_frame_and_replace_anchor(movie, tmp_p
         None,
         None,
     )
+
+
+def test_import_without_hard_links_publishes_and_dedupes(movie, tmp_path, monkeypatch):
+    import errno
+    import os as _os
+
+    def unsupported(*args):
+        raise OSError(errno.EPERM, "hard links unsupported")
+
+    monkeypatch.setattr(_os, "link", unsupported)
+    store = AssetStore(tmp_path / "assets")
+    with movie.open("rb") as source:
+        first = store.register(source, "a.mkv")
+    with movie.open("rb") as source:
+        second = store.register(source, "b.mkv")
+    assert first["id"] == second["id"]
+    assert store.verify(first["id"]).is_file()
+    assert not list(store.root.glob("upload-*"))
+
+
+def test_reimport_repairs_corrupted_asset_with_request_cancel(movie, tmp_path):
+    store = AssetStore(tmp_path / "assets")
+    with movie.open("rb") as source:
+        asset = store.register(source, "a.mkv")
+    store.path(asset["id"]).write_bytes(b"corrupted")
+    AssetStore._verified.clear()
+    polled = []
+    temporary = store.upload_path()
+    temporary.write_bytes(movie.read_bytes())
+    store.adopt(temporary, asset["id"], "a.mkv", cancel=lambda: polled.append(1))
+    assert polled  # the caller's cancel, not ComfyUI's interrupt flag
+    assert store.verify(asset["id"]).read_bytes() == movie.read_bytes()
+    assert not temporary.exists()
