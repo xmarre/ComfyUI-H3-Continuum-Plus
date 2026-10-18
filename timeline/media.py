@@ -519,7 +519,7 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
         "reference": {"reference"},
     }[route]
     active = active_clips(p, start, end)
-    for track, c in active:
+    for _, c in active:
         if c["audio_role"] not in routes:
             continue
         left, right = max(start, c["start"]), min(end, c["end"])
@@ -551,16 +551,17 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
             pcm = np.pad(pcm, ((0, 0), (0, n - pcm.shape[1])))
         absolute = np.arange(sample_boundary(left, rate), sample_boundary(right, rate))
         envelope = np.ones(n)
-        if (
-            route == "final"
-            and track["role"] == "generated"
-            and c.get("audio_fallback")
-        ):
+        if route == "final" and c.get("audio_fallback"):
             for authored_track, authored in active:
-                if authored_track["role"] != "generated" and authored["audio_role"] in {
-                    "final",
-                    "both",
-                }:
+                if (
+                    authored_track["role"] != "generated"
+                    and not authored.get("audio_fallback")
+                    and authored["audio_role"]
+                    in {
+                        "final",
+                        "both",
+                    }
+                ):
                     envelope[
                         (absolute >= sample_boundary(authored["start"], rate))
                         & (absolute < sample_boundary(authored["end"], rate))

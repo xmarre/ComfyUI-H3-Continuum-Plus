@@ -463,6 +463,10 @@ def test_generated_audio_fills_only_gaps_in_current_authored_final_audio(
     np.testing.assert_array_equal(
         mix_audio(p, store.assets, 0, 48, 44100, "final"), expected
     )
+    p["tracks"][0]["role"] = "retained"  # Independent copies retain the same mix.
+    np.testing.assert_array_equal(
+        mix_audio(p, store.assets, 0, 48, 44100, "final"), expected
+    )
     p["tracks"][1]["muted"] = True
     np.testing.assert_array_equal(
         mix_audio(p, store.assets, 0, 48, 44100, "final"), expected
