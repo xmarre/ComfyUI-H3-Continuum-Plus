@@ -130,7 +130,7 @@ def encode_export(
                 vstream.pix_fmt = "bgr0" if codec == "lossless" else "yuv420p"
                 if codec == "h264":
                     vstream.options = {
-                        "crf": "27" if preview else "16",
+                        "crf": "20" if preview else "16",
                         "preset": "ultrafast" if preview else "medium",
                     }
                 # Bound CPU encoders so exporting a long movie cannot
