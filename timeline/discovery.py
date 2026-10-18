@@ -309,6 +309,6 @@ def find_original(fingerprint, roots, *, cancel=lambda: None,
                     return match, hashes
 
     raise ValueError(
-        "Original movie could not be located in the Windows Search index or "
+        "Original movie not found in the Windows Search index or "
         "mounted drives; nothing was uploaded or copied."
     )
