@@ -21,6 +21,8 @@ from .nodes import project_store, stale_take, take_path, takes
 _PREFIX = "/h3_continuum/timeline"
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
+# Low-latency playback must not queue behind thumbnail/waveform jobs.
+_preview_slots = asyncio.Semaphore(1)
 # Registered media is content addressed, so derived views never change.
 _IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}
 
@@ -499,39 +501,76 @@ def register_routes():
 
     @endpoint("post", "/preview")
     async def composition_preview(request):
-        from .compose import export_project
+        """Generate a tiny seek-based playback segment; never a 30s export."""
         from .model import digest
+        from .preview import MAX_SEGMENT_FRAMES, render_preview_segment
 
         data = await request.json()
         p = validate(data["project"])
         start = max(0, min(p["duration_frames"] - 1, int(data.get("start", 0))))
-        stop = min(p["duration_frames"], start + 24 * 30)
+        length = int(data.get("length_frames", 48))
+        if not 1 <= length <= MAX_SEGMENT_FRAMES:
+            raise ValueError("Playback segment must be 1 to 192 frames")
+        stop = min(p["duration_frames"], start + length)
         mode = data.get("mode", "composed")
+        if mode not in {"composed", "source", "generated"}:
+            raise ValueError("Unknown playback mode")
         if mode == "source":
             p["tracks"] = [t for t in p["tracks"] if t["role"] != "generated"]
         elif mode == "generated":
             p["tracks"] = [t for t in p["tracks"] if t["role"] != "retained"]
-        scale = min(1, 640 / max(p["width"], p["height"]))
+        scale = min(1, 480 / max(p["width"], p["height"]))
         p["width"] = max(32, round(p["width"] * scale / 32) * 32)
         p["height"] = max(32, round(p["height"] * scale / 32) * 32)
-        key = digest([{k: v for k, v in p.items() if k != "ui"}, start, stop])
+        key = digest([
+            {k: v for k, v in p.items() if k != "ui"},
+            start, stop, "low-latency-play-v1",
+        ])
         store = project_store()
         root = store.root / "composition_previews"
         root.mkdir(exist_ok=True)
         output = root / (key + ".mp4")
-        if not output.exists():
-            await _media_cpu(
-                export_project,
-                p,
-                store,
-                output,
-                codec="h264",
-                render_range=(start, stop),
-                cancel=_request_cancel,
-            )
-            _prune(root, "*.mp4", 2 * 1024**3, output)
+        if not output.is_file():
+            stop_requested = threading.Event()
+
+            def cancel():
+                if stop_requested.is_set():
+                    raise InterruptedError("Playback preview cancelled")
+
+            async with _preview_slots:
+                # Another request can have published the same segment while
+                # this one was queued for the short preview worker.
+                if not output.is_file():
+                    task = asyncio.create_task(asyncio.to_thread(
+                        render_preview_segment, p, store, output, start, stop,
+                        cancel=cancel,
+                    ))
+
+                    async def watch_disconnection():
+                        while not task.done():
+                            transport = request.transport
+                            if transport is None or transport.is_closing():
+                                stop_requested.set()
+                                return
+                            await asyncio.sleep(0.15)
+
+                    watcher = asyncio.create_task(watch_disconnection())
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        stop_requested.set()
+                        try:
+                            await task
+                        except InterruptedError:
+                            pass
+                        raise
+                    finally:
+                        watcher.cancel()
+                        await asyncio.gather(watcher, return_exceptions=True)
+            _prune(root, "*.mp4", 512 * 1024**2, output)
         return web.json_response(
-            {"url": _PREFIX + "/composition/" + key, "start": start, "end": stop}
+            {"url": _PREFIX + "/composition/" + key,
+             "start": start, "end": stop}
         )
 
     @endpoint("get", "/composition/{asset_id}")
