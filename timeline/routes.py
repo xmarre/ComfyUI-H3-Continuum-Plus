@@ -14,7 +14,7 @@ import uuid
 
 from aiohttp import web
 
-from .media import MEDIA_FORMATS, audio_window, run_process, video_frames
+from .media import MEDIA_FORMATS, preview_audio_window, run_process, video_frames
 from .protocol import NATIVE_PATH_CONTRACT, native_runtime_manifest
 from .model import compile_project, validate
 from .nodes import project_store, stale_take, take_path, takes
@@ -70,6 +70,42 @@ async def _media_cpu(fn, *args, **kwargs):
         except asyncio.CancelledError:
             await task
             raise
+
+
+async def _media_cpu_cancellable(request, fn, *args, **kwargs):
+    """Bounded UI media work must stop after a seek, scroll or page close."""
+    stopped = threading.Event()
+
+    def cancel():
+        if stopped.is_set():
+            raise InterruptedError("Media request cancelled")
+
+    async with _media_slots:
+        task = asyncio.create_task(
+            asyncio.to_thread(fn, *args, cancel=cancel, **kwargs)
+        )
+
+        async def watch_disconnect():
+            while not task.done():
+                transport = request.transport
+                if transport is None or transport.is_closing():
+                    stopped.set()
+                    return
+                await asyncio.sleep(0.15)
+
+        watcher = asyncio.create_task(watch_disconnect())
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            stopped.set()
+            try:
+                await task
+            except InterruptedError:
+                pass
+            raise
+        finally:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
 
 
 def register_routes():
@@ -257,8 +293,8 @@ def register_routes():
         if not output.exists():
             temporary = root / (key + "-" + uuid.uuid4().hex + ".mp4")
             try:
-                await _media_cpu(
-                    run_process,
+                await _media_cpu_cancellable(
+                    request, run_process,
                     [
                         "ffmpeg",
                         "-v",
@@ -290,7 +326,6 @@ def register_routes():
                         "+faststart",
                         str(temporary),
                     ],
-                    cancel=_request_cancel,
                 )
                 temporary.replace(output)
             finally:
@@ -308,14 +343,9 @@ def register_routes():
             cancel=_request_cancel,
         )
         stamp = request.query.get("pts", "0")
-        pixels = await _media_cpu(
-            video_frames,
-            path,
-            [stamp],
-            240,
-            136,
-            padding="hold",
-            cancel=_request_cancel,
+        pixels = await _media_cpu_cancellable(
+            request, video_frames,
+            path, [stamp], 240, 136, padding="hold",
         )
         data = io.BytesIO()
         Image.fromarray(pixels[0]).save(data, format="JPEG")
@@ -333,14 +363,11 @@ def register_routes():
         )
         start = max(0, float(request.query.get("start", "0")))
         end = min(start + 60, float(request.query.get("end", str(start + 30))))
-        pcm = await _media_cpu(
-            audio_window,
-            path,
-            str(start),
-            str(end),
-            1000,
-            cancel=_request_cancel,
-            cache=assets.pcm_cache,
+        # Timeline waveforms are visual approximations, not generation audio.
+        # Random PTS seeking avoids decoding an hour-long prefix for every tile.
+        pcm = await _media_cpu_cancellable(
+            request, preview_audio_window,
+            path, str(start), str(end), 1000,
         )
         peaks = np.max(np.abs(pcm), axis=0)
         return web.json_response(
