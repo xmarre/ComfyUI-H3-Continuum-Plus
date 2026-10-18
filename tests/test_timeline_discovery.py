@@ -151,3 +151,16 @@ def test_duplicate_nested_search_root_does_not_create_ambiguity(movie, tmp_path)
     movie.rename(target)
     path, _ = discovery.find_original(fingerprint(target), [drive, nested])
     assert path == target.resolve()
+
+
+def test_only_mounted_drive_letters_are_discovered(tmp_path, monkeypatch):
+    mount = tmp_path / "mnt"
+    mount.mkdir()
+    for child in ("c", "d", "shared", "e"):
+        (mount / child).mkdir()
+    monkeypatch.setattr(
+        discovery.os.path, "ismount",
+        lambda p: p.name in {"c", "d"},
+    )
+    assert [p.name for p in discovery.wsl_drive_roots(mount)] == ["d", "c"]
+    assert discovery.wsl_drive_roots(tmp_path / "unmounted") == ()
