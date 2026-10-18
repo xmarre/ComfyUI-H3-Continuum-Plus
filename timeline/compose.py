@@ -90,7 +90,10 @@ def export_project(
     """
     import av
 
-    start, stop = render_range or (0, p["duration_frames"])
+    # Default to the user's explicit Render [in,out) selection, never the
+    # entire movie/project just because a caller omitted render_range.
+    start, stop = (render_range if render_range is not None
+                   else p["selection"])
     # A retained render must never silently use stale generated footage.
     from .nodes import stale_take, takes
 
