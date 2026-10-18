@@ -230,7 +230,10 @@ export class TimelineEditor {
         {},
         el("strong", { text: "CONTINUUM / TIMELINE STUDIO" }),
         this.title,
-        button("Import media", () => file.click()),
+        button("Import media (copy)", () => file.click()),
+        button("Link server file (no copy)", () =>
+          this.guard(() => this.linkServerFile()),
+        ),
         file,
         button("Save", () => this.guard(() => this.save())),
         button("Reload", () => this.guard(() => this.reload())),
@@ -448,7 +451,7 @@ export class TimelineEditor {
         { class: "h3ts-asset", draggable: "true" },
         el("strong", { text: a.name }),
         el("small", {
-          text: `${a.kind} · ${Number(ratio(a.duration || 0)).toFixed(2)} s`,
+          text: `${a.kind} · ${Number(ratio(a.duration || 0)).toFixed(2)} s · ${a.storage === "linked" ? "linked source" : "managed copy"}`,
         }),
       );
       card.ondragstart = (e) =>
@@ -465,7 +468,10 @@ export class TimelineEditor {
       card.append(
         alias,
         button("Place at playhead", () => this.place(a)),
-        button("Relink", () => {
+        button("Relink from server path", () =>
+          this.guard(() => this.linkServerFile(a)),
+        ),
+        button("Relink by uploading a copy", () => {
           const f = el("input", {
             type: "file",
             onchange: (e) =>
@@ -501,38 +507,73 @@ export class TimelineEditor {
   }
   async importFiles(files) {
     for (const file of files) {
-      this.message("Importing " + file.name + "…");
+      this.message("Uploading a managed copy of " + file.name + "…");
       const a = await request(
         this.api,
         "/import?name=" + encodeURIComponent(file.name),
-        { method: "POST", body: file, signal: this.abort.signal },
+        { method: "POST", body: file, signal: this.abort.signal, timeoutMs: null },
       );
-      this.edit((p) => {
-        if (!p.assets.some((x) => x.id === a.id)) p.assets.push(a);
-      });
-      this.place(a);
-      if (a.audio && a.kind === "video") {
-        this.edit((p) => {
-          const t = makeTrack("audio", "Original soundtrack");
-          placeAsset(
-            p,
-            a,
-            t,
-            this.playhead,
-            Math.round(ratio(a.duration) * 24),
-          );
-          p.tracks.push(t);
-        });
-      }
-      this.message("Imported " + file.name + " · media stays on disk");
+      this.addImportedAsset(a);
+      this.message("Imported " + file.name + " · managed copy in ComfyUI input");
     }
+  }
+  addImportedAsset(a) {
+    this.edit((p) => {
+      if (!p.assets.some((x) => x.id === a.id)) p.assets.push(a);
+    });
+    this.place(a);
+    if (a.audio && a.kind === "video") {
+      this.edit((p) => {
+        const t = makeTrack("audio", "Original soundtrack");
+        placeAsset(
+          p,
+          a,
+          t,
+          this.playhead,
+          Math.round(ratio(a.duration) * 24),
+        );
+        p.tracks.push(t);
+      });
+    }
+  }
+  async linkServerFile(old = null) {
+    // The browser cannot disclose a dragged file's actual server path.
+    // An explicit server path is independently restricted by the backend.
+    const path = globalThis.prompt(
+      "Absolute file path visible to the ComfyUI server (inside its input directory or H3_TIMELINE_LINK_ROOTS). Linking does not copy movie bytes:",
+    );
+    if (!path?.trim()) return;
+    this.message("Verifying server-local media (no upload)…");
+    const a = await request(this.api, "/link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path.trim() }),
+      signal: this.abort.signal,
+      timeoutMs: null,
+    });
+    if (old) {
+      this.edit((p) => {
+        if (!p.assets.some((x) => x.id === a.id))
+          p.assets.push({ ...a, alias: old.alias });
+        for (const t of p.tracks)
+          for (const c of t.clips)
+            if (c.asset_id === old.id) c.asset_id = a.id;
+      });
+    } else {
+      this.addImportedAsset(a);
+    }
+    this.message(
+      a.storage === "linked"
+        ? "Linked to original server file · no movie copy created"
+        : "Identical movie already in managed store · existing copy retained",
+    );
   }
   async relink(old, file) {
     if (!file) return;
     const a = await request(
       this.api,
       "/import?name=" + encodeURIComponent(file.name),
-      { method: "POST", body: file },
+      { method: "POST", body: file, signal: this.abort.signal, timeoutMs: null },
     );
     this.edit((p) => {
       if (!p.assets.some((x) => x.id === a.id))
