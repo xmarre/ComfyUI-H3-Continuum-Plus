@@ -10,7 +10,7 @@ const ticks = async () => {
   for (let i = 0; i < 8; i++) await new Promise(resolve => setImmediate(resolve));
 };
 
-async function launch({ found = true } = {}) {
+async function launch({ found = true, compatible = true } = {}) {
   const source = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
   const loads = [];
   const listeners = new Map();
@@ -55,6 +55,14 @@ async function launch({ found = true } = {}) {
     probe: async () => {
       if (!found) throw new Error("ECONNREFUSED");
       return "http://127.0.0.1:8188";
+    },
+    verifyTimelineRuntime: async () => {
+      if (!compatible) {
+        throw new Error(
+          "Timeline Studio backend is stale; apply PR #51 and restart ComfyUI"
+        );
+      }
+      return { contract: connection.NATIVE_PATH_CONTRACT };
     },
   };
   let fetched;
@@ -143,4 +151,15 @@ test("a failed ComfyUI page load displays the connection diagnostic", async () =
   await ticks();
   assert.match(decodeURIComponent(app.loads.at(-1)), /Failed to display ComfyUI/);
   assert.match(decodeURIComponent(app.loads.at(-1)), /ERR_CONNECTION_REFUSED/);
+});
+
+test("stale backend/frontend stops desktop before old recursive editor is opened", async () => {
+  const app = await launch({ compatible: false });
+  assert.ok(app.loads.every(url => url.startsWith("data:text/html")));
+  assert.match(decodeURIComponent(app.loads.at(-1)), /Timeline Studio installation is outdated/);
+  assert.match(decodeURIComponent(app.loads.at(-1)), /apply PR #51 and restart ComfyUI/i);
+  const denied = app.ipc.get("h3-timeline:link");
+  await assert.rejects(denied({
+    sender:app.contents,senderFrame:{url:"http://127.0.0.1:8188/"},
+  },{transaction:"x",path:"/mnt/d/movie.mkv"}), /restricted/);
 });
