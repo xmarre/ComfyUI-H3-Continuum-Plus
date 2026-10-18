@@ -85,7 +85,7 @@ def test_all_chunks_checked_not_only_search_samples(movie, tmp_path, monkeypatch
     assert not list(store.root.glob("*.link.json"))
 
 
-def test_ambiguous_same_content_is_rejected_without_writing(movie, tmp_path):
+def test_same_content_copies_do_not_force_whole_drive_scan(movie, tmp_path):
     drive = tmp_path / "d"
     (drive / "a").mkdir(parents=True)
     (drive / "b").mkdir()
@@ -93,8 +93,12 @@ def test_ambiguous_same_content_is_rejected_without_writing(movie, tmp_path):
     second = drive / "b" / "ORIGINAL.mkv"
     first.write_bytes(movie.read_bytes())
     second.write_bytes(movie.read_bytes())
-    with pytest.raises(ValueError, match="Multiple identical candidates"):
-        discovery.find_original(fingerprint(first), [drive])
+    found, _ = discovery.find_original(
+        fingerprint(first), [drive], indexed_candidates=lambda *a, **k: [first, second]
+    )
+    # Identical content is a valid immutable SHA-256 asset, so choose the
+    # earliest verified path without traversing unrelated large directories.
+    assert found == first.resolve()
 
 
 def test_no_matching_source_never_imports_data(movie, tmp_path):
@@ -164,3 +168,108 @@ def test_only_mounted_drive_letters_are_discovered(tmp_path, monkeypatch):
     )
     assert [p.name for p in discovery.wsl_drive_roots(mount)] == ["d", "c"]
     assert discovery.wsl_drive_roots(tmp_path / "unmounted") == ()
+
+def test_index_hit_bypasses_expensive_scans(movie, tmp_path, monkeypatch):
+    drive = tmp_path / "d"
+    (drive / "deep").mkdir(parents=True)
+    found = drive / "deep" / "source.mkv"
+    movie.rename(found)
+    called = []
+
+    def never_walk(*args, **kwargs):
+        called.append(True)
+        raise AssertionError("Indexed movie must never cause an os.walk")
+
+    monkeypatch.setattr(discovery.os, "walk", never_walk)
+    path, chunks = discovery.find_original(
+        fingerprint(found), [drive],
+        indexed_candidates=lambda *a, **k: [found],
+    )
+    assert path == found.resolve()
+    assert chunks
+    assert not called
+
+
+def test_priority_directory_hit_bypasses_deep_walk(movie, tmp_path, monkeypatch):
+    drive = tmp_path / "d"
+    (drive / "Movies").mkdir(parents=True)
+    target = drive / "Movies" / "source.mkv"
+    movie.rename(target)
+    monkeypatch.setattr(
+        discovery.os, "walk",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("Common media directory match should be immediate")
+        ),
+    )
+    assert discovery.find_original(
+        fingerprint(target), [drive],
+        indexed_candidates=lambda *a, **k: [],
+    )[0] == target.resolve()
+
+
+def test_deep_unindexed_match_returns_before_walking_entire_drive(
+    movie, tmp_path, monkeypatch
+):
+    drive = tmp_path / "d"
+    directory = drive / "top" / "footage"
+    directory.mkdir(parents=True)
+    target = directory / "source.mkv"
+    movie.rename(target)
+    real_walk = discovery.os.walk
+
+    def virtual_walk(*args, **kwargs):
+        yield str(directory), [], ["source.mkv"]
+        raise AssertionError("Resolver must return as soon as match is found")
+
+    monkeypatch.setattr(discovery.os, "walk", virtual_walk)
+    assert discovery.find_original(
+        fingerprint(target), [drive],
+        indexed_candidates=lambda *a, **k: [],
+    )[0] == target.resolve()
+
+
+def test_windows_index_candidate_paths_are_confined_to_mounts(
+    movie, tmp_path, monkeypatch
+):
+    # Mock WSL powershell interop; absolute Windows paths must be converted
+    # to mounted drives without ever trusting an unapproved external path.
+    import subprocess
+    drive = tmp_path / "d"
+    (drive / "Movies").mkdir(parents=True)
+    target = drive / "Movies" / "source.mkv"
+    movie.rename(target)
+    monkeypatch.setattr(discovery.shutil, "which", lambda _: "powershell.exe")
+    instances = []
+
+    class Process:
+        returncode = 0
+        def __init__(self, *args, **kwargs):
+            self.done = False
+            instances.append(args)
+        def communicate(self, timeout=None):
+            self.done = True
+            return (
+                b"C:\\Movies\\source.mkv\\nD:\\Movies\\source.mkv\\n"
+                b"\\\\server\\share\\source.mkv\\n",
+                b"",
+            )
+        def poll(self):
+            return 0 if self.done else None
+        def kill(self):
+            self.done = True
+
+    monkeypatch.setattr(discovery.subprocess, "Popen", Process)
+    assert list(discovery.windows_index_candidates(
+        "source.mkv", 12, [drive],
+    )) == [target]
+    assert len(instances) == 1
+
+
+def test_index_sql_escapes_tricky_filenames():
+    import base64
+    name = "movie'; DROP TABLE SYSTEMINDEX;--.mkv"
+    script = discovery._index_script(name, 100)
+    encoded_sql = script.split("FromBase64String('")[1].split("'")[0]
+    sql = base64.b64decode(encoded_sql).decode("utf-8")
+    assert "System.FileName = 'movie''; DROP TABLE SYSTEMINDEX;--.mkv'" in sql
+    assert sql.endswith("AND System.Size = 100")
