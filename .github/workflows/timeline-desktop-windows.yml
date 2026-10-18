@@ -29,6 +29,9 @@ jobs:
       - name: Package unsigned Windows portable wrapper
         working-directory: desktop/timeline-native
         run: npm run dist
+      - name: Smoke-test packaged Electron startup and native file bridge
+        working-directory: desktop/timeline-native
+        run: node smoke_windows.cjs
       - name: Upload unsigned validation artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
