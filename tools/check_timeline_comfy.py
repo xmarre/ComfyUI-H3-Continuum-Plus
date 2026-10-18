@@ -178,6 +178,26 @@ def main():
                     "/h3_continuum/timeline/thumbnail/" + linked["id"] + "?pts=1"
                 )
             ) > 100
+            # Browser metadata-only drag resolves the same original file.
+            import hashlib
+            from ComfyUI_H3_Continuum_Join.timeline.discovery import CHUNK_BYTES
+
+            data = linked_movie.read_bytes()
+            dropped = request(
+                "/h3_continuum/timeline/resolve-dropped",
+                {
+                    "name": linked_movie.name,
+                    "size": len(data),
+                    "chunk_size": CHUNK_BYTES,
+                    "chunks": [
+                        hashlib.sha256(data[i:i + CHUNK_BYTES]).hexdigest()
+                        for i in range(0, len(data), CHUNK_BYTES)
+                    ],
+                },
+            )
+            assert dropped["id"] == linked["id"]
+            assert dropped["storage"] == "linked"
+            assert not (directory / "input" / "h3_timeline_studio" / "assets" / linked["id"]).exists()
             try:
                 request("/h3_continuum/timeline/link", {"path": str(movie)})
             except urllib.error.HTTPError as exc:
@@ -355,7 +375,7 @@ def main():
                 json.dumps(
                     {
                         "comfy_nodes": 4,
-                        "http": "upload/link/blocked-outside-root/save/reopen/compile/thumbnail/waveform/export/accept-reject-restore passed",
+                        "http": "upload/metadata-only-drag/link/blocked-outside-root/save/reopen/compile/thumbnail/waveform/export/accept-reject-restore passed",
                         "graph": "real CPU queue execution passed",
                         "gpu_sampling": "not exercised",
                     },
