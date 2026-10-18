@@ -552,6 +552,12 @@ def test_auto_nonce_resumes_interrupted_revision(tmp_path):
     )
     assert (nonce, decision) == (2, "resume_interrupted")
 
+    controller.force_fresh_nonce = True
+    nonce, decision = controller._resolve_effective_nonce(
+        draft, requested_nonce=0, resume_safe=True
+    )
+    assert (nonce, decision) == (3, "new_revision")
+
 
 def test_auto_nonce_increments_only_after_completed_revision(tmp_path):
     controller, _ = _controller(tmp_path)

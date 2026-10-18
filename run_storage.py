@@ -1028,7 +1028,7 @@ class RunStorageController:
                             matching[nonce] = manifest
                 except Exception:
                     continue
-        if resume_safe and matching:
+        if resume_safe and matching and not getattr(self, "force_fresh_nonce", False):
             latest_nonce = max(matching)
             latest = matching[latest_nonce]
             if latest_nonce == highest and str(latest.get("status", "")) != "complete":

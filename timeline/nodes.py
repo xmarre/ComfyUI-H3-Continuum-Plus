@@ -467,6 +467,9 @@ class H3ContinuumTimelineSampler:
         with run_storage_scope(
             storage_name, prompt=prompt, unique_id=unique_id
         ) as storage:
+            storage.force_fresh_nonce = (
+                bool(p.get("queued_batch_id")) and int(regenerate_from) > 0
+            )
             storage.excluded_revisions = {
                 r["revision_id"]
                 for r in all_takes

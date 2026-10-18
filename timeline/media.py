@@ -229,7 +229,7 @@ class AssetStore:
             temporary.unlink(missing_ok=True)  # Stabilize link-count/ctime.
         else:
             try:
-                self.verify(asset_id, cancel=cancel)
+                self.verify(asset_id, cancel=cancel, force=True)
             except AssetContentChanged:
                 # The stored copy no longer matches its hash. This upload was
                 # just hashed as ``asset_id``, so it repairs the asset.
@@ -238,11 +238,11 @@ class AssetStore:
             self._remember(final, self._stamp(final))
         temporary.unlink(missing_ok=True)
 
-    def verify(self, asset_id, *, cancel=check_cancel):
+    def verify(self, asset_id, *, cancel=check_cancel, force=False):
         path = self.path(asset_id)
         stamp = self._stamp(path)
         with self._verification_lock:
-            if self._verified.get(str(path)) == stamp:
+            if not force and self._verified.get(str(path)) == stamp:
                 return path
         h = hashlib.sha256()
         with path.open("rb") as stream:

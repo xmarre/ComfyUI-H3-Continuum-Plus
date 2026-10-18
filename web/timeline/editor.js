@@ -1423,12 +1423,6 @@ export class TimelineEditor {
     );
     if (graphNode?.widgets_values)
       graphNode.widgets_values[0] = JSON.stringify(snapshot);
-    // A reroll needs a fresh seed nonce; equal nonces reproduce the take.
-    const nonceWidget = sampler.widgets.find((w) => w.name === "reroll_nonce");
-    if (reroll && nonceWidget) {
-      nonceWidget.value = (Number(nonceWidget.value) || 0) + 1;
-      sampler.setDirtyCanvas?.(true, true);
-    }
     for (let i = 0; i < plan.jobs.length; i++) {
       const payload = clone(frozen);
       const actual = payload.output[String(sampler.id)].inputs;
@@ -1447,7 +1441,9 @@ export class TimelineEditor {
                   1,
               )
             : 1;
-        if (nonceWidget) actual.reroll_nonce = nonceWidget.value;
+        // Native storage allocates the next nonce under its run lock. A
+        // restored or concurrently used widget counter cannot safely do so.
+        actual.reroll_nonce = 0;
       }
       const serialized = payload.workflow?.nodes?.find(
         (n) => n.id === sampler.id,

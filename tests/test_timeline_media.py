@@ -697,3 +697,19 @@ def test_value_error_cancellation_during_duplicate_verification_never_repairs(
         assert path.stat().st_ino == before
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def test_reimport_repairs_same_size_corruption_when_filesystem_stamps_are_coarse(
+    movie, tmp_path, monkeypatch
+):
+    store = AssetStore(tmp_path / "assets")
+    with movie.open("rb") as source:
+        asset = store.register(source)
+    path = store.path(asset["id"])
+    stamp = store._stamp(path)
+    path.write_bytes(b"\0" * path.stat().st_size)
+    # FAT-like timestamp granularity can hide a quick same-size mutation.
+    monkeypatch.setattr(AssetStore, "_stamp", staticmethod(lambda _: stamp))
+    with movie.open("rb") as source:
+        store.register(source)
+    assert path.read_bytes() == movie.read_bytes()

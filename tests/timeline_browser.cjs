@@ -198,7 +198,7 @@ const { chromium } = require("playwright");
     });
     assert.equal(pastedIds.length, 3);
     assert.equal(new Set(pastedIds).size, 3);
-    // Multi-job reroll: jobs queue in order, appended, with a fresh nonce.
+    // Multi-job reroll: append in order and let native storage allocate nonces.
     await page.evaluate(() => {
       const app = window.comfyAPI.app.app;
       const api = window.comfyAPI.api.api;
@@ -232,8 +232,8 @@ const { chromium } = require("playwright");
       document.querySelector(".h3ts-status").textContent.includes("queued"),
     );
     assert.deepEqual(await page.evaluate(() => window.__h3Queued), [
-      [0, 0, 1],
-      [0, 1, 1],
+      [0, 0, 0],
+      [0, 1, 0],
     ]);
     // A long queued cut may exceed 64 jobs; reopening must retain ownership
     // of its earliest pending job so Cancel cannot orphan it.
