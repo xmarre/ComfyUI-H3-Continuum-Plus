@@ -316,6 +316,8 @@ def register_routes():
                         "scale=640:-2",
                         "-c:v",
                         "libx264",
+                        "-threads:v",
+                        "1",
                         "-preset",
                         "ultrafast",
                         "-crf",
