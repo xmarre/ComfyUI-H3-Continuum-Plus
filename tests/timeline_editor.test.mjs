@@ -428,3 +428,112 @@ test("closing editor cancels an in-flight native link transaction", async () => 
     globalThis.h3NativeMedia = original;
   }
 });
+
+test("Play/Pause toggles immediately while a segment is still preparing", async () => {
+  let started = 0;
+  let paused = 0;
+  let resolveFirst;
+  const player = {
+    playWanted: false,
+    playEpoch: 0,
+    playController: null,
+    nextPreview: null,
+    closed: false,
+    video: { paused: true, pause() { paused++; } },
+    p: {duration_frames:504,tracks:[{role:"retained",clips:[{id:"c"}]}]},
+    playhead: 0,
+    message() {},
+    playSegment() {
+      started++;
+      return new Promise(resolve => { resolveFirst = resolve; });
+    },
+    stopPlayback() {
+      return TimelineEditor.prototype.stopPlayback.call(this);
+    },
+  };
+  const request = TimelineEditor.prototype.playComposition.call(player);
+  assert.equal(started, 1);
+  assert.equal(player.playWanted, true);
+  await TimelineEditor.prototype.playComposition.call(player);
+  assert.equal(player.playWanted, false);
+  assert.equal(paused, 1);
+  assert.equal(started, 1);
+  resolveFirst();
+  await request;
+});
+
+test("blank timeline Play responds without sending a composition export request", async () => {
+  const status = [];
+  const editor = {
+    playWanted: false,
+    video: {paused:true},
+    p:{duration_frames:504,tracks:[]},
+    message(text) {status.push(text);},
+    playSegment() {throw new Error("Empty timeline must not render");},
+  };
+  await TimelineEditor.prototype.playComposition.call(editor);
+  assert.match(status.at(-1), /No video on the timeline/);
+});
+
+test("playback fetch asks for a tiny 2s first window and has a timeout", async () => {
+  const sent = [];
+  const editor = {
+    p:{name:"project"},
+    compare:{value:"composed"},
+    api:{
+      fetchApi(path, options) {
+        sent.push({path,options});
+        return Promise.resolve({
+          ok:true,
+          json:async()=>({url:"/composition/abc",start:0,end:48}),
+        });
+      },
+    },
+  };
+  const ctrl = new AbortController();
+  const response = await TimelineEditor.prototype.fetchSegment.call(
+    editor, 0, 48, ctrl,
+  );
+  assert.equal(response.end, 48);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].options.timeoutMs, 15000);
+  const data = JSON.parse(sent[0].options.body);
+  assert.equal(data.length_frames, 48);
+  assert.equal(data.start, 0);
+});
+
+test("pause during pending preview invalidates and aborts its request", async () => {
+  let done;
+  let played = 0;
+  const output=[];
+  const player = {
+    playWanted:true,playEpoch:1,playController:null,nextPreview:null,
+    closed:false,abort:new AbortController(),playhead:0,
+    p:{duration_frames:504},image:{},message(text){output.push(text);},
+    video:{paused:true,pause() {},play(){played++;return Promise.resolve();},
+      dataset:{}},
+    compare:{value:"composed"},
+    fetchSegment(_start,_length,controller) {
+      return new Promise(resolve => {done = () => resolve({
+        start:0,end:48,url:"/preview/abc",
+      });});
+    },
+    prefetchSegment(){},
+    stopPlayback(){return TimelineEditor.prototype.stopPlayback.call(this);},
+  };
+  const waiting = TimelineEditor.prototype.playSegment.call(player,0,1);
+  assert.equal(output.at(-1),"Preparing short playback segment…");
+  player.stopPlayback();
+  assert.equal(player.playWanted,false);
+  done();
+  await waiting;
+  assert.equal(played,0);
+  assert.equal(player.video.src,undefined);
+});
+
+test("source proxy for a seek is not transcoded until specifically requested", async () => {
+  const source = await (await import("node:fs/promises")).readFile(
+    new URL("../web/timeline/editor.js", import.meta.url), "utf8");
+  assert.match(source,/A seek preview needs only four seconds/);
+  assert.doesNotMatch(source,/\/proxy\/[^\n]+duration=30/);
+});
