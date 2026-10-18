@@ -1,19 +1,30 @@
 "use strict";
-const { contextBridge, webUtils } = require("electron");
-const { linkNativeFile } = require("./native_link.cjs");
-const pending = new Map();
+const { contextBridge, webUtils, ipcRenderer } = require("electron");
+const { toWSLPath } = require("./native_link.cjs");
+const pending = new Set();
 
-// The bridge does not expose absolute paths, arbitrary file readers, Node.js,
-// an unrestricted IPC channel or a general-purpose HTTP client to web content.
+// Native file paths stay inside the isolated preload/main process. Page JS
+// sees only registered metadata; no arbitrary IPC or HTTP client is exposed.
 contextBridge.exposeInMainWorld("h3NativeMedia", {
-  linkFile(file, requestId) {
-    return linkNativeFile(file, requestId, {
-      getPathForFile: (value) => webUtils.getPathForFile(value),
-      fetchImpl: (...args) => fetch(...args),
-      pending,
-    });
+  async linkFile(file, transaction) {
+    if (typeof transaction !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,80}$/.test(transaction) ||
+        pending.has(transaction)) {
+      throw new Error("Invalid or duplicate media transaction");
+    }
+    const source = toWSLPath(webUtils.getPathForFile(file));
+    pending.add(transaction);
+    try {
+      return await ipcRenderer.invoke("h3-timeline:link", {
+        transaction, path: source,
+      });
+    } finally {
+      pending.delete(transaction);
+    }
   },
-  cancelLink(requestId) {
-    pending.get(requestId)?.abort();
+  cancelLink(transaction) {
+    if (pending.has(transaction)) {
+      ipcRenderer.send("h3-timeline:cancel", transaction);
+    }
   },
 });
