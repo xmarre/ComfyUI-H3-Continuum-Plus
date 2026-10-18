@@ -1802,6 +1802,7 @@ export class TimelineEditor {
       return;
     }
     this.exportPending = true;
+    const requestedResolution = this.exportResolutionChoice || "timeline";
     this.exportLink.hidden = true;
     this.exportLink.textContent = "";
     this.exportStatus.textContent = "Preparing export…";
@@ -1839,7 +1840,7 @@ export class TimelineEditor {
       const result = await request(this.api, "/export", {
         method: "POST",
         body: JSON.stringify({
-          project: this.p, codec, resolution: this.exportResolutionChoice,
+          project: this.p, codec, resolution: requestedResolution,
           render_range: [start, stop],
           selected_clip_ids: target.clipIds,
         }),
@@ -1852,15 +1853,15 @@ export class TimelineEditor {
         ),
       );
       const nativeAsset = visual.length === 1
-        ? this.p.assets.find((a) => a.id === visual[0].asset_id)
+        ? this.p.assets?.find((a) => a.id === visual[0].asset_id)
         : null;
       const wrongDimensions =
-        this.exportResolutionChoice === "source" &&
+        requestedResolution === "source" &&
         nativeAsset?.video && (
           result.width !== nativeAsset.video.width ||
           result.height !== nativeAsset.video.height
         );
-      if (result.resolution !== this.exportResolutionChoice ||
+      if (result.resolution !== requestedResolution ||
           !Number.isSafeInteger(result.width) ||
           !Number.isSafeInteger(result.height) ||
           result.width <= 0 || result.height <= 0 || wrongDimensions) {
