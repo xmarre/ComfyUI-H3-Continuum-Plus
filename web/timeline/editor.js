@@ -1845,6 +1845,33 @@ export class TimelineEditor {
         }),
       });
       this.exportId = result.id;
+      const visual = target.clipIds.flatMap((id) =>
+        this.p.tracks.flatMap((t) =>
+          ["retained", "generated"].includes(t.role)
+            ? t.clips.filter((c) => c.id === id) : [],
+        ),
+      );
+      const nativeAsset = visual.length === 1
+        ? this.p.assets.find((a) => a.id === visual[0].asset_id)
+        : null;
+      const wrongDimensions =
+        this.exportResolutionChoice === "source" &&
+        nativeAsset?.video && (
+          result.width !== nativeAsset.video.width ||
+          result.height !== nativeAsset.video.height
+        );
+      if (result.resolution !== this.exportResolutionChoice ||
+          !Number.isSafeInteger(result.width) ||
+          !Number.isSafeInteger(result.height) ||
+          result.width <= 0 || result.height <= 0 || wrongDimensions) {
+        await request(this.api, "/export/" + result.id + "/cancel", {
+          method: "POST",
+        }).catch(() => {});
+        throw new Error(
+          "Server ignored export resolution or source pixel dimensions; " +
+          "export cancelled. Update the Patcher overlay and restart ComfyUI."
+        );
+      }
       const pixels = result.width + "×" + result.height;
       const sizeDescription = (result.resolution === "source"
         ? "source-size" : "timeline-size") + " " + pixels;
@@ -1877,7 +1904,10 @@ export class TimelineEditor {
           const total = Number(status.total_frames);
           if (total !== frames ||
               status.render_range?.[0] !== start ||
-              status.render_range?.[1] !== stop) {
+              status.render_range?.[1] !== stop ||
+              status.resolution !== result.resolution ||
+              status.width !== result.width ||
+              status.height !== result.height) {
             await request(this.api, "/export/" + result.id + "/cancel", {
               method: "POST",
             }).catch(() => {});
