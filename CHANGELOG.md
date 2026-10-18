@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Default editor clip exports to explicitly resolved **native source pixel dimensions**, separate from the H3 sampling canvas; retain an explicit canvas-size option and the existing Export output-node default. Refuse ambiguous source geometry instead of silently downscaling. Bound RGB export batches and report output pixel dimensions; lossless FFV1 preserves 8-bit compositor pixels, not higher-bit-depth source streams.
+- Make original footage's H3 path explicit with a repeat-safe **Guide H3 with selected clip** action and a visible explanation that native video guidance is compiled from the timeline project directly, while export produces a standalone output file. Version the native desktop/frontend/backend compatibility contract.
+
 - Add Timeline Studio's compact project node and resizable editor, scoped image/video/audio conditions, typed native sampler facade, immutable takes, accepted-prefix reuse, bounded previews and composition/export.
 - Preserve existing V3.4 identifiers, widget ordering, native continuation and external accelerator ownership.
 - Route timed prompt regions through native physical re-basing; serve audio windows from a bounded whole-stream PCM cache; queue multi-job selections in order and give each reroll a fresh nonce; keep editor view state out of prompt inputs; scope guide-audio invalidation to each job.
