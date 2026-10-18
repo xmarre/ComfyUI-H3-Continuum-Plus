@@ -76,6 +76,44 @@ export function exportTarget(p, selectedIds = []) {
   return { start, stop, kind: "range", clipIds: [] };
 }
 
+/**
+ * Route the selected retained source directly to H3 temporal video guidance.
+ * This uses the registered asset and its source PTS, not an exported re-encode.
+ * Repeating the action refreshes the guide rather than duplicating it.
+ */
+export function routeClipToGuidance(p, ids) {
+  const sources = selectedClips(p, ids)
+    .filter(([track]) => track.role === "retained");
+  if (sources.length !== 1)
+    throw new Error("Select exactly one retained video clip to guide H3");
+  const [, source] = sources[0];
+  const asset = p.assets.find((a) => a.id === source.asset_id);
+  if (!asset?.video)
+    throw new Error("Selected source has no video stream");
+  let lane = p.tracks.find((t) =>
+    t.role === "video_guide" && !t.muted && !t.locked &&
+    t.clips.some((c) => c.guidance_source_clip_id === source.id));
+  let guide = lane?.clips.find((c) =>
+    c.guidance_source_clip_id === source.id);
+  if (!lane) {
+    // Use a separate, visible guide lane so existing hand-authored guidance
+    // cannot silently mask the new clip via bottom-to-top compositing order.
+    lane = makeTrack("video_guide", "H3 video guidance");
+    p.tracks.push(lane);
+  }
+  const copy = {
+    ...clone(source),
+    id: guide?.id || uid(),
+    guidance_source_clip_id: source.id,
+    audio_role: "neither",
+    guide_disabled: false,
+  };
+  if (guide) Object.assign(guide, copy);
+  else lane.clips.push(copy);
+  p.selection = [source.start, source.end];
+  return copy;
+}
+
 export function split(p, ids, frame) {
   for (const [track, c] of selectedClips(p, ids)) {
     if (frame <= c.start || frame >= c.end) continue;
