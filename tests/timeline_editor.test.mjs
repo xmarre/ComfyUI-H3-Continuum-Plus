@@ -17,6 +17,7 @@ import {
   snap,
   sourceAt,
   exportTarget,
+  routeClipToGuidance,
 } from "../web/timeline/core.js";
 const project = () => ({
   duration_frames: 504,
@@ -884,4 +885,37 @@ test("close during accepted-but-unanswered export POST cancels returned job",asy
   finishPost();
   await exporting;
   assert.equal(cancels,1);
+});
+
+test("retained source routes to H3 video guidance at original PTS without exporting", () => {
+  const p = {
+    assets: [{ id: "asset-1", video: { width: 1920, height: 1080 } }],
+    selection: [0, 336],
+    tracks: [{
+      id: "source", role: "retained", clips: [{
+        id: "scene-714", asset_id: "asset-1",
+        start: 17136, end: 17283, source_in: "714",
+        speed: "1", audio_role: "final", padding: "error",
+      }],
+    }],
+  };
+  routeClipToGuidance(p, ["scene-714"]);
+  assert.deepEqual(p.selection, [17136, 17283]);
+  assert.equal(p.tracks.length, 2);
+  const guide = p.tracks[1].clips[0];
+  assert.equal(p.tracks[1].role, "video_guide");
+  assert.equal(guide.asset_id, "asset-1");
+  assert.equal(guide.source_in, "714");
+  assert.equal(guide.speed, "1");
+  assert.equal(guide.audio_role, "neither");
+  assert.equal(guide.start, 17136);
+  assert.equal(guide.end, 17283);
+  const firstId = guide.id;
+  p.tracks[0].clips[0].source_in = "720";
+  routeClipToGuidance(p, ["scene-714"]);
+  assert.equal(p.tracks.length, 2);
+  assert.equal(p.tracks[1].clips.length, 1);
+  assert.equal(p.tracks[1].clips[0].id, firstId);
+  assert.equal(p.tracks[1].clips[0].source_in, "720");
+  assert.throws(() => routeClipToGuidance(p, ["no-such-clip"]), /exactly one retained/);
 });
