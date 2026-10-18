@@ -87,7 +87,7 @@ def _quick_source_segment(p, store, output, start, stop, selection, *, cancel):
         "-map", "0:v:0",
         *(["-map", "0:a:0?"] if with_audio else ["-an"]),
         "-vf", filters,
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
+        "-c:v", "libx264", "-threads:v", "1", "-preset", "ultrafast", "-crf", "27",
         "-r", "24", "-pix_fmt", "yuv420p",
         *(
             ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
