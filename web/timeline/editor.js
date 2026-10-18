@@ -1336,10 +1336,12 @@ export class TimelineEditor {
       return;
     }
     if (!this.p.tracks.some(t =>
-      !t.muted && ["retained", "generated"].includes(t.role) &&
-      t.clips?.length
+      !t.muted && t.clips?.some(c =>
+        ["retained", "generated"].includes(t.role) ||
+        (t.role === "audio" && ["final", "both"].includes(c.audio_role))
+      )
     )) {
-      this.message("No video on the timeline · import or place footage first");
+      this.message("No playable footage or final audio · import or place media first");
       return;
     }
     this.playWanted = true;
