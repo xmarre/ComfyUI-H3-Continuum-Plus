@@ -22,11 +22,15 @@ CATEGORY = "MiniMax H3/Continuum/Timeline Studio"
 def project_store():
     import folder_paths
 
+    from .discovery import wsl_drive_roots
+
     input_root = Path(folder_paths.get_input_directory()).resolve()
-    # Extra roots are an explicit server-operator opt-in, not browser-supplied.
+    # Auto-discover already-mounted Windows drives. Browser drag only transfers
+    # fingerprints; original movie bytes never enter the HTTP request.
     extra = [p for p in os.environ.get("H3_TIMELINE_LINK_ROOTS", "").split(os.pathsep) if p]
     return ProjectStore(
-        input_root / "h3_timeline_studio", link_roots=[input_root, *extra]
+        input_root / "h3_timeline_studio",
+        link_roots=[input_root, *wsl_drive_roots(), *extra],
     )
 
 
