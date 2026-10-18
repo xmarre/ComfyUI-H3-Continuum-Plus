@@ -285,7 +285,25 @@ def compile_window(p, index, guide_scope=None):
                 ]
                 base += "\n" + timeline_preamble(script)
                 if exact:
-                    base += "\n" + exact[0]["body"]
+                    from ..v2.physical_prompts import inspect_strict_inner_ranges
+
+                    inner = inspect_strict_inner_ranges(
+                        {**exact[0], "kind": "time"},
+                        outer_start=Fraction(start, 24),
+                        outer_end=Fraction(end, 24),
+                    )
+                    if inner:
+                        timed.extend(
+                            (
+                                round(rational(s["start"]) * 24),
+                                round(rational(s["end"]) * 24),
+                                s["body"],
+                                False,
+                            )
+                            for s in inner
+                        )
+                    else:
+                        base += "\n" + exact[0]["body"]
                 elif selected:
                     for section in selected:
                         a = max(start, round(rational(section["start"]) * 24))
@@ -409,7 +427,9 @@ def compile_window(p, index, guide_scope=None):
             f"Video guidance covers {end - start - gaps} of {end - start} frames in chunk {index + 1}; uncovered frames hold the nearest guide frame"
         )
     semantic = {
-        "audio_encoder_scope_hash": digest(scope_identity) if full_guide else "none",
+        "audio_encoder_scope_hash": digest(["exact_audio_scope_v2", scope_identity])
+        if full_guide
+        else "none",
         "prompt": text,
         "segments": segments,
         "images": images,
@@ -432,19 +452,13 @@ def compile_window(p, index, guide_scope=None):
     }
 
 
-# Native drift between logical and actual job starts is below one H3 grid
-# step (17 frames); the encoder mix also extends 34 frames past the job.
-GUIDE_SCOPE_MARGIN = 64
-
-
-def guide_scope_for(p, indices):
+def guide_scope_for(p, indices, offset=None):
+    """Encoder interval; runtime supplies the actual causal output offset."""
     size = p["chunk_frames"]
     a = indices[0] * size
     b = min(p["duration_frames"], (indices[-1] + 1) * size)
-    return (
-        max(0, a - GUIDE_SCOPE_MARGIN),
-        min(p["duration_frames"], b + GUIDE_SCOPE_MARGIN),
-    )
+    origin = a if offset is None else offset
+    return (origin, origin + b - a + 34)
 
 
 def compile_project(project):

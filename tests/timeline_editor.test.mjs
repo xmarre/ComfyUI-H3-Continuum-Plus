@@ -116,3 +116,24 @@ test("ripple delete keeps unlocked lanes in sync and respects locks", () => {
   );
   assert.equal(p.tracks[2].clips[0].start, 400);
 });
+
+test("ripple delete cuts a spanning soundtrack on the same source boundaries", () => {
+  const p = project();
+  p.tracks.push({
+    id: "audio",
+    clips: [{ id: "sound", start: 0, end: 504, source_in: "10", speed: "1" }],
+  });
+  p.markers = [{ frame: 400, end: 450 }];
+  p.selection = [168, 504];
+  remove(p, ["c"], true);
+  assert.deepEqual(
+    p.tracks[1].clips.map((c) => [c.start, c.end, c.source_in]),
+    [
+      [0, 168, "10"],
+      [168, 336, "24"],
+    ],
+  );
+  assert.equal(p.duration_frames, 336);
+  assert.deepEqual(p.selection, [168, 336]);
+  assert.deepEqual(p.markers, [{ frame: 232, end: 282 }]);
+});

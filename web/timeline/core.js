@@ -103,14 +103,50 @@ export function remove(p, ids, ripple = false) {
     else intervals.push([c.start, c.end]);
   }
   // Close each removed span on every unlocked lane, latest span first.
-  for (const [start, end] of intervals.reverse())
+  for (const [start, end] of intervals.reverse()) {
+    const cut = end - start;
+    const at = (f) => (f <= start ? f : Math.max(start, f - cut));
     for (const track of p.tracks)
       if (!track.locked)
-        for (const next of track.clips)
-          if (next.start >= end) {
-            next.start -= end - start;
-            next.end -= end - start;
-          }
+        track.clips = track.clips.flatMap((c) => {
+          if (c.end <= start) return [c];
+          if (c.start >= end)
+            return [{ ...c, start: c.start - cut, end: c.end - cut }];
+          const result = [];
+          if (c.start < start) result.push({ ...c, end: start });
+          if (c.end > end)
+            result.push({
+              ...c,
+              id: result.length ? uid() : c.id,
+              start,
+              end: c.end - cut,
+              source_in: String(sourceAt(c, end)),
+            });
+          return result;
+        });
+    p.duration_frames = Math.max(
+      1,
+      p.duration_frames - cut,
+      ...p.tracks.flatMap((t) => t.clips.map((c) => c.end)),
+    );
+    if (p.selection) {
+      const a = Math.min(at(p.selection[0]), p.duration_frames - 1);
+      p.selection = [
+        a,
+        Math.max(a + 1, Math.min(at(p.selection[1]), p.duration_frames)),
+      ];
+    }
+    if (p.markers)
+      p.markers = p.markers.flatMap((m) => {
+        const stop = m.end ?? m.frame + 1;
+        if (m.frame >= start && stop <= end) return [];
+        const frame = at(m.frame),
+          after = at(stop);
+        return after > frame
+          ? [{ ...m, frame, ...(m.end == null ? {} : { end: after }) }]
+          : [];
+      });
+  }
 }
 export function paste(p, clipboard, frame) {
   if (!clipboard.length) return [];

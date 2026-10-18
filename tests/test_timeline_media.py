@@ -364,7 +364,7 @@ def test_cached_audio_windows_match_sequential_decode_and_decode_once(
         cached = audio_window(movie, start, end, 48000, cache=cache)
         direct = audio_window(movie, start, end, 48000)
         np.testing.assert_array_equal(cached, direct)
-    assert calls.count(None) == 1  # one full-stream decode serves every window
+    assert len(calls) == len(windows) + 1  # one cache decode plus direct controls
 
 
 def test_duplicate_import_keeps_registered_file_identity(movie, tmp_path):
@@ -378,6 +378,114 @@ def test_duplicate_import_keeps_registered_file_identity(movie, tmp_path):
     assert first["id"] == second["id"]
     assert (before.st_ino, before.st_mtime_ns) == (after.st_ino, after.st_mtime_ns)
     assert store.verify(first["id"]).is_file()
+
+
+def test_duplicate_import_does_not_certify_corrupt_registered_bytes(movie, tmp_path):
+    store = AssetStore(tmp_path / "assets")
+    with movie.open("rb") as source:
+        asset = store.register(source)
+    store.path(asset["id"]).write_bytes(b"corrupted registered media")
+    try:
+        with movie.open("rb") as source:
+            store.register(source)
+    except ValueError:
+        pass
+    with pytest.raises(ValueError, match="changed"):
+        store.verify(asset["id"])
+
+
+def test_uncached_audio_only_reads_the_selected_samples(movie, monkeypatch):
+    import ComfyUI_H3_Continuum_Join.timeline.media as media
+
+    original = media.np.fromfile
+    sizes = []
+
+    def read(*args, **kwargs):
+        value = original(*args, **kwargs)
+        sizes.append(value.size)
+        return value
+
+    monkeypatch.setattr(media.np, "fromfile", read)
+    window = audio_window(movie, "13", "14", 48000)
+    assert window.shape == (2, 48000)
+    assert max(sizes) <= 2 * 48000
+
+
+def test_pcm_cache_budget_falls_back_without_losing_audio(movie, tmp_path):
+    from ComfyUI_H3_Continuum_Join.timeline.media import PcmCache
+
+    cache = PcmCache(tmp_path / "pcm", limit_bytes=1024)
+    expected = audio_window(movie, "7", "8", 48000)
+    actual = audio_window(movie, "7", "8", 48000, cache=cache)
+    np.testing.assert_array_equal(actual, expected)
+    assert sum(p.stat().st_size for p in cache.root.iterdir()) <= 1024
+
+
+def test_generated_audio_fills_only_gaps_in_current_authored_final_audio(
+    movie, tmp_path
+):
+    store = ProjectStore(tmp_path / "store")
+    with movie.open("rb") as source:
+        asset = store.assets.register(source)
+    p = blank_project()
+    clip = {
+        "id": "generated",
+        "asset_id": asset["id"],
+        "start": 0,
+        "end": 48,
+        "source_in": "0",
+        "audio_role": "final",
+        "audio_fallback": True,
+    }
+    p["assets"] = [asset]
+    p["tracks"] = [
+        {"id": "take", "role": "generated", "clips": [clip]},
+        {
+            "id": "audio",
+            "role": "audio",
+            "clips": [
+                {
+                    **clip,
+                    "id": "authored",
+                    "start": 12,
+                    "end": 24,
+                    "source_in": "0.5",
+                    "audio_fallback": False,
+                }
+            ],
+        },
+    ]
+    p = validate(p)
+    expected = audio_window(movie, "0", "2", 44100)
+    np.testing.assert_array_equal(
+        mix_audio(p, store.assets, 0, 48, 44100, "final"), expected
+    )
+    p["tracks"][1]["muted"] = True
+    np.testing.assert_array_equal(
+        mix_audio(p, store.assets, 0, 48, 44100, "final"), expected
+    )
+
+
+def test_pcm_cache_wait_is_cancellable(movie, tmp_path, monkeypatch):
+    import threading
+    from ComfyUI_H3_Continuum_Join.timeline.media import PcmCache
+
+    cache = PcmCache(tmp_path / "pcm")
+    lock = threading.Lock()
+    lock.acquire()
+    monkeypatch.setattr(cache, "_lock", lambda _: lock)
+
+    class Cancelled(Exception):
+        pass
+
+    def cancel():
+        raise Cancelled()
+
+    try:
+        with pytest.raises(Cancelled):
+            audio_window(movie, "0", "1", 48000, cache=cache, cancel=cancel)
+    finally:
+        lock.release()
 
 
 def test_project_store_round_trips_non_ascii_text_as_utf8(tmp_path):

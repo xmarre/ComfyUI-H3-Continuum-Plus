@@ -315,3 +315,108 @@ def test_alias_without_active_reference_warns_and_keeps_text():
     assert "@Alice turns" in windows[1]["segments"][1]["text"]
     assert any("@Alice" in w for w in windows[1]["warnings"])
     assert not windows[2]["warnings"]
+
+
+def test_authored_strict_inner_timeline_uses_native_physical_clock():
+    p = blank_project()
+    p["prompts"].update(
+        mode="Timeline",
+        script="[0-7s]\nfirst\n[7-14s]\n7-10s:\nturn\n10-14s:\nwalk\n[14-21s]\nlast",
+    )
+    plan = compile_project(p)
+    provider = TimelineInputs(plan["project"], plan["jobs"][0], None)
+    assert provider.windows[1]["timed_prompt"]
+    assert [s["range"] for s in provider.windows[1]["segments"]] == [
+        [168, 240],
+        [240, 336],
+    ]
+    from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
+        make_physical_sample_descriptor,
+    )
+    from ComfyUI_H3_Continuum_Join.v2.physical_runtime import compile_invocation_prompt
+
+    descriptor = make_physical_sample_descriptor(
+        group_id="g",
+        logical_indices=[1],
+        retained_before=175,
+        context_frames=22,
+        total_frames=192,
+        target_duration_frames=504,
+        continuation_method="native_masked",
+        initial_state_origin="none",
+        include_first=False,
+        include_last=False,
+        presentation_contract={},
+    )
+    compiled = compile_invocation_prompt(
+        provider.invocation_plan({}, 1), descriptor, legacy_text="", candidate=True
+    )
+    text = compiled.text
+    assert "[0-3.625s]\nturn" in text
+    assert "first" not in text and "last" not in text
+
+
+def test_audio_scope_follows_actual_multi_job_output_offset():
+    from ComfyUI_H3_Continuum_Join.timeline.model import compile_window
+
+    p = blank_project()
+    p.update(
+        duration_frames=168 * 200, selection=[0, 168 * 200], assets=[{"id": "a" * 64}]
+    )
+    late = 168 * 144 + 100
+    p["tracks"] = [
+        {
+            "id": "audio",
+            "role": "audio",
+            "clips": [
+                {
+                    "id": "bed",
+                    "asset_id": "a" * 64,
+                    "start": 0,
+                    "end": 168 * 200,
+                    "audio_role": "guide",
+                },
+                {
+                    "id": "later",
+                    "asset_id": "a" * 64,
+                    "start": late,
+                    "end": late + 20,
+                    "audio_role": "guide",
+                },
+            ],
+        }
+    ]
+    plan = compile_project(p)
+    provider = TimelineInputs(plan["project"], plan["jobs"][8], None)
+    provider.set_offset(168 * 128 + 120)
+    scope = provider.job["guide_scope"]
+    assert scope == [168 * 128 + 120, 168 * 144 + 154]
+    before = provider.hashes
+    changed = validate(p)
+    changed["tracks"][0]["clips"][1]["gain"] = "0.2"
+    assert all(
+        compile_window(changed, i, guide_scope=scope)["generation_hash"] != old
+        for i, old in zip(range(128, 144), before)
+    )
+
+
+def test_rejected_causal_parent_invalidates_descendant():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import stale_take
+
+    p = blank_project()
+    windows = compile_project(p)["jobs"][0]["windows"]
+
+    def record(index, parent=None):
+        return {
+            "id": str(index + 1) * 32,
+            "indices": [index],
+            "input_hashes": [windows[index]["generation_hash"]],
+            "guide_scope": [0, 538],
+            "parent_take": parent,
+        }
+
+    parent = record(0)
+    child = record(1, parent["id"])
+    assert not stale_take(p, child, [parent, child])
+    p["rejected"] = [parent["id"]]
+    assert stale_take(p, child, [parent, child])

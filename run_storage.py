@@ -1122,8 +1122,9 @@ class RunStorageController:
         legacy_hashes = _legacy_v2_chunk_hashes(contract)
         best_entries: list[dict[str, Any]] = []
         best_records: list[dict[str, Any]] = []
+        excluded = set(getattr(self, "excluded_revisions", ()))
         candidates = [exact] if exact is not None and safe else []
-        if safe and exact is None and self.revisions_root.exists():
+        if safe and (exact is None or self.revision_id in excluded) and self.revisions_root.exists():
             for path in self.revisions_root.glob("*/manifest.json"):
                 try:
                     candidates.append(_read_json(path))
@@ -1138,6 +1139,8 @@ class RunStorageController:
             selected_path=self.revisions_root / preferred / "manifest.json"
             candidates=[_read_json(selected_path)] if selected_path.is_file() and safe else []
         for candidate in candidates:
+            if candidate.get("revision_id") in excluded:
+                continue
             schema = int(candidate.get("run_storage_schema_version", -1))
             if schema == RUN_STORAGE_SCHEMA_VERSION:
                 candidate_hashes = hashes

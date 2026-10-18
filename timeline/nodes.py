@@ -71,7 +71,11 @@ def stale_take(
     parent = record.get("parent_take")
     if parent:
         previous = by_id.get(parent)
-        if previous is None or previous["indices"][0] >= record["indices"][0]:
+        if (
+            parent in p.get("rejected", [])
+            or previous is None
+            or previous["indices"][0] >= record["indices"][0]
+        ):
             return True
         if stale_take(
             p,
@@ -336,6 +340,7 @@ class H3ContinuumTimelineSampler:
                 for r in all_takes
                 if r["indices"][-1] == job["start_chunk"] - 1
                 and r.get("status") == "sampled"
+                and r["id"] not in rejected
                 and not stale_take(
                     p,
                     r,
@@ -369,11 +374,12 @@ class H3ContinuumTimelineSampler:
                 initial = entry_to_state(
                     load_session(prefix=parent["session_prefix"], slot=1)["chunks"][-1]
                 )
-        provider.offset = (
+        provider.set_offset(
             parent.get("output_range", parent["range"])[1]
             if parent
             else job["range"][0]
         )
+        job = provider.job
         guide = provider.audio_source(audio_vae)
         take_id = uuid.uuid4().hex
         prefix = "timeline_" + p["project_id"] + "_" + take_id
@@ -417,6 +423,13 @@ class H3ContinuumTimelineSampler:
         with run_storage_scope(
             storage_name, prompt=prompt, unique_id=unique_id
         ) as storage:
+            storage.excluded_revisions = {
+                r["revision_id"]
+                for r in all_takes
+                if r["id"] in rejected
+                and r.get("storage_name") == storage_name
+                and r.get("revision_id")
+            }
             if previous and previous.get("storage_name") == storage_name:
                 storage.preferred_revision = previous.get("revision_id")
 

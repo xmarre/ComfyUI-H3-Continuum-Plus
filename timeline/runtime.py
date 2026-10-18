@@ -23,6 +23,18 @@ class TimelineInputs:
         self.reference_cache_bytes = 0
         self.offset = job["range"][0]
 
+    def set_offset(self, offset):
+        from .model import compile_window, guide_scope_for
+
+        self.offset = offset
+        indices = [w["index"] for w in self.windows]
+        scope = guide_scope_for(self.project, indices, offset=offset)
+        self.job["guide_scope"] = list(scope)
+        self.windows = [
+            compile_window(self.project, i, guide_scope=scope) for i in indices
+        ]
+        self.job["windows"] = self.windows
+
     @property
     def hashes(self):
         return [w["generation_hash"] for w in self.windows]

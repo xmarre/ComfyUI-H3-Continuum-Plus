@@ -14,7 +14,7 @@ import uuid
 from aiohttp import web
 
 from .media import MEDIA_FORMATS, audio_window, run_process, video_frames
-from .model import active_clips, compile_project, validate
+from .model import compile_project, validate
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
@@ -336,6 +336,7 @@ def register_routes():
                     if int(k) > record["indices"][0]:
                         invalidated.append(selected.pop(k))
             selected[str(record["indices"][0])] = record["id"]
+            p["rejected"] = [r for r in p.get("rejected", []) if r != record["id"]]
             lane = next((t for t in p["tracks"] if t["id"] == "accepted-takes"), None)
             if lane is None:
                 lane = {
@@ -385,13 +386,8 @@ def register_routes():
                     # Generated audio plays only where no authored final audio
                     # covers the accepted span; previously accepted takes do
                     # not count, they are replaced on this lane.
-                    "audio_role": "neither"
-                    if any(
-                        c.get("audio_role") in {"final", "both"}
-                        for t, c in active_clips(p, a, b)
-                        if t["role"] != "generated"
-                    )
-                    else "final",
+                    "audio_role": "final",
+                    "audio_fallback": True,
                 }
             )
             lane["clips"] = remaining

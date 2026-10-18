@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import uuid
+import weakref
 
 import numpy as np
 
@@ -68,7 +69,13 @@ _probe_lock = threading.Lock()
 
 def _file_stamp(path):
     st = Path(path).stat()
-    return (str(Path(path).resolve()), st.st_size, st.st_mtime_ns)
+    return (
+        str(Path(path).resolve()),
+        st.st_size,
+        st.st_mtime_ns,
+        st.st_ctime_ns,
+        st.st_ino,
+    )
 
 
 def probe(path):
@@ -171,10 +178,14 @@ class AssetStore:
         """Register a complete upload written to :meth:`upload_path`."""
         info = probe(temporary)
         final = self.root / asset_id
-        # Identical content is already registered; keep its stamp and handles.
-        if not final.is_file():
-            os.replace(temporary, final)
-        self._remember(final, self._stamp(final))
+        # Publish without replacing a concurrent import's open file. Existing
+        # bytes must be verified before they can be remembered as this hash.
+        try:
+            os.link(temporary, final)
+        except FileExistsError:
+            self.verify(asset_id)
+        else:
+            self._remember(final, self._stamp(final))
         return {
             "id": asset_id,
             "name": Path(name or "Media").name,
@@ -279,7 +290,7 @@ def video_frames(
     return np.stack([sampled[t] for t in requested])
 
 
-def _decode_audio_stream(path, info, rate, channels, output, *, limit, cancel):
+def _decode_audio_stream(path, info, rate, channels, output, *, limit, cancel, first=0):
     """Decode the stream from its first sample onto the absolute output grid.
 
     Output sample ``j`` is stream-origin time ``j / rate``. Packet PTS in
@@ -295,7 +306,7 @@ def _decode_audio_stream(path, info, rate, channels, output, *, limit, cancel):
     )
     filters = channel_filter + f"aformat=sample_fmts=flt,aresample={rate}:async=1"
     if limit is not None:
-        filters += f",atrim=end_sample={max(0, limit)}"
+        filters += f",atrim=start_sample={max(0, first)}:end_sample={max(0, limit)}"
     run_process(
         [
             "ffmpeg",
@@ -334,7 +345,7 @@ class PcmCache:
     are removed. ``H3_TIMELINE_PCM_CACHE_GB`` overrides the default 16 GiB.
     """
 
-    _locks = {}
+    _locks = weakref.WeakValueDictionary()
     _guard = threading.Lock()
 
     def __init__(self, root, limit_bytes=None):
@@ -351,26 +362,50 @@ class PcmCache:
             return self._locks.setdefault(name, threading.Lock())
 
     def stream(self, path, info, rate, channels, *, cancel):
+        frame_bytes = 4 * channels
+        duration = rational(info["audio"].get("duration", info["duration"]))
+        if self.limit < frame_bytes or duration * rate * frame_bytes > self.limit:
+            return None  # The caller uses a bounded, sample-selected decode.
         identity = hashlib.sha256(
             json.dumps([*_file_stamp(path), rate, channels, 1]).encode()
         ).hexdigest()
         file = self.root / (identity + ".f32")
-        with self._lock(identity):
-            if not file.is_file():
-                temporary = self.root / (identity + "-" + uuid.uuid4().hex + ".tmp")
-                try:
-                    _decode_audio_stream(
-                        path, info, rate, channels, temporary, limit=None, cancel=cancel
-                    )
-                    os.replace(temporary, file)
-                finally:
-                    temporary.unlink(missing_ok=True)
-                self._evict(keep=file)
-            else:
-                try:
+        lock = self._lock(identity)
+        while not lock.acquire(timeout=0.1):
+            cancel()
+        try:
+            cancel()
+            # Guard opening against eviction. Open mappings survive unlink on
+            # POSIX; Windows refuses to unlink a file while it is mapped.
+            with self._guard:
+                if file.is_file():
                     os.utime(file)
-                except OSError:
-                    pass
+                    return self._map(file, channels)
+            temporary = self.root / (identity + "-" + uuid.uuid4().hex + ".tmp")
+            try:
+                _decode_audio_stream(
+                    path,
+                    info,
+                    rate,
+                    channels,
+                    temporary,
+                    limit=self.limit // frame_bytes + 1,
+                    cancel=cancel,
+                )
+                if temporary.stat().st_size > self.limit:
+                    return None
+                with self._guard:
+                    os.replace(temporary, file)
+                    mapped = self._map(file, channels)
+                    self._evict(keep=file)
+                    return mapped
+            finally:
+                temporary.unlink(missing_ok=True)
+        finally:
+            lock.release()
+
+    @staticmethod
+    def _map(file, channels):
         frames = file.stat().st_size // (4 * channels)
         if not frames:
             return np.zeros((0, channels), dtype=np.float32)
@@ -433,18 +468,37 @@ def audio_window(
     result = np.zeros((channels, count), dtype=np.float32)
     if last <= 0:
         return result
-    if cache is not None:
-        stream = cache.stream(path, info, rate, channels, cancel=cancel)
-        selected = np.asarray(stream[max(0, first) : last]).T
+    stream = (
+        cache.stream(path, info, rate, channels, cancel=cancel)
+        if cache is not None
+        else None
+    )
+    if stream is not None:
+        try:
+            selected = np.asarray(stream[max(0, first) : last]).T
+            offset = max(0, -first)
+            n = min(selected.shape[1], count - offset)
+            result[:, offset : offset + n] = selected[:, :n]
+        finally:
+            if isinstance(stream, np.memmap):
+                stream._mmap.close()
+        return result
     else:
         with tempfile.TemporaryDirectory(prefix="h3-audio-") as directory:
             output = Path(directory) / "window.f32"
             _decode_audio_stream(
-                path, info, rate, channels, output, limit=last, cancel=cancel
+                path,
+                info,
+                rate,
+                channels,
+                output,
+                limit=last,
+                first=max(0, first),
+                cancel=cancel,
             )
             pcm = np.fromfile(output, dtype="<f4")
         frames = pcm.size // channels
-        selected = pcm[: frames * channels].reshape(-1, channels)[max(0, first) :].T
+        selected = pcm[: frames * channels].reshape(-1, channels).T
     offset = max(0, -first)
     n = min(selected.shape[1], count - offset)
     result[:, offset : offset + n] = selected[:, :n]
@@ -462,7 +516,8 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
         "final": {"final", "both"},
         "reference": {"reference"},
     }[route]
-    for _, c in active_clips(p, start, end):
+    active = active_clips(p, start, end)
+    for track, c in active:
         if c["audio_role"] not in routes:
             continue
         left, right = max(start, c["start"]), min(end, c["end"])
@@ -494,6 +549,20 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel):
             pcm = np.pad(pcm, ((0, 0), (0, n - pcm.shape[1])))
         absolute = np.arange(sample_boundary(left, rate), sample_boundary(right, rate))
         envelope = np.ones(n)
+        if (
+            route == "final"
+            and track["role"] == "generated"
+            and c.get("audio_fallback")
+        ):
+            for authored_track, authored in active:
+                if authored_track["role"] != "generated" and authored["audio_role"] in {
+                    "final",
+                    "both",
+                }:
+                    envelope[
+                        (absolute >= sample_boundary(authored["start"], rate))
+                        & (absolute < sample_boundary(authored["end"], rate))
+                    ] = 0
         for fade, distance in (
             (c.get("fade_in", 0), absolute - sample_boundary(c["start"], rate)),
             (c.get("fade_out", 0), sample_boundary(c["end"], rate) - absolute),
