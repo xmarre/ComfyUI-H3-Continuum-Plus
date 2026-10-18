@@ -17,6 +17,12 @@ upload or silently create a managed copy. The desktop wrapper must be launched
 once instead of a normal Chrome tab; an ordinary ComfyUI custom node/Patcher
 install cannot grant browser-level native file permissions. The Windows desktop
 package has now passed a real packaged-Windows startup and OS-backed File IPC smoke test. Physical Explorer drag into actual WSL ComfyUI, media sampling/export and code signing still require qualification. Startup also verifies the installed Timeline Python/frontend no-scan protocol rather than trusting a possibly stale Patcher overlay. It refuses the old recursive-search implementation with actionable diagnostics. Startup probes the local ComfyUI `/system_stats` API and presents connection diagnostics and a local URL field instead of a blank page; native path registration uses main-process IPC.
+The editor distinguishes **source-native export resolution** from the lower H3
+sampling canvas. Export creates a file, not H3 guidance; select retained footage
+and click **Guide H3 with selected clip**, then **Queue selection**, to condition
+MiniMax-H3 directly on the registered media and its source timing. Recreate uses
+retained footage as guidance automatically in eligible windows. Source-size FFV1
+remains an 8-bit RGB re-encode rather than an original-bitstream copy.
 Whole-stream PCM disk caching is disabled by default. Existing V3.4 nodes
 remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md),
 [architecture](docs/timeline/ARCHITECTURE.md),
