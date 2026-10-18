@@ -133,8 +133,9 @@ def encode_export(
                         "crf": "27" if preview else "16",
                         "preset": "ultrafast" if preview else "medium",
                     }
-                if preview:
-                    vstream.thread_count = 1
+                # Bound CPU encoders so exporting a long movie cannot
+                # monopolize every Windows/WSL CPU core.
+                vstream.thread_count = 1 if preview else 4
                 astream = container.add_stream(
                     "pcm_f32le" if codec == "lossless" else "aac", rate=rate
                 )
