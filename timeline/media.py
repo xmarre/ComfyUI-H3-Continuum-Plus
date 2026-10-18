@@ -680,7 +680,7 @@ def preview_audio_window(path, start, end, rate, *, channels=2,
 
 
 def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel,
-              preview=False):
+              preview=False, export_cache=None):
     """Deterministic sample-grid mix. Route is guide, final or reference."""
     from .model import active_clips
 
@@ -709,7 +709,8 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel,
                 assets.verify(c["asset_id"], cancel=cancel),
                 min(sa, sb), max(sa, sb), rate,
                 padding=c["padding"], cancel=cancel,
-                cache=getattr(assets, "pcm_cache", None),
+                cache=(export_cache if export_cache is not None
+                       else getattr(assets, "pcm_cache", None)),
             )
         if speed < 0:
             pcm = pcm[:, ::-1]
