@@ -604,7 +604,7 @@ test("completed export displays a usable file link instead of only a filename", 
   const editor = {
     exportPending: false,
     closed: false,
-    p: {duration_frames:72},
+    p: {duration_frames:72, selection:[0,48]},
     exportLink: {hidden:true, textContent:""},
     exportStatus: {textContent:""},
     async save() {},
@@ -614,7 +614,10 @@ test("completed export displays a usable file link instead of only a filename", 
         calls.push([url, options]);
         let payload;
         if (url.endsWith("/export") && options.method === "POST")
-          payload = {id, status:"running"};
+          payload = {
+            id, status:"running", total_frames:48,
+            render_range:[0,48],
+          };
         else if (url.endsWith("/export/" + id))
           payload = {
             status:"complete",stage:"complete",
@@ -642,7 +645,7 @@ test("export error is visible and no duplicate jobs launch during running export
   const id = "b".repeat(32);
   const editor = {
     exportPending:false, closed:false,
-    p:{duration_frames:120},
+    p:{duration_frames:120,selection:[0,120]},
     exportLink:{hidden:true,textContent:""},
     exportStatus:{textContent:""},
     async save(){},
@@ -651,13 +654,17 @@ test("export error is visible and no duplicate jobs launch during running export
       fetchApi:async(url,options)=>{
         if (url.endsWith("/export") && options.method==="POST") {
           launches++;
-          return {ok:true,json:async()=>({id,status:"running"})};
+          return {ok:true,json:async()=>({
+            id, status:"running", total_frames:120,
+            render_range:[0,120],
+          })};
         }
         return {
           ok:true,
           json:async()=>({
             status:"running",stage:"encoding",
-            frames_done:48,total_frames:120,elapsed_seconds:3.4,
+            frames_done:48,total_frames:120,
+            render_range:[0,120],elapsed_seconds:3.4,
           }),
         };
       },
@@ -668,4 +675,75 @@ test("export error is visible and no duplicate jobs launch during running export
   await TimelineEditor.prototype.export.call(editor,"h264");
   assert.equal(launches,1);
   clearTimeout(editor.exportTimer);
+});
+
+test("export from a long movie submits only the 14-second selected frame range", async () => {
+  const seen = [];
+  const job = "c".repeat(32);
+  const editor = {
+    exportPending:false, closed:false,
+    p:{duration_frames:159000, selection:[0,336]},
+    exportLink:{hidden:true,textContent:""},
+    exportStatus:{textContent:""},
+    async save(){},
+    message(){},
+    api:{
+      fetchApi:async(url,opts)=>{
+        seen.push({url,opts});
+        if(url.endsWith("/export") && opts.method==="POST"){
+          const payload=JSON.parse(opts.body);
+          assert.deepEqual(payload.render_range,[0,336]);
+          assert.equal(payload.project.duration_frames,159000);
+          return {ok:true,json:async()=>({
+            id:job,status:"running",render_range:[0,336],
+            total_frames:336,
+          })};
+        }
+        return {ok:true,json:async()=>({
+          status:"complete",render_range:[0,336],
+          total_frames:336, frames_done:336,
+          filename:"Timeline_" + job + ".mp4",elapsed_seconds:1.7,
+        })};
+      },
+    },
+  };
+  await TimelineEditor.prototype.export.call(editor,"h264");
+  assert.equal(seen.length,2);
+  assert.match(editor.exportStatus.textContent,/336 frames|frames 0–336/);
+  assert.match(editor.exportStatus.textContent,/14.00 seconds/);
+  assert.equal(editor.exportLink.hidden,false);
+});
+
+test("a backend ignoring selected range is cancelled, not left exporting the film", async()=>{
+  let cancelled=0;
+  const id="d".repeat(32);
+  const messages=[];
+  const editor={
+    exportPending:false,closed:false,
+    p:{duration_frames:159000,selection:[0,336]},
+    exportLink:{hidden:true,textContent:""},
+    exportStatus:{textContent:""},
+    async save(){},
+    message(msg,error){messages.push([msg,error]);},
+    api:{
+      fetchApi:async(url,opts)=>{
+        if(url.endsWith("/export") && opts.method==="POST")
+          return {ok:true,json:async()=>({
+            id,status:"running",render_range:[0,159000],
+            total_frames:159000,
+          })};
+        if(url.endsWith("/export/"+id+"/cancel")){
+          cancelled++;
+          return {ok:true,json:async()=>({cancelled:true})};
+        }
+        throw new Error("Unexpected request " + url);
+      },
+    },
+  };
+  await assert.rejects(
+    TimelineEditor.prototype.export.call(editor,"lossless"),
+    /Server ignored selected in\/out frames/,
+  );
+  assert.equal(cancelled,1);
+  assert.equal(editor.exportPending,false);
 });
