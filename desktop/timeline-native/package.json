@@ -1,0 +1,30 @@
+{
+  "name": "continuum-timeline-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows desktop container for true zero-copy ComfyUI Timeline Studio Explorer drops",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test *.test.cjs",
+    "dist": "electron-builder --win portable --publish never"
+  },
+  "devDependencies": {
+    "electron": "43.7.8",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.xmarre.h3continuum.timeline",
+    "productName": "Continuum Timeline Desktop",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "native_link.cjs",
+      "package.json"
+    ],
+    "directories": { "output": "dist" },
+    "win": { "target": ["portable"] },
+    "portable": { "artifactName": "Continuum-Timeline-Desktop-${version}.exe" }
+  }
+}
