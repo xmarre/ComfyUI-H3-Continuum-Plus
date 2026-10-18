@@ -142,3 +142,76 @@ def test_highlighted_clip_id_guards_absolute_timeline_export_scope(movie, tmp_pa
     original = video_frames(movie, [Fraction(7)], 64, 64)[0].astype("int16")
     exported = video_frames(output, [Fraction(0)], 64, 64)[0].astype("int16")
     assert np.abs(original - exported).mean() < 20
+
+
+def test_source_resolution_export_preserves_native_pixels_independent_of_h3_canvas(
+    movie, tmp_path
+):
+    import numpy as np
+    from ComfyUI_H3_Continuum_Join.timeline.media import video_frames
+    from ComfyUI_H3_Continuum_Join.timeline.compose import export_dimensions
+
+    p, store = make_long_project(movie, tmp_path, selection=(0, 48))
+    p["width"], p["height"] = 32, 32
+    for track in p["tracks"]:
+        track["clips"][0]["end"] = 48
+    p = validate(p)
+
+    assert export_dimensions(p, store, 0, 48, "timeline") == (32, 32)
+    assert export_dimensions(p, store, 0, 48, "source", ["c"]) == (64, 64)
+    with pytest.raises(ValueError, match="must be source or timeline"):
+        export_dimensions(p, store, 0, 48, "unrecognized")
+
+    original_file = tmp_path / "source_pixels.mkv"
+    export_project(
+        p, store, original_file, codec="lossless",
+        resolution="source", selected_clip_ids=["c"],
+    )
+    info = probe(original_file)
+    assert (info["video"]["width"], info["video"]["height"]) == (64, 64)
+    frames = [Fraction(i, 24) for i in range(48)]
+    np.testing.assert_array_equal(
+        video_frames(movie, frames, 64, 64),
+        video_frames(original_file, frames, 64, 64),
+    )
+
+    canvas_file = tmp_path / "canvas_pixels.mkv"
+    export_project(p, store, canvas_file, codec="lossless")
+    canvas = probe(canvas_file)
+    assert (canvas["video"]["width"], canvas["video"]["height"]) == (32, 32)
+
+
+def test_native_resolution_rejects_ambiguous_mixed_sources_and_audio_only(
+    movie, tmp_path
+):
+    from ComfyUI_H3_Continuum_Join.timeline.compose import export_dimensions
+    p, store = make_long_project(movie, tmp_path, selection=(0, 48))
+    p["tracks"][0]["clips"][0]["end"] = 48
+    p["tracks"][1]["clips"][0]["end"] = 48
+    audio_only = validate({**p, "tracks": [p["tracks"][1]]})
+    with pytest.raises(ValueError, match="requires a visible video"):
+        export_dimensions(audio_only, store, 0, 48, "source")
+
+    # Another registered source with a genuinely different native frame size.
+    import subprocess
+    other = tmp_path / "other.mkv"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi",
+        "-i", "testsrc2=s=96x64:r=24:d=2",
+        "-c:v", "ffv1", "-threads", "1", str(other),
+    ], check=True)
+    with other.open("rb") as stream:
+        asset = store.assets.register(stream, "other.mkv")
+    p["assets"].append(asset)
+    p["tracks"].append({
+        "id": "v2", "role": "retained",
+        "clips": [{
+            "id": "v2c", "asset_id": asset["id"],
+            "start": 0, "end": 48, "source_in": "0",
+            "speed": "1", "padding": "error", "audio_role": "neither",
+        }],
+    })
+    p = validate(p)
+    with pytest.raises(ValueError, match="Multiple source resolutions"):
+        export_dimensions(p, store, 0, 48, "source")
+    assert export_dimensions(p, store, 0, 48, "source", ["c"]) == (64, 64)
