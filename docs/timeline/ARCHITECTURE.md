@@ -112,3 +112,10 @@ thread event cancels FFmpeg work when the client disconnects; preview CPU
 slots are isolated from thumbnail/waveform slots. There can still be segment
 switch latency on slower WSL source drives; actual streaming smoothness
 requires physical runtime testing.
+
+Thumbnail, waveform and proxy endpoints also watch client disconnects and
+propagate a per-request cancellation event into CPU/FFmpeg work. Visual
+waveforms are approximate and use bounded random access audio; this is
+separate from generation/audio export's exact sample-grid decoder. This
+prevents rapid scrubbing or a late waveform tile from initiating repeated
+hour-long audio prefix decodes while the original PCM cache is disabled.
