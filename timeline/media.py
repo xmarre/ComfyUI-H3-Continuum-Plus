@@ -471,9 +471,12 @@ class PcmCache:
     _locks = weakref.WeakValueDictionary()
     _guard = threading.Lock()
 
-    def __init__(self, root, limit_bytes=None):
+    def __init__(self, root, limit_bytes=None, *, end_frames_by_path=None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        # Export-only: a short [in,out) uses a finite exact source prefix,
+        # not the source movie's entire 1h50 audio duration.
+        self.end_frames_by_path = end_frames_by_path or {}
         if limit_bytes is None:
             limit_bytes = int(
                 float(os.environ.get("H3_TIMELINE_PCM_CACHE_GB", "0")) * 1024**3
@@ -487,10 +490,15 @@ class PcmCache:
     def stream(self, path, info, rate, channels, *, cancel):
         frame_bytes = 4 * channels
         duration = rational(info["audio"].get("duration", info["duration"]))
-        if self.limit < frame_bytes or duration * rate * frame_bytes > self.limit:
+        cap = self.end_frames_by_path.get(str(Path(path).resolve()))
+        required = cap if cap is not None else duration * rate
+        if self.limit < frame_bytes or required * frame_bytes > self.limit:
             return None  # The caller uses a bounded, sample-selected decode.
+        identity_parts = [*_file_stamp(path), rate, channels, 1]
+        if cap is not None:
+            identity_parts.append(cap)
         identity = hashlib.sha256(
-            json.dumps([*_file_stamp(path), rate, channels, 1]).encode()
+            json.dumps(identity_parts).encode()
         ).hexdigest()
         file = self.root / (identity + ".f32")
         lock = self._lock(identity)
@@ -512,7 +520,7 @@ class PcmCache:
                     rate,
                     channels,
                     temporary,
-                    limit=self.limit // frame_bytes + 1,
+                    limit=cap if cap is not None else self.limit // frame_bytes + 1,
                     cancel=cancel,
                 )
                 if temporary.stat().st_size > self.limit:
