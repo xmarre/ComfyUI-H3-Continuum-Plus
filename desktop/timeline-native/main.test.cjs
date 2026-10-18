@@ -17,7 +17,7 @@ async function launch({ found = true, compatible = true } = {}) {
   const windowListeners = new Map();
   const ipc = new Map();
   const ipcEvents = new Map();
-  let policy, currentURL = "", title = "", contents;
+  let policy, currentURL = "", title = "", contents, exitCalls = 0;
   const fakeWindow = class {
     static getAllWindows() { return []; }
     constructor(options) {
@@ -43,6 +43,7 @@ async function launch({ found = true, compatible = true } = {}) {
       whenReady: () => Promise.resolve(),
       getPath: () => "C:\\fake-app-settings",
       quit() {throw new Error("Unexpected app termination");},
+      exit(code) { assert.equal(code,0); exitCalls++; },
     },
     BrowserWindow: fakeWindow,
     session: {defaultSession: {
@@ -95,7 +96,8 @@ async function launch({ found = true, compatible = true } = {}) {
   await ticks();
   return {loads,listeners,windowListeners,ipc,ipcEvents,get policy(){return policy;},
     get title(){return title;}, get url(){return currentURL;},
-    get contents(){return contents;}, get fetched(){return fetched;}};
+    get contents(){return contents;}, get fetched(){return fetched;},
+    get exitCalls(){return exitCalls;}};
 }
 
 test("Electron startup first displays diagnostics and then loads verified ComfyUI", async () => {
@@ -187,4 +189,28 @@ test("application never closes for an unrelated keyboard event", async () => {
     {type:"keyDown", control:true, shift:false, key:"Q"},
   );
   assert.equal(prevented, false);
+});
+
+test("Windows title-bar X closes even if renderer never responds to beforeunload",async()=>{
+  const native=await launch();
+  const close=native.windowListeners.get("close");
+  assert.equal(typeof close,"function");
+  let prevented=false;
+  close({preventDefault(){prevented=true;}});
+  assert.equal(prevented,true);
+  assert.equal(native.exitCalls,1);
+  // Reentrant native destroy/close never schedules a second exit.
+  close({preventDefault(){throw Error("Double exit") }});
+  assert.equal(native.exitCalls,1);
+});
+
+test("Ctrl+Shift+Q exits native process without relying on ComfyUI renderer",async()=>{
+  const native=await launch();
+  let prevented=false;
+  native.listeners.get("before-input-event")(
+    {preventDefault(){prevented=true;}},
+    {type:"keyDown", control:true, shift:true,key:"q"},
+  );
+  assert.equal(prevented,true);
+  assert.equal(native.exitCalls,1);
 });
