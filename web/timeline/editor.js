@@ -423,11 +423,21 @@ export class TimelineEditor {
       el("summary", { text: "Model inputs and temporal diagnostics" }),
       this.diagnostics,
     );
+    this.exportStatus = el("output", {
+      class: "h3ts-export-progress", text: "",
+      "aria-live": "polite",
+    });
+    this.exportLink = el("a", {
+      class: "h3ts-export-download",
+      text: "", hidden: "",
+    });
     this.root.append(
       el(
         "footer",
         {},
         this.status,
+        this.exportStatus,
+        this.exportLink,
         button("Review takes", () => this.guard(() => this.review())),
         button("Export FFV1 / PCM", () =>
           this.guard(() => this.export("lossless")),
@@ -1766,28 +1776,57 @@ export class TimelineEditor {
     );
   }
   async export(codec) {
-    await this.save();
-    const result = await request(this.api, "/export", {
-      method: "POST",
-      body: JSON.stringify({ project: this.p, codec }),
-    });
-    this.exportId = result.id;
-    this.message("Export running…");
-    const poll = async () => {
-      if (this.closed) return;
-      const status = await request(this.api, "/export/" + result.id);
-      if (status.status === "running") {
-        this.exportTimer = setTimeout(() => this.guard(poll), 1000);
-        return;
-      }
-      this.message(
-        status.status === "complete"
-          ? "Export saved: " + status.filename
-          : status.error,
-        status.status !== "complete",
-      );
-    };
-    await poll();
+    if (this.exportPending) {
+      this.message("An export is already running; use Cancel export if needed");
+      return;
+    }
+    this.exportPending = true;
+    this.exportLink.hidden = true;
+    this.exportLink.textContent = "";
+    this.exportStatus.textContent = "Preparing export…";
+    try {
+      await this.save();
+      const result = await request(this.api, "/export", {
+        method: "POST",
+        body: JSON.stringify({ project: this.p, codec }),
+      });
+      this.exportId = result.id;
+      const poll = async () => {
+        if (this.closed) return;
+        const status = await request(this.api, "/export/" + result.id);
+        if (status.status === "running") {
+          const done = Number(status.frames_done) || 0;
+          const total = Number(status.total_frames) || this.p.duration_frames;
+          const percent = Math.min(100, Math.round(100 * done / Math.max(1,total)));
+          this.exportStatus.textContent =
+            "Export " + (status.stage || "running") + " · " + percent +
+            "% · " + ((status.elapsed_seconds || 0)).toFixed(1) + " s";
+          this.exportTimer = setTimeout(() => this.guard(poll), 1000);
+          return;
+        }
+        this.exportPending = false;
+        if (status.status === "complete") {
+          const url = BASE + "/export/" + result.id + "/file";
+          this.exportLink.href = url;
+          this.exportLink.download = status.filename;
+          this.exportLink.textContent = "Download " + status.filename;
+          this.exportLink.hidden = false;
+          this.exportStatus.textContent = "Export complete · " +
+            ((status.elapsed_seconds || 0)).toFixed(1) + " s";
+          this.message("Export saved in ComfyUI output: " + status.filename);
+        } else {
+          this.exportStatus.textContent =
+            "Export " + (status.status || "failed") + ": " +
+            (status.error || "Unknown error");
+          this.message(this.exportStatus.textContent, true);
+        }
+      };
+      await poll();
+    } catch (error) {
+      this.exportPending = false;
+      this.exportStatus.textContent = "Export failed: " + error.message;
+      throw error;
+    }
   }
   close() {
     if (this.closed) return;
