@@ -71,3 +71,13 @@ unexpected service responses and page load failures instead of rendering an
 empty screen. The last successful URL is saved under the desktop app's
 configuration directory; it stores **only the server address**, never media
 bytes or Explorer source paths.
+### Windows build acceptance
+
+GitHub Actions now executes the **packaged portable executable** against a
+minimal, local mock ComfyUI HTTP server. It checks that the window actually
+renders a page and that a disk-backed File travels through Electron's native
+preload to the backend as a WSL path, without a film upload. It also tests
+failed and non-ComfyUI HTTP responses, local port selection, IPC origin
+restrictions and native cancellation. The test does not reproduce a physical
+Explorer mouse drag or run against your WSL instance. Further backend
+sampling/export qualification remains required.
