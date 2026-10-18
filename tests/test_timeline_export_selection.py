@@ -12,6 +12,7 @@ from ComfyUI_H3_Continuum_Join.timeline.compose import export_project
 from ComfyUI_H3_Continuum_Join.timeline.media import ProjectStore, probe
 from ComfyUI_H3_Continuum_Join.timeline.model import (
     blank_project, selected_export_range, validate,
+    verify_export_clip_selection,
 )
 from tests.test_timeline_media import movie  # noqa: F401
 
@@ -111,3 +112,33 @@ def test_middle_range_uses_nonzero_frame_origin_and_only_rendered_frames(
     expected = video_frames(movie, [Fraction(7)], 64, 64)[0].astype("int16")
     actual = video_frames(output, [Fraction(0)], 64, 64)[0].astype("int16")
     assert np.abs(expected - actual).mean() < 20
+
+
+def test_highlighted_clip_id_guards_absolute_timeline_export_scope(movie, tmp_path):
+    p, store = make_long_project(movie, tmp_path, selection=(17136, 17304))
+    p["tracks"][0]["clips"][0].update(
+        start=17136, end=17304, source_in="7"
+    )
+    p["tracks"][1]["clips"][0].update(
+        start=17136, end=17304, source_in="7"
+    )
+    p = validate(p)
+    verify_export_clip_selection(p, ["c"], 17136, 17304)
+    verify_export_clip_selection(p, ["c", "s"], 17136, 17304)
+    with pytest.raises(ValueError, match="differs"):
+        verify_export_clip_selection(p, ["c"], 0, 168)
+    with pytest.raises(ValueError, match="missing or unavailable"):
+        verify_export_clip_selection(p, ["unknown"], 17136, 17304)
+    from ComfyUI_H3_Continuum_Join.timeline.media import video_frames
+    import numpy as np
+
+    output = tmp_path / "highlighted_scene.mp4"
+    export_project(
+        p, store, output, codec="h264", render_range=(17136, 17304)
+    )
+    info = probe(output)
+    assert info["video"] and info["audio"]
+    assert 6.9 < float(info["duration"]) < 7.1
+    original = video_frames(movie, [Fraction(7)], 64, 64)[0].astype("int16")
+    exported = video_frames(output, [Fraction(0)], 64, 64)[0].astype("int16")
+    assert np.abs(original - exported).mean() < 20
