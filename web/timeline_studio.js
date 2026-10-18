@@ -10,7 +10,7 @@ function summary(node) {
     const p = JSON.parse(w.value);
     node.title = "Timeline Studio · " + p.name;
     node.__timelineSummary = [
-      `${(p.duration_frames / 24).toFixed(2)} s · 24 fps · ${p.assets.length} assets`,
+      `${p.width}×${p.height} · ${(p.duration_frames / 24).toFixed(2)} s · 24 fps`,
       `${p.chunk_frames} f chunks · render ${(p.selection[0] / 24).toFixed(2)}–${(p.selection[1] / 24).toFixed(2)} s`,
     ];
   } catch {
@@ -153,7 +153,10 @@ app.registerExtension({
     // The first Timeline schema had no seed control widget. Insert its
     // fixed default before LiteGraph assigns positional serialized values.
     for (const node of graphData?.nodes || []) {
-      if (node.type === "H3ContinuumTimelineSampler" && node.widgets_values?.length === 7)
+      if (
+        node.type === "H3ContinuumTimelineSampler" &&
+        node.widgets_values?.length === 7
+      )
         node.widgets_values.splice(2, 0, "fixed");
     }
   },

@@ -173,7 +173,7 @@ export class TimelineEditor {
     this.widget.value = JSON.stringify(this.p);
     this.node.title = "Timeline Studio · " + this.p.name;
     this.node.__timelineSummary = [
-      `${(this.p.duration_frames / 24).toFixed(2)} s · 24 fps · ${this.p.assets.length} assets`,
+      `${this.p.width}×${this.p.height} · ${(this.p.duration_frames / 24).toFixed(2)} s · 24 fps`,
       `${this.p.chunk_frames} f chunks · render ${(this.p.selection[0] / 24).toFixed(2)}–${(this.p.selection[1] / 24).toFixed(2)} s`,
     ];
     this.node.setDirtyCanvas?.(true, true);
@@ -1415,6 +1415,13 @@ export class TimelineEditor {
         "Connect this project to one Timeline Sampler before queueing",
       );
     const sampler = samplers[0];
+    // Core's seed controls run around app.queuePrompt. This editor submits
+    // its own frozen batch through api.queuePrompt, so run the same widget
+    // lifecycle once for the entire batch, keeping its causal jobs coherent.
+    const queuedNodes = [...this.app.graph._nodes];
+    for (const node of queuedNodes)
+      for (const widget of node.widgets || [])
+        widget.beforeQueued?.({ isPartialExecution: false });
     const frozen = await this.app.graphToPrompt();
     frozen.output[String(this.node.id)].inputs.project_json =
       JSON.stringify(snapshot);
@@ -1423,43 +1430,55 @@ export class TimelineEditor {
     );
     if (graphNode?.widgets_values)
       graphNode.widgets_values[0] = JSON.stringify(snapshot);
-    for (let i = 0; i < plan.jobs.length; i++) {
-      const payload = clone(frozen);
-      const actual = payload.output[String(sampler.id)].inputs;
-      const job = plan.jobs[i];
-      actual.job_index = i;
-      if (reroll) {
-        // A job continuing a stored parent state can only restart at its
-        // first chunk.
-        const resumes = job.requires_previous_job || job.resume_parent_take;
-        actual.regenerate_from =
-          i === 0 && !resumes
-            ? Math.max(
-                1,
-                Math.floor(snapshot.selection[0] / snapshot.chunk_frames) -
-                  job.start_chunk +
+    let submitted = 0;
+    try {
+      for (let i = 0; i < plan.jobs.length; i++) {
+        const payload = clone(frozen);
+        const actual = payload.output[String(sampler.id)].inputs;
+        const job = plan.jobs[i];
+        actual.job_index = i;
+        if (reroll) {
+          // A job continuing a stored parent state can only restart at its
+          // first chunk.
+          const resumes = job.requires_previous_job || job.resume_parent_take;
+          actual.regenerate_from =
+            i === 0 && !resumes
+              ? Math.max(
                   1,
-              )
-            : 1;
-        // Native storage allocates the next nonce under its run lock. A
-        // restored or concurrently used widget counter cannot safely do so.
-        actual.reroll_nonce = 0;
-      }
-      const serialized = payload.workflow?.nodes?.find(
-        (n) => n.id === sampler.id,
-      );
-      if (serialized?.widgets_values) {
-        for (const key of ["job_index", "regenerate_from", "reroll_nonce"]) {
-          const index = sampler.widgets.findIndex((w) => w.name === key);
-          if (index >= 0 && key in actual)
-            serialized.widgets_values[index] = actual[key];
+                  Math.floor(snapshot.selection[0] / snapshot.chunk_frames) -
+                    job.start_chunk +
+                    1,
+                )
+              : 1;
+          // Native storage allocates the next nonce under its run lock. A
+          // restored or concurrently used widget counter cannot safely do so.
+          actual.reroll_nonce = 0;
         }
+        const serialized = payload.workflow?.nodes?.find(
+          (n) => n.id === sampler.id,
+        );
+        if (serialized?.widgets_values) {
+          for (const key of ["job_index", "regenerate_from", "reroll_nonce"]) {
+            const index = sampler.widgets.findIndex((w) => w.name === key);
+            if (index >= 0 && key in actual)
+              serialized.widgets_values[index] = actual[key];
+          }
+        }
+        // Number 0 appends in submission order; -1 would queue each later job
+        // ahead of its predecessor.
+        const queued = await this.api.queuePrompt(0, payload);
+        submitted++;
+        this.queuedIds.add(queued.prompt_id);
+        this.persistView();
       }
-      // Number 0 appends in submission order; -1 would queue each later job
-      // ahead of its predecessor.
-      const queued = await this.api.queuePrompt(0, payload);
-      this.queuedIds.add(queued.prompt_id);
-      this.persistView();
+    } finally {
+      if (submitted) {
+        for (const node of queuedNodes)
+          if (String(node.id) in frozen.output)
+            for (const widget of node.widgets || [])
+              widget.afterQueued?.({ isPartialExecution: false });
+        this.app.graph.setDirtyCanvas?.(true, true);
+      }
     }
     this.message(
       `${plan.jobs.length} immutable job snapshot(s) queued. Connect decoded assembly to Save Take for review.`,

@@ -201,8 +201,17 @@ class H3ContinuumTimelineSampler:
                 "base_seed": native["required"]["base_seed"],
                 "continuity": native["required"]["continuity"],
                 "continuation_method": native["required"]["continuation_method"],
-                "regenerate_from": ("INT", {"default": 0, "min": 0, "max": 16}),
-                "reroll_nonce": ("INT", {"default": 0, "min": 0}),
+                "regenerate_from": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 16,
+                        "display_name": "Regenerate From",
+                        "tooltip": "0 = Auto. Otherwise reuse the compatible prefix before this one-based chunk of the selected job and regenerate its suffix.",
+                    },
+                ),
+                "reroll_nonce": native["required"]["reroll_nonce"],
                 "emit_refine_state": ("BOOLEAN", {"default": False}),
             },
             "optional": {"first_frame": ("IMAGE",), "last_frame": ("IMAGE",)},
@@ -387,6 +396,56 @@ class H3ContinuumTimelineSampler:
             ),
             chunks=len(job["windows"]),
         )
+        all_takes = takes(store, p["project_id"])
+        rejected = set(p.get("rejected", []))
+        initial = None
+        parent = None
+        # Native Run Storage authenticates the selected revision's prefix.
+        if job["requires_previous_job"] or job.get("resume_parent_take"):
+            parent_id = job.get("resume_parent_take")
+            parents = [
+                r
+                for r in all_takes
+                if r["indices"][-1] == job["start_chunk"] - 1
+                and r.get("status") == "sampled"
+                and r["id"] not in rejected
+                and not stale_take(
+                    p,
+                    r,
+                    all_takes,
+                    check_selection=True,
+                    ignore_selection=bool(p.get("queued_batch_id"))
+                    and r.get("batch_id") == p.get("queued_batch_id"),
+                )
+            ]
+            batch_parents = [
+                r
+                for r in parents
+                if p.get("queued_batch_id")
+                and r.get("batch_id") == p["queued_batch_id"]
+            ]
+            parent = (
+                batch_parents[-1]
+                if batch_parents
+                else next(
+                    (r for r in parents if r["id"] == parent_id),
+                    parents[-1] if parents else None,
+                )
+            )
+            if parent is None:
+                raise ValueError(
+                    "This job needs the preceding job's valid continuation state; render jobs in order"
+                )
+            initial = entry_to_state(
+                load_session(prefix=parent["session_prefix"], slot=1)["chunks"][-1]
+            )
+        provider.set_offset(
+            parent.get("output_range", parent["range"])[1]
+            if parent
+            else job["range"][0]
+        )
+        job = provider.job
+        guide = provider.audio_source(audio_vae)
         plan = make_prompt_plan(
             mode="List",
             script=json.dumps([w["prompt"] for w in job["windows"]]),
@@ -403,8 +462,13 @@ class H3ContinuumTimelineSampler:
                 prompt_script="",
                 sequence_prompt=sequence_prompt,
                 prompt_plan=None,
-                chunks=(p["duration_frames"] + p["chunk_frames"] - 1)
-                // p["chunk_frames"],
+                # Native plans are bounded to 16 chunks. This pass resolves
+                # format/provenance; compile_window routes the complete source
+                # on the project clock, including sections after chunk 16.
+                chunks=min(
+                    16,
+                    (p["duration_frames"] + p["chunk_frames"] - 1) // p["chunk_frames"],
+                ),
                 chunk_seconds=p["chunk_frames"] / 24,
                 managed_prompt_source_json=managed_prompt_source_json,
             )
@@ -462,6 +526,7 @@ class H3ContinuumTimelineSampler:
             else "none",
             strict_compatibility=False,
             driving_audio_vae=audio_vae,
+            driving_audio_contract=guide.contract if guide is not None else None,
             reference_contract=references.contract if references else None,
             reference_video_contract=video_source.contract if video_source else None,
         )
@@ -472,13 +537,9 @@ class H3ContinuumTimelineSampler:
                 job["start_chunk"],
                 reference_size,
                 video_reference_size,
-                _tensor_sha256(driving_audio["waveform"]) if driving_audio else None,
-                int(driving_audio["sample_rate"]) if driving_audio else None,
                 digest(external["source"]) if sequence_prompt is not None else None,
             ]
         )
-        all_takes = takes(store, p["project_id"])
-        rejected = set(p.get("rejected", []))
         candidates = [
             r
             for r in all_takes
@@ -493,58 +554,6 @@ class H3ContinuumTimelineSampler:
             (r for r in candidates if r["id"] == chosen),
             candidates[-1] if candidates else None,
         )
-        session = None
-        initial = None
-        parent = None
-        # Native Run Storage authenticates the selected revision's prefix.
-        if job["requires_previous_job"] or job.get("resume_parent_take"):
-            parent_id = job.get("resume_parent_take")
-            parents = [
-                r
-                for r in all_takes
-                if r["indices"][-1] == job["start_chunk"] - 1
-                and r.get("status") == "sampled"
-                and r["id"] not in rejected
-                and not stale_take(
-                    p,
-                    r,
-                    all_takes,
-                    check_selection=True,
-                    ignore_selection=bool(p.get("queued_batch_id"))
-                    and r.get("batch_id") == p.get("queued_batch_id"),
-                )
-            ]
-            batch_parents = [
-                r
-                for r in parents
-                if p.get("queued_batch_id")
-                and r.get("batch_id") == p["queued_batch_id"]
-            ]
-            parent = (
-                batch_parents[-1]
-                if batch_parents
-                else next(
-                    (r for r in parents if r["id"] == parent_id),
-                    parents[-1] if parents else None,
-                )
-            )
-            if parent is None:
-                raise ValueError(
-                    "This job needs the preceding job's valid continuation state; render jobs in order"
-                )
-            if previous and previous.get("parent_take") != parent["id"]:
-                session = None
-            if session is None:
-                initial = entry_to_state(
-                    load_session(prefix=parent["session_prefix"], slot=1)["chunks"][-1]
-                )
-        provider.set_offset(
-            parent.get("output_range", parent["range"])[1]
-            if parent
-            else job["range"][0]
-        )
-        job = provider.job
-        guide = provider.audio_source(audio_vae)
         take_id = uuid.uuid4().hex
         prefix = "timeline_" + p["project_id"] + "_" + take_id
         record = {

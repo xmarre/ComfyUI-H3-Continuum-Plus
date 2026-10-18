@@ -200,6 +200,10 @@ function refreshSampler(node) {
         findWidget(node, "video_reference_size"),
         timeline || linkedInput(node, ["reference_video_1"]),
     );
+    if (timeline && node.computeSize && node.setSize) {
+        const requiredSize = node.computeSize();
+        node.setSize([Math.max(node.size[0], requiredSize[0]), requiredSize[1]]);
+    }
     node.setDirtyCanvas?.(true, true);
     return project;
 }

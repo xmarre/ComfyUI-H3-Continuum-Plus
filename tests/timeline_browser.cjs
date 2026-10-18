@@ -173,12 +173,101 @@ const { chromium } = require("playwright");
     }, workflow);
     assert.equal(samplerInputs.job_index, 0);
     assert.equal(samplerInputs.base_seed, 20261017);
+    assert.equal(samplerInputs.audio_continuity, true);
+    assert.equal(samplerInputs.run_storage, "Save + Auto Resume");
+    assert.equal(samplerInputs.reference_size, "Match Output");
+    assert.equal(samplerInputs.video_reference_size, "Efficient - 0.4 MP");
+    assert.equal(samplerInputs.conditioning_lookahead, true);
     assert.equal(samplerInputs.continuity, "Strong — 39 frames");
     assert.equal(
       samplerInputs.continuation_method,
       "Native Masked — exact continuation (Recommended)",
     );
     assert.equal(await page.locator(".h3ts").count(), 0);
+    const parity = await page.evaluate(async (workflow) => {
+      const app = window.comfyAPI.app.app;
+      const sampler = app.graph.getNodeById(8);
+      const names = sampler.inputs.map((input) => input.name);
+      const outputNames = sampler.outputs.map((output) => output.name);
+      const set = (name, value) => {
+        sampler.widgets.find((w) => w.name === name).value = value;
+      };
+      set("audio_continuity", false);
+      set("reference_size", "Max Identity");
+      set("video_reference_size", "Balanced - 0.6 MP");
+      set("conditioning_lookahead", false);
+      set("run_storage", "Off");
+      const serialized = app.graph.serialize();
+      await app.loadGraphData(serialized);
+      const roundtrip = (await app.graphToPrompt()).output["8"].inputs;
+      // The first released PR schema stored just seven sampler widgets.
+      const old = structuredClone(workflow);
+      old.nodes.find((n) => n.id === 8).widgets_values = [
+        0,
+        123,
+        "Strong — 39 frames",
+        "Native Masked — exact continuation (Recommended)",
+        2,
+        17,
+        false,
+      ];
+      await app.loadGraphData(old);
+      const migrated = (await app.graphToPrompt()).output["8"].inputs;
+      await app.loadGraphData(workflow);
+      return { names, outputNames, roundtrip, migrated };
+    }, workflow);
+    for (const name of [
+      "reference_image_1",
+      "reference_image_2",
+      "reference_image_3",
+      "reference_video_1",
+      "driving_audio",
+      "sequence_prompt",
+    ])
+      assert.ok(parity.names.includes(name), name);
+    assert.ok(parity.outputNames.includes("driving_audio"));
+    assert.equal(parity.roundtrip.audio_continuity, false);
+    assert.equal(parity.roundtrip.reference_size, "Max Identity");
+    assert.equal(parity.roundtrip.video_reference_size, "Balanced - 0.6 MP");
+    assert.equal(parity.roundtrip.conditioning_lookahead, false);
+    assert.equal(parity.roundtrip.run_storage, "Off");
+    assert.equal(parity.migrated.base_seed, 123);
+    assert.equal(parity.migrated.regenerate_from, 2);
+    assert.equal(parity.migrated.reroll_nonce, 17);
+    const references = await page.evaluate(async () => {
+      const app = window.comfyAPI.app.app;
+      const sampler = app.graph.getNodeById(8);
+      const image = LiteGraph.createNode("EmptyImage");
+      app.graph.add(image);
+      for (let i = 3; i <= 8; i++) {
+        const slot = sampler.inputs.findIndex(
+          (input) => input.name === `reference_image_${i}`,
+        );
+        if (slot < 0) throw new Error(`Missing dynamic reference socket ${i}`);
+        image.connect(0, sampler, slot);
+        await new Promise(queueMicrotask);
+      }
+      const serialized = app.graph.serialize();
+      await app.loadGraphData(serialized);
+      return app.graph
+        .getNodeById(8)
+        .inputs.filter((input) => input.name.startsWith("reference_image_"))
+        .map((input) => [input.name, input.link != null]);
+    });
+    assert.equal(references.length, 8);
+    assert.deepEqual(
+      references.slice(2).map(([, connected]) => connected),
+      Array(6).fill(true),
+    );
+    await page.evaluate(async (workflow) => {
+      const app = window.comfyAPI.app.app;
+      await app.loadGraphData(workflow);
+      app.canvas.ds.scale = 0.9;
+      app.canvas.ds.offset = [-650, 60];
+      app.canvas.setDirty(true, true);
+    }, workflow);
+    await page.waitForTimeout(100);
+    await page.screenshot({ path: "/tmp/timeline-sampler-parity.png" });
     // Pasting one clipboard twice must still give independent projects.
     const pastedIds = await page.evaluate(() => {
       const app = window.comfyAPI.app.app;
@@ -205,6 +294,8 @@ const { chromium } = require("playwright");
       const sampler = app.graph._nodes.find(
         (n) => n.comfyClass === "H3ContinuumTimelineSampler",
       );
+      sampler.widgets.find((w) => w.name === "control_after_generate").value =
+        "increment";
       const link = sampler.inputs.find((i) => i.name === "timeline").link;
       const studio = app.graph.getNodeById(app.graph.links[link].origin_id);
       for (const n of app.graph._nodes.filter(
@@ -219,7 +310,12 @@ const { chromium } = require("playwright");
       window.__h3Queued = [];
       api.queuePrompt = async (number, payload) => {
         const inputs = payload.output[String(sampler.id)].inputs;
-        window.__h3Queued.push([number, inputs.job_index, inputs.reroll_nonce]);
+        window.__h3Queued.push([
+          number,
+          inputs.job_index,
+          inputs.reroll_nonce,
+          inputs.base_seed,
+        ]);
         return { prompt_id: "test-" + window.__h3Queued.length };
       };
       studio.widgets.find((w) => w.name === "Open Timeline Studio").callback();
@@ -232,9 +328,18 @@ const { chromium } = require("playwright");
       document.querySelector(".h3ts-status").textContent.includes("queued"),
     );
     assert.deepEqual(await page.evaluate(() => window.__h3Queued), [
-      [0, 0, 0],
-      [0, 1, 0],
+      [0, 0, 0, 20261017],
+      [0, 1, 0, 20261017],
     ]);
+    assert.equal(
+      await page.evaluate(
+        () =>
+          window.comfyAPI.app.app.graph._nodes
+            .find((n) => n.comfyClass === "H3ContinuumTimelineSampler")
+            .widgets.find((w) => w.name === "base_seed").value,
+      ),
+      20261018,
+    );
     // A long queued cut may exceed 64 jobs; reopening must retain ownership
     // of its earliest pending job so Cancel cannot orphan it.
     await page

@@ -107,7 +107,17 @@ def main():
                 "H3ContinuumTimelineTake",
                 "H3ContinuumTimelineExport",
             ):
-                assert node in request("/object_info/" + node)
+                registered = request("/object_info/" + node)
+                assert node in registered
+                if node == "H3ContinuumTimelineSampler":
+                    schema = registered[node]["input"]
+                    assert all(
+                        f"reference_image_{i}" in schema["optional"]
+                        for i in range(1, 9)
+                    )
+                    assert "driving_audio" in schema["optional"]
+                    assert schema["required"]["base_seed"][1]["control_after_generate"]
+                    assert "driving_audio" in registered[node]["output_name"]
             assert any("timeline_studio.js" in u for u in request("/extensions"))
             movie = directory / "source.mkv"
             subprocess.run(

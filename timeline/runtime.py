@@ -52,7 +52,6 @@ class TimelineInputs:
         self.video_reference_size = REFERENCE_VIDEO_SIZE_EFFICIENT
         self.picture_offset = 0
         self.driving_audio = None
-        self.external_prompt = False
 
     def set_offset(self, offset):
         from .model import compile_window, guide_scope_for
@@ -114,9 +113,13 @@ class TimelineInputs:
             audio = {"waveform": torch.from_numpy(pcm)[None], "sample_rate": rate}
         if audio["waveform"].shape[-1] == 0:
             return None
-        return prepare_driving_audio_source(
+        source = prepare_driving_audio_source(
             audio, audio_vae, target_frames=b - a, fps=24
         )
+        self.direct_audio_contract = (
+            source.contract if self.driving_audio is not None else None
+        )
+        return source
 
     def invocation_plan(self, original, index):
         """Native Timeline source for a window with timed prompt regions.
@@ -126,7 +129,7 @@ class TimelineInputs:
         compiler then re-bases them onto each invocation's own clock, including
         native context, without importing adjacent windows.
         """
-        if self.external_prompt or not self.windows[index].get("timed_prompt"):
+        if not self.windows[index].get("timed_prompt"):
             return original
         if self.timeline_plan is None:
             from ..v2.prompts import make_prompt_plan
@@ -310,6 +313,10 @@ class TimelineInputs:
             start = max(0, descriptor.retained_before - descriptor.context_frames)
             presentation["timeline_studio"]["audio_guide"] = {
                 "active": self.guide_active(index),
+                "input": "driving_audio"
+                if self.driving_audio is not None
+                else "timeline_guide_mix",
+                "direct_source_contract": self.direct_audio_contract,
                 "sample_rate": self.guide_rate,
                 "encoder_mix_global_samples": [
                     sample_boundary(f, self.guide_rate) for f in self.guide_mix_range
@@ -324,7 +331,9 @@ class TimelineInputs:
                     round(start * 40 / 24),
                     round((start + descriptor.total_frames) * 40 / 24),
                 ],
-                "contributing_source_clips": [
+                "contributing_source_clips": []
+                if self.driving_audio is not None
+                else [
                     clip_input(
                         self.project,
                         t,

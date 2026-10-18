@@ -972,7 +972,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                 # still report that error at the next actual invocation.
                 lookahead_started = time.monotonic()
                 outcome = "skipped"
-                next_scoped = next_references = None
+                next_scoped = next_references = ahead = snapshot = None
                 try:
                     next_last = bool(last_frame is not None and next_geometry.is_final)
                     next_references = reference_assets
@@ -1012,7 +1012,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                         "H3C-PT236 conditioning-lookahead next_chunk=%d status=%s wall_s=%.3f",
                         sequence_index + 2, outcome, time.monotonic() - lookahead_started,
                     )
-                    del next_scoped, next_references
+                    del next_scoped, next_references, ahead, snapshot
         token_telemetry=conditioning_telemetry(base_conditioning)
         chunk_plan=dict(geometry.plan); chunk_plan["physical_prompt"]=physical_meta
         latent=empty_h3_latent(width,height,geometry.total_frames)
