@@ -14,6 +14,7 @@ async function launch({ found = true, compatible = true } = {}) {
   const source = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
   const loads = [];
   const listeners = new Map();
+  const windowListeners = new Map();
   const ipc = new Map();
   const ipcEvents = new Map();
   let policy, currentURL = "", title = "", contents;
@@ -29,6 +30,8 @@ async function launch({ found = true, compatible = true } = {}) {
       contents = this.webContents;
     }
     isDestroyed() {return false;}
+    on(name, cb) {windowListeners.set(name, cb);}
+    close() {windowListeners.get("close")?.();}
     loadURL(url) {currentURL = url; loads.push(url); return Promise.resolve();}
     setTitle(value) {title = value;}
   };
@@ -89,7 +92,7 @@ async function launch({ found = true, compatible = true } = {}) {
     },
   }, { filename: "main.cjs" });
   await ticks();
-  return {loads,listeners,ipc,ipcEvents,get policy(){return policy;},
+  return {loads,listeners,windowListeners,ipc,ipcEvents,get policy(){return policy;},
     get title(){return title;}, get url(){return currentURL;},
     get contents(){return contents;}, get fetched(){return fetched;}};
 }
@@ -162,4 +165,25 @@ test("stale backend/frontend stops desktop before old recursive editor is opened
   await assert.rejects(denied({
     sender:app.contents,senderFrame:{url:"http://127.0.0.1:8188/"},
   },{transaction:"x",path:"/mnt/d/movie.mkv"}), /restricted/);
+});
+
+test("native Windows close handles pending jobs even if web editor is unresponsive", async () => {
+  const app = await launch();
+  assert.ok(app.windowListeners.has("close"));
+  let prevented = false;
+  app.listeners.get("before-input-event")(
+    {preventDefault() {prevented = true;}},
+    {type:"keyDown", control:true, shift:true, key:"Q"},
+  );
+  assert.equal(prevented, true);
+});
+
+test("application never closes for an unrelated keyboard event", async () => {
+  const app = await launch();
+  let prevented = false;
+  app.listeners.get("before-input-event")(
+    {preventDefault() {prevented = true;}},
+    {type:"keyDown", control:true, shift:false, key:"Q"},
+  );
+  assert.equal(prevented, false);
 });
