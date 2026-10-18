@@ -10,48 +10,19 @@ import os
 import subprocess
 import threading
 import uuid
-from urllib.parse import quote
 
 from aiohttp import web
 
 from .media import MEDIA_FORMATS, audio_window, run_process, video_frames
+from .protocol import NATIVE_PATH_CONTRACT, native_runtime_manifest
 from .model import compile_project, validate
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
-# Changes only when the installed browser transport/contract changes.
-# The native desktop refuses stale servers instead of invoking old drive scans.
-NATIVE_PATH_CONTRACT = "h3-timeline-native-path-only-no-scan-v2"
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
 # Registered media is content addressed, so derived views never change.
 _IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}
-
-
-def native_runtime_manifest(extension_dirs, web_root):
-    """Describe the exact frontend directory ComfyUI registered at startup.
-
-    No recursive scan is performed. Duplicate/missing registrations are unsafe
-    because the browser may execute old Studio code from another directory.
-    """
-    expected = Path(web_root).resolve()
-    matches = [
-        name for name, directory in extension_dirs.items()
-        if Path(directory).resolve() == expected
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            "Timeline Studio frontend registration is missing or ambiguous"
-        )
-    prefix = "/extensions/" + quote(matches[0], safe="") + "/"
-    return {
-        "contract": NATIVE_PATH_CONTRACT,
-        "transport": "native-selected-path",
-        "drive_scan": False,
-        "browser_movie_upload": False,
-        "editor_url": prefix + "timeline/editor.js",
-        "entry_url": prefix + "timeline_studio.js",
-    }
 
 
 def _prune(root, pattern, limit_bytes, keep):
