@@ -138,7 +138,8 @@ PCM cache, repeated source-prefix audio decodes compounded the delay.
 The new direct final-container mux has real encoded audio/video roundtrip
 tests for FFV1/PCM and H.264/AAC, final-file atomicity/progress, reuse of
 exact PCM across output blocks, and a configured-canvas video preview above
-480px. The ComfyUI HTTP smoke validates export-status progress and direct
-file downloads for both formats. The *actual user's two-hour WSL MKV*
-remains untested until a real local run, and no subsecond runtime claim is
-made based solely on synthetic media fixtures.
+480px. The ComfyUI HTTP acceptance script now checks export-status progress and
+direct file downloads for both formats; this *script is not included in the
+isolated CI matrix*, and needs a real ComfyUI server run before declaring HTTP
+integration qualified. The *actual user's two-hour WSL MKV* also remains
+untested, and no subsecond runtime claim is made from synthetic fixtures.
