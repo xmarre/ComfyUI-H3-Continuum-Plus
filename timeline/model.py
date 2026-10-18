@@ -167,6 +167,31 @@ def validate(project):
     return p
 
 
+
+def selected_export_range(p, requested):
+    """Require a deliberate, exact [in,out) interval for HTTP exports.
+
+    No API request may silently fall back to the whole project duration.
+    Validate against the current project selection so out-of-sync frontend
+    controls cannot start a different (potentially hour-long) export.
+    """
+    if not isinstance(requested, (list, tuple)) or len(requested) != 2:
+        raise ValueError(
+            "Export needs the selected Render [in,out) frame range"
+        )
+    start, stop = requested
+    if type(start) is not int or type(stop) is not int:
+        raise ValueError("Export in/out frames must be integers")
+    if not 0 <= start < stop <= p["duration_frames"]:
+        raise ValueError("Export selection is outside the project")
+    if [start, stop] != p["selection"]:
+        raise ValueError(
+            "Export range differs from the saved Render [in,out) selection; "
+            "reload the project before exporting"
+        )
+    return start, stop
+
+
 def active_clips(p, start, end, roles=None):
     """Track order is bottom-to-top. Hidden affects display; muted affects output."""
     result = []
