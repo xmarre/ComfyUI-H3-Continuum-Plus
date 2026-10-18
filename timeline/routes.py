@@ -112,6 +112,27 @@ def register_routes():
             )
         )
 
+    @endpoint("post", "/link")
+    async def link_server_media(request):
+        # No browser-supplied arbitrary read: AssetStore checks each real path
+        # against the server operator's approved roots before accessing bytes.
+        data = await request.json()
+        source = data.get("path")
+        if not isinstance(source, str) or not 0 < len(source) <= 4096:
+            raise ValueError("A server-local media path is required")
+        store = project_store()
+        asset = await asyncio.to_thread(
+            store.assets.link, source, cancel=_request_cancel
+        )
+        if asset.get("video") and (
+            asset["video"].get("nb_frames") == "1"
+            or asset["name"].lower().endswith(
+                (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+            )
+        ):
+            asset["kind"] = "image"
+        return web.json_response(asset)
+
     @endpoint("post", "/import")
     async def ingest(request):
         # Stream straight into the store: one copy on disk, hashed as it
@@ -138,6 +159,7 @@ def register_routes():
                 raise ValueError("Unsupported or unreadable media file") from exc
         finally:
             temporary.unlink(missing_ok=True)
+        asset["storage"] = "managed"
         if asset.get("video") and (
             asset["video"].get("nb_frames") == "1"
             or asset["name"]
