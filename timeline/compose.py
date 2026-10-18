@@ -90,9 +90,6 @@ def export_project(
     """
     import av
 
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temp = output.with_name(output.stem + "-" + uuid.uuid4().hex + output.suffix)
     start, stop = render_range or (0, p["duration_frames"])
     # A retained render must never silently use stale generated footage.
     from .nodes import stale_take, takes
