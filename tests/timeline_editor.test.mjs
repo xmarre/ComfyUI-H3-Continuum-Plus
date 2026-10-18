@@ -16,6 +16,7 @@ import {
   paste,
   snap,
   sourceAt,
+  exportTarget,
 } from "../web/timeline/core.js";
 const project = () => ({
   duration_frames: 504,
@@ -745,5 +746,92 @@ test("a backend ignoring selected range is cancelled, not left exporting the fil
     /Server ignored selected in\/out frames/,
   );
   assert.equal(cancelled,1);
+  assert.equal(editor.exportPending,false);
+});
+
+test("highlighted movie clip wins over stale 0–336 render fields and keeps source PTS",async()=>{
+  const clip={id:"scene-714",start:17136,end:17283,source_in:"714",speed:"1"};
+  const project={duration_frames:159000,selection:[0,336],tracks:[
+    {role:"retained",clips:[clip]},
+    {role:"audio",clips:[{...clip,id:"sound",audio_role:"final"}]},
+  ]};
+  const target=exportTarget(project,["scene-714"]);
+  assert.deepEqual([target.start,target.stop],[17136,17283]);
+  assert.equal(target.kind,"clip");
+  assert.equal(target.sourceIn,"714");
+  assert.equal(sourceAt(clip,17136),714);
+  assert.equal(sourceAt(clip,17283),720.125);
+
+  const calls=[];
+  const id="e".repeat(32);
+  const editor={
+    p:project,selected:["scene-714"],closed:false,exportPending:false,
+    exportLink:{hidden:true,textContent:""},
+    exportStatus:{textContent:""},
+    edit(fn){fn(this.p);calls.push({kind:"edit",range:[...this.p.selection]});},
+    async save(){calls.push({kind:"save"});},
+    message(){},
+    api:{fetchApi:async(url,options)=>{
+      if(url.endsWith("/export") && options.method==="POST"){
+        const request=JSON.parse(options.body);
+        calls.push({kind:"export",request});
+        return {ok:true,json:async()=>({
+          status:"running",id,render_range:[17136,17283],total_frames:147,
+        })};
+      }
+      if(url.endsWith("/export/"+id))
+        return {ok:true,json:async()=>({
+          status:"complete",filename:"Timeline_"+id+".mp4",
+          elapsed_seconds:1, render_range:[17136,17283],
+          total_frames:147,
+        })};
+      throw new Error("unexpected path "+url);
+    }},
+  };
+  await TimelineEditor.prototype.export.call(editor,"h264");
+  assert.deepEqual(project.selection,[17136,17283]);
+  const submit=calls.find(x=>x.kind==="export").request;
+  assert.deepEqual(submit.render_range,[17136,17283]);
+  assert.deepEqual(submit.selected_clip_ids,["scene-714"]);
+  assert.deepEqual(submit.project.selection,[17136,17283]);
+  assert.match(editor.exportStatus.textContent,/highlighted clip/);
+  assert.match(editor.exportStatus.textContent,/source in 714s/);
+  assert.match(editor.exportStatus.textContent,/6.13 seconds/);
+});
+
+test("disjoint highlighted clips reject ambiguous multi-clip export",()=>{
+  const p={duration_frames:10000,selection:[0,336],tracks:[
+    {role:"retained",clips:[
+      {id:"a",start:500,end:700},
+      {id:"b",start:900,end:1000},
+    ]},
+  ]};
+  assert.throws(()=>exportTarget(p,["a","b"]),/different timeline ranges/);
+  assert.deepEqual(exportTarget(p,[]),{
+    start:0,stop:336,kind:"range",clipIds:[],
+  });
+});
+
+test("Close detaches dialog before throwing cleanup hooks and requests export cancellation",async()=>{
+  const events=[], id="f".repeat(32);
+  const editor={
+    closed:false,exportPending:true,exportId:id,
+    root:{close(){events.push("dialog-close");},remove(){events.push("removed");}},
+    onClose(){events.push("onClose");},
+    persistView(){events.push("view");throw Error("graph unavailable");},
+    abort:{abort(){events.push("abort");}},
+    resize:{disconnect(){events.push("resize");throw Error("resize unavailable");}},
+    stopPlayback(){events.push("stop");throw Error("decoder unavailable");},
+    video:{removeAttribute(){}},
+    api:{fetchApi:async(path,options)=>{
+      events.push(path);
+      return {ok:true,json:async()=>({cancelled:true})};
+    }},
+  };
+  TimelineEditor.prototype.close.call(editor);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(editor.closed,true);
+  assert.deepEqual(events.slice(0,3),["dialog-close","removed","onClose"]);
+  assert.ok(events.includes("/h3_continuum/timeline/export/"+id+"/cancel"));
   assert.equal(editor.exportPending,false);
 });
