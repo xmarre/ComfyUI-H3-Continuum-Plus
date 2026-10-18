@@ -156,6 +156,7 @@ export class TimelineEditor {
     }
   }
   edit(fn) {
+    this.stopPlayback();
     this.editVersion++;
     this.history.commit(fn);
     this.persistWidget();
@@ -206,6 +207,7 @@ export class TimelineEditor {
     );
   }
   async reload() {
+    this.stopPlayback();
     const p = await request(this.api, "/project/" + this.p.project_id);
     this.history = new History(p);
     this.serverRevision = p.revision;
@@ -253,8 +255,13 @@ export class TimelineEditor {
     this.image = el("img", { class: "h3ts-image", alt: "Reference image" });
     this.image.hidden = true;
     this.video.addEventListener("error", () => {
-      if (!this.closed && !this.video.hidden && this.previewAsset &&
-          !this.proxy && !this.playWanted)
+      if (this.closed) return;
+      if (this.playWanted) {
+        this.stopPlayback();
+        this.message("Playback segment could not be decoded", true);
+        return;
+      }
+      if (!this.video.hidden && this.previewAsset && !this.proxy)
         this.guard(() => this.preview(true));
     });
     this.video.addEventListener("ended", () => {
@@ -300,7 +307,10 @@ export class TimelineEditor {
       el("option", { value: "generated", text: "B · generated" }),
     );
     this.compare.value = this.previewMode;
-    this.compare.onchange = () => this.guard(() => this.preview());
+    this.compare.onchange = () => {
+      this.stopPlayback();
+      this.guard(() => this.preview());
+    };
     const center = el(
       "section",
       { class: "h3ts-viewer" },
@@ -1465,12 +1475,14 @@ export class TimelineEditor {
     this.edit((p) => (this.selected = paste(p, this.clipboard, end)));
   }
   undo() {
+    this.stopPlayback();
     this.editVersion++;
     this.history.undo();
     this.persistWidget();
     this.render();
   }
   redo() {
+    this.stopPlayback();
     this.editVersion++;
     this.history.redo();
     this.persistWidget();
