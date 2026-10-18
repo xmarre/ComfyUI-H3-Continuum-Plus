@@ -84,7 +84,11 @@ else {
             throw new Error("Packaged native path IPC returned unexpected asset");
           }
           console.log("H3_NATIVE_DESKTOP_SMOKE_PASSED");
-          app.exit(0);
+          // CI must exercise the real packaged BrowserWindow.close() path,
+          // not only call app.exit(0) directly and skip the reported defect.
+          // The native 'close' handler forcibly destroys the renderer and
+          // exits even when its beforeunload is unresponsive.
+          window.close();
         } finally {
           debuggerAPI.detach();
         }
