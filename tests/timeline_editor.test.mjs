@@ -911,11 +911,14 @@ test("retained source routes to H3 video guidance at original PTS without export
   assert.equal(guide.start, 17136);
   assert.equal(guide.end, 17283);
   const firstId = guide.id;
+  // An unrelated later guide must not shadow the explicit selected clip.
+  p.tracks.push({ id: "other-guide", role: "video_guide", clips: [] });
   p.tracks[0].clips[0].source_in = "720";
   routeClipToGuidance(p, ["scene-714"]);
-  assert.equal(p.tracks.length, 2);
-  assert.equal(p.tracks[1].clips.length, 1);
-  assert.equal(p.tracks[1].clips[0].id, firstId);
-  assert.equal(p.tracks[1].clips[0].source_in, "720");
+  assert.equal(p.tracks.length, 3);
+  assert.equal(p.tracks[2].role, "video_guide");
+  assert.equal(p.tracks[2].clips.length, 1);
+  assert.equal(p.tracks[2].clips[0].id, firstId);
+  assert.equal(p.tracks[2].clips[0].source_in, "720");
   assert.throws(() => routeClipToGuidance(p, ["no-such-clip"]), /exactly one retained/);
 });
