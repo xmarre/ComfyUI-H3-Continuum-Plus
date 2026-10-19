@@ -89,7 +89,10 @@ export class TimelineEditor {
     this.serverRevision = this.p.revision || 0;
     this.selected = view.selected || [];
     this.clipboard = [];
-    this.playhead = view.playhead || 0;
+    this.playhead = view.playhead ?? this.p.selection[0];
+    if (this.chunkFocus &&
+        (this.playhead < this.p.selection[0] || this.playhead >= this.p.selection[1]))
+      this.playhead = this.p.selection[0];
     this.previewMode = view.previewMode || "composed";
     this.chunkFocus = view.chunkFocus ?? true;
     this.chunkPage = view.chunkPage || 0;
@@ -134,7 +137,8 @@ export class TimelineEditor {
     this.root.showModal();
     this.build();
     this.render();
-    this.scroller.scrollLeft = view.scroll || 0;
+    this.scroller.scrollLeft = this.chunkFocus && view.chunkFocus == null
+      ? 0 : (view.scroll || 0);
     this.root.focus();
     this.guard(() => this.pruneQueued());
   }
@@ -1604,6 +1608,14 @@ export class TimelineEditor {
       "H3 guidance linked to the original asset at its authored source PTS. " +
       "Render range set to this clip. Queue selection to generate; no export needed."
     );
+  }
+  refreshSamplerInputs() {
+    if (this.closed || !this.chunkBoard) return;
+    // Preserve a currently edited prompt until the field's change event
+    // commits the value to its chunk track.
+    if (this.chunkBoard.contains(document.activeElement) &&
+        ["TEXTAREA","INPUT"].includes(document.activeElement?.tagName)) return;
+    renderChunkWorkspace(this);
   }
   scheduleChunkCompile() {
     clearTimeout(this.chunkCompileTimer);
