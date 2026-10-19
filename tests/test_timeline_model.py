@@ -313,3 +313,25 @@ def test_external_sequence_prompt_preserves_explicit_chunk_prompts_only():
     assert not stale_take(p, record, [record])
     p["tracks"][-1]["clips"][1]["text"] = "new second chunk prompt"
     assert stale_take(p, record, [record])
+
+
+def test_conveyor_reference_selection_is_chunk_causal_and_backward_compatible():
+    p = blank_project()
+    first = [compile_window(p, i)["generation_hash"] for i in range(3)]
+    assert "conveyor_reference_slots" not in compile_window(p, 0)
+    p["conveyor_reference_slots"] = {"0": [1, 3], "1": []}
+    p = validate(p)
+    assert compile_window(p, 0)["conveyor_reference_slots"] == [1, 3]
+    assert compile_window(p, 1)["conveyor_reference_slots"] == []
+    assert "conveyor_reference_slots" not in compile_window(p, 2)
+    hashes = [compile_window(p, i)["generation_hash"] for i in range(3)]
+    assert hashes[0] != first[0] and hashes[1] != first[1]
+    assert hashes[2] == first[2]
+    for invalid in (
+        {"0": [2, 1]}, {"0": [1, 1]}, {"0": [0]}, {"0": [9]},
+        {"0": [True]}, {"0": "1,2"}, {"00": [1]}, {"3": [1]},
+    ):
+        test = blank_project()
+        test["conveyor_reference_slots"] = invalid
+        with pytest.raises(ValueError, match="reference selection"):
+            validate(test)
