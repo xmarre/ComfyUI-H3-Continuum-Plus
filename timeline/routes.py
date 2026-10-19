@@ -379,7 +379,11 @@ def register_routes():
                     )
                     # Serialize a tiny derived JPEG, not the source movie.
                     data = io.BytesIO()
-                    Image.fromarray(pixels[0]).save(data, format="JPEG")
+                    high_detail = width > 240 or height > 136
+                    Image.fromarray(pixels[0]).save(
+                        data, format="JPEG",
+                        **({"quality": 90, "subsampling": 0} if high_detail else {}),
+                    )
                     temporary = output.with_name(
                         output.stem + "-" + uuid.uuid4().hex + ".jpg"
                     )
