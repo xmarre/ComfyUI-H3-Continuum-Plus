@@ -268,9 +268,25 @@ function conveyorReferenceControls(editor, index, sources) {
   return group;
 }
 
-function compiledLine(node, window, inputs, ownPrompt = "") {
+function compiledLine(node, window, inputs, ownPrompt = "", chunkIndex = window?.index) {
   if (!window) {
-    node.textContent = "Resolving project inputs…";
+    if (!Number.isInteger(chunkIndex)) {
+      node.textContent="Waiting for backend input inspection…";
+      return;
+    }
+    const selection=selectedConveyorSlots(inputs.project,chunkIndex);
+    const connected=inputs.connectedReferenceSlots || [];
+    const slots=selection===null ? connected :
+      selection.filter((slot)=>connected.includes(slot));
+    const clips=overlappingChunkClips(inputs.project,chunkIndex);
+    const num=(role)=>clips.filter(({track})=>track.role===role).length;
+    node.textContent="Authored inputs · prompt: "+
+      (ownPrompt ? "chunk-specific" : inputs.promptOverridden
+        ? "connected prompt fallback" : "project script")+
+      " · Conveyor inputs: "+(slots.join(", ") || "none")+
+      " · video: "+num("video_guide")+
+      " · audio: "+num("audio")+
+      " · waiting for backend compile";
     return;
   }
   const prompt = inputs.promptOverridden
@@ -411,7 +427,7 @@ export function renderChunkWorkspace(editor) {
     const preview=el("div",{class:"h3ts-chunk-compiled",
       "data-compiled-chunk":chunk.index});
     compiledLine(preview,editor.compiledWindows?.get(chunk.index),sampler,
-      ownPrompt?.clip.text || "");
+      ownPrompt?.clip.text || "", chunk.index);
     card.append(preview);
     card.append(conveyorReferenceControls(editor,chunk.index,referenceSources));
     const video=sectionForRole(editor,chunk.index,"video_guide");
@@ -501,5 +517,6 @@ export function updateChunkCompiledLines(editor) {
       inputs,
       overlappingChunkClips(editor.p,Number(element.dataset.compiledChunk),["prompt"])
         .find(({clip}) => clip.chunk_prompt)?.clip.text || "",
+      Number(element.dataset.compiledChunk),
     );
 }
