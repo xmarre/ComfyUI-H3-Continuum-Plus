@@ -165,6 +165,19 @@ export function conveyorState(node) {
     return JSON.parse(node?.widgets?.find(w=>w.name==="state_json")?.value || "{}");
   } catch { return {}; }
 }
+// Conveyor reference_output_enabled is the backend-visible queue contract.
+// In the editor, node.properties is updated first by the Conveyor toggle
+// extension and is therefore authoritative for pending (not-yet-queued)
+// edits. Empty shelf entries can never produce a persistent IMAGE.
+export function conveyorShelfAvailable(node, state, slot) {
+  if (!Number.isInteger(slot) || slot<1 || slot>8 ||
+      state?.output_mode!=="persistent_refs" ||
+      !state?.reference_slots?.[slot-1]) return false;
+  const live=node?.properties?.image_conveyor_reference_enabled;
+  const serialized=state?.reference_output_enabled;
+  const active=Array.isArray(live) ? live : serialized;
+  return !Array.isArray(active) || active[slot-1]!==false;
+}
 export function shelfImagePath(state, slot) {
   if (!Number.isInteger(slot) || slot<1 || slot>8 ||
       state?.output_mode!=="persistent_refs") return null;
