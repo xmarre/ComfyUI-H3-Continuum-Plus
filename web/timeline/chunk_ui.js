@@ -3,6 +3,7 @@
 import {
   selectedChunkPage, overlappingChunkClips, setChunkPrompt,
   addChunkMedia, updateChunkSource, removeChunkClip,
+  selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
 } from "./chunk_workspace.js";
 import { changeTiming, selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
@@ -47,6 +48,54 @@ export function linkedSampler(editor) {
   });
   return samplers.length === 1 ? samplers[0] : null;
 }
+export function referenceSocketSources(editor) {
+  const sampler = linkedSampler(editor);
+  if (!sampler) return [];
+  const graph = sampler.graph || editor.app?.graph;
+  return Array.from({length:8},(_,i)=>{
+    const slot=i+1;
+    const input=sampler.inputs?.find((v)=>v.name==="reference_image_"+slot);
+    const link=graph?.links?.[input?.link];
+    const node=link && (graph.getNodeById?.(link.origin_id) ||
+      graph._nodes?.find((n)=>n.id===link.origin_id));
+    const output=node?.outputs?.[link?.origin_slot];
+    const isConveyor=["ImageConveyor","SequentialBatchImageLoader"]
+      .includes(String(node?.comfyClass || node?.type || ""));
+    const name=String(output?.name || output?.label || "");
+    const shelfMatch=isConveyor && /^ref_image_([1-8])$/.exec(name);
+    let state={};
+    try {
+      state=JSON.parse(node?.widgets?.find((w)=>w.name==="state_json")?.value || "{}");
+    } catch {}
+    const shelfNumber=shelfMatch ? Number(shelfMatch[1]) : null;
+    const source=shelfNumber ? state.reference_slots?.[shelfNumber-1] : null;
+    const enabled=shelfNumber && node?.properties?.image_conveyor_reference_enabled?.[
+      shelfNumber-1] === false ? false : true;
+    const activeMode=state.output_mode==="persistent_refs";
+    const inputPath=activeMode && source?.type==="input" &&
+      typeof source.annotated==="string" &&
+      source.annotated.endsWith(" [input]")
+      ? source.annotated.slice(0,-8) : null;
+    const filename=source?.filename || (inputPath?.split("/").at(-1));
+    const namePrefix=isConveyor ? ("Image Conveyor #"+node.id) :
+      (node?.title || node?.comfyClass || "Connected IMAGE");
+    return {
+      slot, connected:!!link, conveyor:isConveyor, shelfNumber,
+      nodeId:node?.id ?? null,
+      label:namePrefix+(shelfNumber ? " · Shelf "+shelfNumber : "")+
+        (filename ? " · "+filename : "")+
+        (!isConveyor && name ? " · "+name : ""),
+      unavailable:isConveyor && shelfNumber &&
+        (!enabled || (activeMode && !source)),
+      reason:!enabled ? "Disabled on Image Conveyor" :
+        activeMode && !source ? "Shelf slot empty" : null,
+      thumbnail: inputPath
+        ? "/image-conveyor/thumbnail?relative_path="+
+          encodeURIComponent(inputPath)+"&size=160" : null,
+    };
+  });
+}
+
 export function samplerInputDescription(editor) {
   const sampler = linkedSampler(editor);
   if (!sampler) return {sampler:null,warning:"Connect exactly one Continuum Timeline Sampler to this Studio"};
@@ -138,6 +187,43 @@ function sectionForRole(editor, index, role, audioRoute) {
   row.append(choose.buttonAdd);
   return row;
 }
+function conveyorReferenceControls(editor, index, sources) {
+  const group=el("div",{class:"h3ts-conveyor-refs"});
+  const selected=selectedConveyorSlots(editor.p,index);
+  const connected=sources.filter((s)=>s.connected);
+  group.append(el("strong",{text:"Image Conveyor references · "+
+    (selected===null ? "inherit connected" : "chunk-specific selection")}));
+  group.append(el("small",{text:"Checks select actual sampler reference IMAGE sockets for this chunk; empty/disabled Conveyor outputs provide no image."}));
+  if (!connected.length)
+    group.append(el("p",{class:"h3ts-chunk-warning",
+      text:"Connect Image Conveyor ref_image_1…8 outputs to the corresponding Continuum Timeline Sampler reference_image_1…8 inputs."}));
+  for(const source of connected) {
+    const checked=selected===null || selected.includes(source.slot);
+    const toggle=el("input",{
+      type:"checkbox",
+      "aria-label":"Chunk "+(index+1)+" reference input "+source.slot,
+    });
+    toggle.checked=checked;
+    toggle.addEventListener("change",()=>editor.edit((next)=>
+      setConveyorSlotEnabled(next,index,source.slot,toggle.checked,
+        connected.map((x)=>x.slot))));
+    const item=el("label",{class:"h3ts-conveyor-ref"},
+      toggle,
+      el("span",{text:"Ref "+source.slot+" · "+source.label}),
+    );
+    if(source.thumbnail)
+      item.append(el("img",{loading:"lazy",alt:"Image Conveyor shelf reference",
+        src:source.thumbnail}));
+    if(source.reason)
+      item.append(el("small",{class:"h3ts-chunk-warning",
+        text:"Currently inactive: "+source.reason}));
+    group.append(item);
+  }
+  group.append(button("Inherit connected references",()=>editor.edit((next)=>
+    inheritConveyorSlots(next,index))));
+  return group;
+}
+
 function compiledLine(node, window, inputs, ownPrompt = "") {
   if (!window) {
     node.textContent = "Resolving project inputs…";
@@ -171,6 +257,7 @@ export function renderChunkWorkspace(editor) {
   const page = selectedChunkPage(p,editor.chunkPage || 0,8);
   editor.chunkPage = page.page;
   const sampler = samplerInputDescription(editor);
+  const referenceSources = referenceSocketSources(editor);
   host.replaceChildren();
   const heading = el("div",{class:"h3ts-chunk-heading"},
     el("strong",{text:"CHUNK INPUTS · THE ACTUAL H3 TIMELINE"}),
@@ -199,6 +286,11 @@ export function renderChunkWorkspace(editor) {
     control("Selected chunks",count),control("Seconds / chunk",seconds),
     control("Chunk-focused timeline",focus));
   host.append(heading);
+  const refreshInputs=button("Refresh Conveyor connections",()=>{
+    renderChunkWorkspace(editor);
+    editor.scheduleChunkCompile();
+  });
+  heading.append(refreshInputs);
   const settings = el("div",{class:"h3ts-chunk-settings"});
   settings.append(el("strong",{text:"CONNECTED SAMPLER · EFFECTIVE INPUT SOURCES"}));
   if (sampler.warning) settings.append(el("p",{text:sampler.warning}));
@@ -250,15 +342,14 @@ export function renderChunkWorkspace(editor) {
     compiledLine(preview,editor.compiledWindows?.get(chunk.index),sampler,
       ownPrompt?.clip.text || "");
     card.append(preview);
-    const picture=sectionForRole(editor,chunk.index,"image_reference");
+    card.append(conveyorReferenceControls(editor,chunk.index,referenceSources));
     const video=sectionForRole(editor,chunk.index,"video_guide");
     const audioRoute=el("select",{"aria-label":"Chunk audio routing"},
       ...["guide","reference","final","both"].map((v)=>
         el("option",{value:v,text:v})));
     audioRoute.value="guide";
     const audio=sectionForRole(editor,chunk.index,"audio",audioRoute);
-    card.append(control("Add reference image",picture),
-      control("Add cut video guidance",video),
+    card.append(control("Add cut video guidance",video),
       control("Add cut audio (guide / reference / final)",audio));
     for (const {track,clip,start,end} of items) {
       if (track.role==="prompt" && clip.chunk_prompt) continue;
@@ -309,8 +400,11 @@ export function renderChunkWorkspace(editor) {
           assets.push(await editor.resolveOriginal(file));
         for (const asset of assets) {
           if (!asset) throw new Error("Chunk drop referenced missing media");
-          const role=asset.kind==="image" ? "image_reference"
-            : asset.video ? "video_guide" : "audio";
+          if (asset.kind==="image")
+            throw new Error(
+              "Chunk references must come from connected Image Conveyor shelf outputs; select their checkboxes in this chunk."
+            );
+          const role=asset.video ? "video_guide" : "audio";
           editor.edit((next)=>{
             if (!next.assets.some((a)=>a.id===asset.id)) next.assets.push(asset);
             const clip=addChunkMedia(next,chunk.index,role,asset.id);
