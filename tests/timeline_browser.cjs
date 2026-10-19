@@ -55,6 +55,52 @@ const { chromium } = require("playwright");
     const beforeView = await page.evaluate(
       () => h3TestNode.widgets.find((w) => w.name === "project_json").value,
     );
+    // Verify the real browser layout: the preview is not crushed by the
+    // chunk workspace, and each interactive splitter persists view-only size.
+    const firstLayout=await page.evaluate(() => ({
+      main:document.querySelector(".h3ts > main").getBoundingClientRect().height,
+      chunk:document.querySelector(".h3ts-chunk-workspace").getBoundingClientRect().height,
+      timeline:document.querySelector(".h3ts-scroll").getBoundingClientRect().height,
+    }));
+    assert.ok(firstLayout.main>=150,JSON.stringify(firstLayout));
+    assert.ok(firstLayout.chunk>=150,JSON.stringify(firstLayout));
+    assert.ok(firstLayout.timeline>=85,JSON.stringify(firstLayout));
+    const previewGrip=page.getByRole("separator",{
+      name:"Resize media preview and upper workspace height",
+    });
+    const gripBox=await previewGrip.boundingBox();
+    await page.mouse.move(gripBox.x+gripBox.width/2,gripBox.y+gripBox.height/2);
+    await page.mouse.down();
+    await page.mouse.move(gripBox.x+gripBox.width/2,
+      gripBox.y+gripBox.height/2+65,{steps:5});
+    await page.mouse.up();
+    const afterGrip=await page.evaluate(() => ({
+      preview:document.querySelector(".h3ts > main").getBoundingClientRect().height,
+      timeline:document.querySelector(".h3ts-scroll").getBoundingClientRect().height,
+      saved:h3TestNode.properties.h3_timeline_view?.layout?.preview,
+    }));
+    assert.ok(afterGrip.preview>=firstLayout.main+20,JSON.stringify(afterGrip));
+    assert.ok(afterGrip.timeline>=85,JSON.stringify(afterGrip));
+    assert.ok(afterGrip.saved>firstLayout.main,JSON.stringify(afterGrip));
+    const leftGrip=page.getByRole("separator",{name:"Resize media library width"});
+    await leftGrip.focus();
+    await page.keyboard.press("ArrowRight");
+    assert.ok(
+      await page.evaluate(() =>
+        h3TestNode.properties.h3_timeline_view.layout.left>190),
+    );
+    await page.getByRole("slider",{name:"Reference thumbnail size"})
+      .fill("150");
+    assert.equal(
+      await page.evaluate(() =>
+        h3TestNode.properties.h3_timeline_view.layout.thumb),
+      150,
+    );
+    assert.equal(
+      await page.evaluate(() =>
+        h3TestNode.widgets.find(w=>w.name==="project_json").value),
+      beforeView,
+    );
     await page.getByRole("button", { name: "+ Zoom", exact: true }).click();
     await page.evaluate(() => {
       document.querySelector(".h3ts-scroll").scrollLeft = 40;
