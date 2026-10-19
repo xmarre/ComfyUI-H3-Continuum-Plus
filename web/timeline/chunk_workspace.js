@@ -28,12 +28,15 @@ export function selectedChunkPage(project, page = 0, pageSize = 8) {
     ),
   };
 }
-export function overlappingChunkClips(project, index, roles = null) {
+export function overlappingChunkClips(project, index, roles = null,
+    includeMuted = false) {
   const [start, end] = chunkWindow(project, index);
   return project.tracks.flatMap((track) =>
-    (track.muted || (roles && !roles.includes(track.role)))
+    ((!includeMuted && track.muted) ||
+     (roles && !roles.includes(track.role)))
       ? [] : track.clips
-        .filter((clip) => !clip.muted && clip.start < end && start < clip.end)
+        .filter((clip) => (includeMuted || !clip.muted) &&
+          clip.start < end && start < clip.end)
         .map((clip) => ({ track, clip,
           start: Math.max(clip.start, start),
           end: Math.min(clip.end, end) })),
@@ -75,6 +78,44 @@ export function inheritConveyorSlots(project, index) {
   if (project.conveyor_reference_slots &&
       !Object.keys(project.conveyor_reference_slots).length)
     delete project.conveyor_reference_slots;
+}
+
+// In the model, clip.muted and track.muted are authoritative. Isolate just
+// the logical chunk's clip span when an existing long movie/audio clip crosses
+// boundaries, preserving exact source PTS and leaving other chunks unchanged.
+// This uses standard timeline edit semantics, not a separate shadow enable mask.
+export function setChunkClipEnabled(project,index,trackId,clipId,enabled) {
+  const [start,end]=chunkWindow(project,index);
+  const track=project.tracks.find(t=>t.id===trackId);
+  const original=track?.clips.find(c=>c.id===clipId);
+  if(!original || original.start>=end || original.end<=start)
+    throw new Error("Clip is not present in this chunk");
+  if(track.locked)throw new Error("Unlock this timeline track before editing its clips");
+  if(track.muted && enabled)
+    throw new Error("Unmute this timeline track to activate its clips");
+  // If a native clip has time-based gain ramps, splitting it would restart the
+  // fades. Do not make an unrequested change in audio/image amplitude.
+  if((original.start<start||original.end>end) &&
+    (Number(original.fade_in||0)>0||Number(original.fade_out||0)>0))
+    throw new Error("This spanning clip has fades. Split and adjust the fades in the timeline before toggling one chunk.");
+  let clip=original;
+  const clipStart=Math.max(start,clip.start);
+  const clipEnd=Math.min(end,clip.end);
+  if(clip.start<clipStart) {
+    const child={...clip,id:uid(),start:clipStart,
+      source_in:String(sourceAt(clip,clipStart))};
+    clip.end=clipStart;
+    track.clips.push(child);
+    clip=child;
+  }
+  if(clip.end>clipEnd) {
+    const tail={...clip,id:uid(),start:clipEnd,
+      source_in:String(sourceAt(clip,clipEnd))};
+    clip.end=clipEnd;
+    track.clips.push(tail);
+  }
+  clip.muted=!enabled;
+  return clip.id;
 }
 
 export function setChunkPrompt(project, index, text) {
