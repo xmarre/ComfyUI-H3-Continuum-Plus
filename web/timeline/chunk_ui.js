@@ -561,10 +561,12 @@ export function renderChunkWorkspace(editor) {
         el("option",{value:v,text:v})));
     audioRoute.value="guide";
     const audio=sectionForRole(editor,chunk.index,"audio",audioRoute);
-    card.append(control("3 · Add chunk video guidance",video),
-      control("4 · Add chunk audio (guide / reference / final)",audio));
+    const addMedia=el("details",{class:"h3ts-chunk-add-details"},
+      el("summary",{text:"Add video or audio to this chunk"}),
+      control("Video guidance",video),
+      control("Audio · guide / reference / final",audio));
     const media=el("section",{class:"h3ts-chunk-media"},
-      el("strong",{text:"5 · Media currently on this chunk"}),
+      el("strong",{text:"3 · Media in this chunk · enable / disable"}),
       el("small",{text:"Switch media on or off for this chunk. Connected "+
         "tracks can also be muted globally. Original footage is a "+
         "timeline source, while Video guidance conditions H3."}));
@@ -587,6 +589,10 @@ export function renderChunkWorkspace(editor) {
       });
       checkbox.checked=active;
       checkbox.disabled=!!track.locked||!!track.muted||track.role==="generated";
+      if(checkbox.disabled)checkbox.title=track.locked
+        ? "Unlock this track before changing its chunk media"
+        : track.muted ? "Unmute this track before activating the clip"
+          : "Generated output cannot be toggled as an H3 input";
       if(!checkbox.disabled)checkbox.addEventListener("change",()=>{
         const requested=checkbox.checked;
         editor.guard(()=>editor.edit(project=>
@@ -636,6 +642,7 @@ export function renderChunkWorkspace(editor) {
         }));
       media.append(row);
     }
+    card.append(addMedia);
     card.addEventListener("dragover",(e)=>e.preventDefault());
     card.addEventListener("drop",(e)=>{
       const assetId=e.dataTransfer?.getData("application/x-h3-asset");
