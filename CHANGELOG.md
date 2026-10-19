@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Show only available Image Conveyor references in each chunk, with exactly
+  one thumbnail/checkbox per active reference output. Eliminate the repeated
+  eight-image provenance gallery under every sampler reference socket.
+- Respect both pending frontend reference-output toggles and backend
+  serialized toggle state, as well as empty shelf slots. Unconnected or
+  disabled image sources are omitted from chunk choices without mutating
+  the global Conveyor.
+- Keep each chunk's chosen physical sampler reference sockets independent,
+  including inherited defaults, explicitly disabled references, changes to
+  the Conveyor shelf and stale-take semantics. Update the displayed effective
+  input inventory and active-reference count accordingly.
+- Advance the frontend/backend/Windows desktop cache/compatibility token
+  to v12.
+
+
 - Show definite Image Conveyor upstream shelf thumbnails in an inspectable
   horizontal gallery when an intermediate processor has multiple IMAGE
   inputs. Keep ambiguous processed-output identity explicit rather than
