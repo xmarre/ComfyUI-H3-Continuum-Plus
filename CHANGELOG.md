@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Use existing Image Conveyor `ref_image_1..8` → Timeline Sampler `reference_image_1..8` connections as the per-chunk reference source. Show shelf previews/filenames and independent chunk checkboxes, including explicit zero selected images and inherited all-connected defaults; no duplicate media import or reference file materialization.
+- Filter actual native reference IMAGE tensors by per-chunk socket selection in both normal H3 sampling and conditioning lookahead. Preserve contiguous Picture numbering for surviving inputs, V3.4 bundled socket groups, causal hashes, and stale-take validation. Preserve legacy file-based reference clips but remove the imported-image picker from new chunk cards.
+- Keep Conveyor reference masks aligned when chunk duration changes, rejecting ambiguous collisions before mutation.
+
+
 - Make Timeline Studio chunk-first: a selected-chunk workspace shows exactly the connected sampler's logical chunk count/duration, editable prompt text for each chunk, image references, video-guidance cuts, routed audio cuts and exact source PTS; retain full-film editing and native sampler settings. The editor displays project-compiled per-window inputs and calls out persistent node connections/overrides.
 - Honor only explicit new chunk-authored prompts over a connected native `sequence_prompt` inside their own chunk, preserving old free-form prompt precedence. Share the transformation with stale-take validation and keep native Run Storage contracts consistent. Realign chunk-owned tracks on duration edits while preserving source-in timestamps.
 - Add JS/backend tests for late-film chunk selection, exact 24 fps spans, prompts, media, sampler connections, relayout and external prompt precedence.
