@@ -1,6 +1,6 @@
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-chunk-inputs-v6";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-conveyor-ref-selection-v7";
 import {
   History,
   clone,
