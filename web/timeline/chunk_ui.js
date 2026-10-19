@@ -215,9 +215,10 @@ function conveyorReferenceControls(editor, index, sources) {
       "aria-label":"Chunk "+(index+1)+" reference input "+source.slot,
     });
     toggle.checked=checked;
-    toggle.addEventListener("change",()=>editor.edit((next)=>
-      setConveyorSlotEnabled(next,index,source.slot,toggle.checked,
-        connected.map((x)=>x.slot))));
+    toggle.addEventListener("change",()=>editor.guard(()=>
+      editor.editChunkReferences((next)=>
+        setConveyorSlotEnabled(next,index,source.slot,toggle.checked,
+          connected.map((x)=>x.slot)))));
     const label=el("label",{class:"h3ts-conveyor-ref-label"},
       toggle,
       el("span",{text:"Ref "+source.slot+" · "+source.label+
@@ -261,8 +262,9 @@ function conveyorReferenceControls(editor, index, sources) {
         text:source.unavailable ? "Inactive: "+source.reason : source.reason}));
     group.append(item);
   }
-  group.append(button("Inherit connected references",()=>editor.edit((next)=>
-    inheritConveyorSlots(next,index))));
+  group.append(button("Inherit connected references",()=>editor.guard(()=>
+    editor.editChunkReferences((next)=>
+      inheritConveyorSlots(next,index)))));
   return group;
 }
 
