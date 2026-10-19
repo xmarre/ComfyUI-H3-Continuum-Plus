@@ -276,8 +276,19 @@ export class TimelineEditor {
       preload: "metadata",
       playsinline: "",
     });
-    this.image = el("img", { class: "h3ts-image", alt: "Reference image" });
+    this.image = el("img", { class: "h3ts-image", alt: "Timeline source preview" });
     this.image.hidden = true;
+    // A fast cached filmstrip-sized still is shown only while the independent
+    // high-detail viewer request is pending; it is never used for sampling,
+    // export, or as a substitute for full-resolution delivery pixels.
+    this.previewPlaceholder = el("img", {
+      class: "h3ts-preview-placeholder", alt: "Temporary low-detail source preview",
+    });
+    this.previewPlaceholder.hidden = true;
+    this.previewStatus = el("div", {
+      class:"h3ts-preview-state",text:"",role:"status","aria-live":"polite",
+    });
+    this.previewStatus.hidden = true;
     this.video.addEventListener("error", () => {
       if (this.closed) return;
       if (this.playWanted) {
@@ -338,7 +349,8 @@ export class TimelineEditor {
     const center = el(
       "section",
       { class: "h3ts-viewer" },
-      el("div", { class: "h3ts-preview" }, this.video, this.image),
+      el("div", { class: "h3ts-preview" },
+        this.video, this.previewPlaceholder, this.image, this.previewStatus),
       el(
         "nav",
         {},
@@ -1463,6 +1475,9 @@ export class TimelineEditor {
       this.video.pause();
       this.video.hidden = true;
       this.image.hidden = true;
+      this.previewPlaceholder.hidden = true;
+      this.previewStatus.hidden = false;
+      this.previewStatus.textContent = "No visible footage at this timeline frame";
       return;
     }
     const asset = this.p.assets.find((a) => a.id === chosen.asset_id);
@@ -1478,21 +1493,43 @@ export class TimelineEditor {
     );
     const stillUrl = BASE + "/thumbnail/" + asset.id + "?pts=" +
       source.toFixed(6) + "&w=" + stillWidth + "&h=" + stillHeight;
-    if (asset.kind === "image") {
-      this.video.hidden = true;
-      this.image.hidden = false;
-      this.image.src = stillUrl;
-      return;
-    }
-    if (!forceProxy) {
-      // Use a display-resolution still for the main viewer. Filmstrip JPEGs
-      // remain tiny; both paths decode only one seeked source frame.
+    if (asset.kind === "image" || !forceProxy) {
       this.video.pause();
       this.video.hidden = true;
-      this.image.hidden = false;
-      this.image.src = stillUrl;
+      const lowUrl=BASE + "/thumbnail/" + asset.id + "?pts=" +
+        source.toFixed(6);
+      this.previewStillUrl=stillUrl;
+      this.image.hidden=false;
+      this.previewPlaceholder.hidden=false;
+      this.previewPlaceholder.src=lowUrl;
+      this.previewStatus.hidden=false;
+      this.previewStatus.textContent="Loading original-source display preview…";
+      this.image.onload=()=>{
+        if (this.closed || this.previewStillUrl!==stillUrl) return;
+        this.previewPlaceholder.hidden=true;
+        this.previewStatus.hidden=true;
+      };
+      this.image.onerror=()=>{
+        if (this.closed || this.previewStillUrl!==stillUrl) return;
+        this.image.hidden=true;
+        this.previewStatus.hidden=false;
+        this.previewStatus.textContent=
+          "High-detail preview unavailable; showing temporary low-detail still. "+
+          "Try Source-window proxy or seek again.";
+      };
+      this.previewPlaceholder.onerror=()=>{
+        if (this.closed || this.previewStillUrl!==stillUrl) return;
+        this.previewStatus.hidden=false;
+        this.previewStatus.textContent=
+          "Source frame could not be decoded; try Source-window proxy. "+
+          "Check the media link if it persists.";
+      };
+      this.image.src=stillUrl;
       return;
     }
+    this.previewStillUrl=null;
+    this.previewPlaceholder.hidden=true;
+    this.previewStatus.hidden=true;
     this.video.hidden = false;
     this.image.hidden = true;
     // A seek preview needs only four seconds, not a 30-second transcode.
