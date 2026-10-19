@@ -11,6 +11,7 @@ import {
   selectedClips,
   exportTarget,
   routeClipToGuidance,
+  visibleClipGeometry,
   split,
   trim,
   move,
@@ -1053,16 +1054,14 @@ export class TimelineEditor {
         for (const c of t.clips) {
           const x = this.frameX(c.start),
             w = ((c.end - c.start) * this.zoom) / 24;
-          if (x + w < left || x > right) continue;
-          // Render only the visible portion of a potentially multi-hour clip.
-          const visibleLeft = Math.max(x, left - 12);
-          const visibleRight = Math.min(x + w, right + 12);
-          const offset = visibleLeft - x;
+          const geometry = visibleClipGeometry(x, w, left, right);
+          if (!geometry) continue;
+          const {left: visibleLeft, width: visibleWidth, offset} = geometry;
           const clip = el(
             "div",
             {
               class: `h3ts-clip ${t.role}${this.selected.includes(c.id) ? " selected" : ""}`,
-              style: `left:${visibleLeft}px;width:${Math.max(4, visibleRight - visibleLeft)}px`,
+              style: `left:${visibleLeft}px;width:${visibleWidth}px`,
               tabindex: "0",
               role: "button",
               "aria-label": `${c.name || c.text || t.role} ${time(c.start)} to ${time(c.end)}`,
@@ -1079,8 +1078,8 @@ export class TimelineEditor {
           clip.oncontextmenu = (e) => this.context(e, t, c);
           const trimLeft = el("i", { class: "trim-left" });
           const trimRight = el("i", { class: "trim-right" });
-          trimLeft.hidden = visibleLeft > x;
-          trimRight.hidden = visibleRight < x + w;
+          trimLeft.hidden = !geometry.showStartTrim;
+          trimRight.hidden = !geometry.showEndTrim;
           clip.append(trimLeft, trimRight);
           if (t.role === "audio") this.waveform(clip, c, offset);
           else if (c.asset_id && w > 80)
