@@ -9,6 +9,7 @@ from ComfyUI_H3_Continuum_Join.timeline.model import (
     sample_boundary,
     validate,
     with_external_prompt_source,
+    reference_slots_needed,
 )
 
 A, B = "a" * 64, "b" * 64
@@ -327,6 +328,9 @@ def test_conveyor_reference_selection_is_chunk_causal_and_backward_compatible():
     hashes = [compile_window(p, i)["generation_hash"] for i in range(3)]
     assert hashes[0] != first[0] and hashes[1] != first[1]
     assert hashes[2] == first[2]
+    assert reference_slots_needed(p, [0, 1]) == {1, 3}
+    assert reference_slots_needed(p, [1]) == set()
+    assert reference_slots_needed(p, [0, 2]) == set(range(1, 9))
     for invalid in (
         {"0": [2, 1]}, {"0": [1, 1]}, {"0": [0]}, {"0": [9]},
         {"0": [True]}, {"0": "1,2"}, {"00": [1]}, {"3": [1]},
