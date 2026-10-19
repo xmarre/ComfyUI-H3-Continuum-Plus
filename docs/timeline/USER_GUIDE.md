@@ -52,9 +52,7 @@ movie playback. The compact Connected Sampler row expands to show all
 persistent model and sampler settings. Chunk cards share a scroll area rather
 than each requiring a separate scrolling region.
 
-When source-frame seeking takes time, the viewer temporarily shows the cached
-source thumbnail and explicitly displays its loading status until the separate
-high-detail still arrives. A failed decoder request is reported with a
+When source-frame seeking takes time, the viewer first reuses a nearby already-decoded filmstrip tile where available, without launching a duplicate low-resolution decoder seek. Otherwise it requests a temporary source thumbnail. It explicitly labels this temporary approximation until the exact high-detail source frame arrives. A failed decoder request is reported with a
 suggested proxy-mode retry. Temporary viewer thumbnails are never used for
 sampling or final clip export.
 
