@@ -761,3 +761,132 @@
   border-radius: 4px;
   pointer-events: none;
 }
+
+/* Resizable editor work areas. The three vertical panes share the measured
+   dialog space and never compete via unrelated flex-basis/vh declarations. */
+.h3ts {
+  --h3ts-preview-h: 280px;
+  --h3ts-chunk-h: 260px;
+  --h3ts-left-w: 190px;
+  --h3ts-right-w: 225px;
+  --h3ts-card-min: 390px;
+  --h3ts-ref-size: 100px;
+  --h3ts-track-h: 60px;
+  min-width: min(580px, 98vw);
+  min-height: min(520px, 98vh);
+}
+.h3ts > main {
+  height: var(--h3ts-preview-h);
+  min-height: 0;
+  max-height: none;
+  flex: 0 0 var(--h3ts-preview-h);
+  grid-template-columns:
+    minmax(0, var(--h3ts-left-w)) 8px
+    minmax(0, 1fr) 8px minmax(0, var(--h3ts-right-w));
+}
+.h3ts > main > aside {
+  min-width: 0;
+  overflow: auto;
+}
+.h3ts > main > .h3ts-viewer {
+  min-width: 0;
+  min-height: 0;
+  padding: 7px;
+}
+.h3ts > main .h3ts-preview video,
+.h3ts > main .h3ts-preview img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.h3ts > .h3ts-chunk-workspace {
+  height: var(--h3ts-chunk-h);
+  min-height: 0;
+  max-height: none;
+  flex: 0 0 var(--h3ts-chunk-h);
+}
+.h3ts > .h3ts-scroll {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: auto;
+}
+.h3ts .h3ts-track { height: var(--h3ts-track-h); }
+.h3ts-chunk-cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--h3ts-card-min)), 1fr));
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref {
+  grid-template-columns: minmax(0, 1fr) var(--h3ts-ref-size);
+  min-height: calc(var(--h3ts-ref-size) + 20px);
+}
+.h3ts-conveyor-refs .h3ts-conveyor-thumb {
+  width: var(--h3ts-ref-size);
+  height: var(--h3ts-ref-size);
+}
+.h3ts-splitter {
+  position: relative;
+  flex: 0 0 auto;
+  background: #212a39;
+  touch-action: none;
+  user-select: none;
+  z-index: 6;
+}
+.h3ts-splitter::after {
+  content: "";
+  position: absolute;
+  border-radius: 3px;
+  background: #7388a3;
+  opacity: .6;
+}
+.h3ts-splitter:hover,
+.h3ts-splitter:focus-visible,
+.h3ts-splitter.h3ts-dragging {
+  background: #34485c;
+  outline: 1px solid #71d7c5;
+}
+.h3ts-splitter-horizontal {
+  height: 8px;
+  width: 100%;
+  cursor: ns-resize;
+}
+.h3ts-splitter-horizontal::after {
+  width: 64px;
+  max-width: 30%;
+  height: 3px;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.h3ts-splitter-vertical {
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+}
+.h3ts-splitter-vertical::after {
+  width: 3px;
+  height: 42px;
+  max-height: 30%;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+}
+.h3ts-chunk-layout-control {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 11px;
+}
+.h3ts .h3ts-chunk-layout-control input[type=range] {
+  width: 95px;
+  min-width: 62px;
+  padding: 0;
+  cursor: ew-resize;
+}
+.h3ts-chunk-layout-control output {
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+}
+@media (max-width: 1040px) {
+  .h3ts .h3ts-chunk-cards {
+    grid-template-columns: repeat(auto-fit,minmax(min(100%,var(--h3ts-card-min)),1fr));
+  }
+}
