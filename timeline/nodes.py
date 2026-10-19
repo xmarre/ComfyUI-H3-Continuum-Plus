@@ -534,6 +534,36 @@ class H3ContinuumTimelineSampler:
                 managed_prompt_source_json=managed_prompt_source_json,
             )
             source = external["source"]
+            if (
+                detected_mode == PROMPT_MODE_TIMELINE
+                and source.get("kind") != "timeline"
+            ):
+                # The native sixteen-chunk preflight regards time sections
+                # entirely beyond its horizon as unusable and falls back to
+                # Fixed. Studio owns the full movie clock; preserve a valid
+                # absolute section document without truncating its source.
+                from ..v2.prompts import parse_timeline_sections, _timeline_source
+
+                sections = parse_timeline_sections(source["original_text"])
+                preflight_end = min(
+                    16, (p["duration_frames"] + p["chunk_frames"] - 1)
+                    // p["chunk_frames"]
+                ) * Fraction(p["chunk_frames"], 24)
+                if (
+                    sections
+                    and all(s["kind"] == "time" for s in sections)
+                    and all(Fraction(str(s["start"])) >= preflight_end for s in sections)
+                ):
+                    source = _timeline_source(
+                        source["original_text"], effective_mode,
+                        PROMPT_MODE_TIMELINE,
+                        p["chunk_frames"] / 24, sections,
+                    )
+                    external["source"] = source
+                    external["mode"] = PROMPT_MODE_TIMELINE
+                    external["notes"] = [
+                        "Timeline Studio preserved movie-clock sections beyond the native 16-chunk preflight"
+                    ]
             origin_frame = 0
             if source.get("kind") == "timeline":
                 intervals = [
