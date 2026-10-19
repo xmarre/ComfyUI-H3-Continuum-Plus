@@ -1261,3 +1261,26 @@ test("Conveyor shelf filenames and thumbnail URLs follow actual wired source out
   const desc=samplerInputDescription(editor);
   assert.deepEqual(desc.connectedReferenceSlots,[1,3]);
 });
+
+
+test("Conveyor masks follow selected chunks on duration change and collisions fail without mutation",()=>{
+  const p={
+    chunk_frames:168,duration_frames:168*160,
+    selection:[14952,15288],assets:[],tracks:[],
+    conveyor_reference_slots:{"89":[1,3],"90":[],"150":[4]},
+  };
+  changeTiming(p,"chunk_seconds",8);
+  assert.equal(p.chunk_frames,192);
+  assert.deepEqual(p.selection,[14784,15168]);
+  assert.deepEqual(p.conveyor_reference_slots,{
+    "77":[1,3],"78":[],"131":[4],
+  });
+  const conflicting={
+    chunk_frames:168,duration_frames:168*12,
+    selection:[336,504],assets:[],tracks:[],
+    conveyor_reference_slots:{"0":[1],"1":[2]},
+  };
+  const initial=JSON.stringify(conflicting);
+  assert.throws(()=>changeTiming(conflicting,"chunk_seconds",15),/merges two/);
+  assert.equal(JSON.stringify(conflicting),initial);
+});
