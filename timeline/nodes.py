@@ -505,12 +505,21 @@ class H3ContinuumTimelineSampler:
             chunk_seconds=p["chunk_frames"] / 24,
         )
         if sequence_prompt is not None:
-            # Parse on the full project clock, then retain the selected job's
-            # routed windows (including strict inner Timeline ranges).
-            from ..v2.prompts import build_sampler_prompt_plan
+            from fractions import Fraction
+            from ..constants import PROMPT_MODE_LIST, PROMPT_MODE_TIMELINE
+            from ..v2.prompts import build_sampler_prompt_plan, detect_prompt_mode
 
+            # The timeline editor must not repeat an entire [0-7s] script
+            # merely because an older workflow selected List explicitly.
+            detected_mode = detect_prompt_mode(sequence_prompt)
+            effective_mode = (
+                "Timeline"
+                if detected_mode == PROMPT_MODE_TIMELINE
+                and prompt_mode in ("List", PROMPT_MODE_LIST)
+                else prompt_mode
+            )
             external = build_sampler_prompt_plan(
-                prompt_mode=prompt_mode,
+                prompt_mode=effective_mode,
                 prompt_script="",
                 sequence_prompt=sequence_prompt,
                 prompt_plan=None,
@@ -524,11 +533,35 @@ class H3ContinuumTimelineSampler:
                 chunk_seconds=p["chunk_frames"] / 24,
                 managed_prompt_source_json=managed_prompt_source_json,
             )
+            source = external["source"]
+            origin_frame = 0
+            if source.get("kind") == "timeline":
+                intervals = [
+                    (Fraction(s["start"]), Fraction(s["end"]))
+                    for s in source.get("sections", ())
+                    if s.get("kind") == "time"
+                ]
+                # Time ranges already covering the movie position remain
+                # project-absolute. A zero-based scene script that ends
+                # before the selected movie position uses a scene-local clock.
+                # Persist the origin for generation hashing and stale checks.
+                if (
+                    intervals
+                    and min(a for a, _ in intervals) == 0
+                    and not any(
+                        a < Fraction(job["range"][1], 24)
+                        and Fraction(job["range"][0], 24) < b
+                        for a, b in intervals
+                    )
+                    and job["range"][0] >= max(int(b * 24) for _, b in intervals)
+                ):
+                    origin_frame = job["range"][0]
             external_project = with_external_prompt_source(
                 p, {
                     "global": "",
                     "mode": external["mode"],
-                    "script": external["source"]["original_text"],
+                    "script": source["original_text"],
+                    "origin_frame": origin_frame,
                 },
             )
             provider.project = external_project
@@ -545,6 +578,14 @@ class H3ContinuumTimelineSampler:
                     external["managed_prompt_transport"]
                 )
             plan["notes"].extend(external.get("notes", []))
+            if effective_mode != prompt_mode:
+                plan["notes"].append(
+                    "Timeline Studio interpreted time-coded sections instead of legacy List mode"
+                )
+            if origin_frame:
+                plan["notes"].append(
+                    f"Connected scene prompt starts at project frame {origin_frame}"
+                )
         # The existing Run Storage contract fingerprints model patches/weights,
         # CLIP, VAE, sampler and sigma bytes. Use it to qualify selected sessions.
         from ..run_storage import build_sampling_contract

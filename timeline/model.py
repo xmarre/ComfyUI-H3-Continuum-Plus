@@ -365,6 +365,15 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
     timed = []
     # Reuse existing Fixed/List/Timeline parser, including permissive fallback.
     script = str(prompts.get("script", ""))
+    origin_frame = int(prompts.get("origin_frame", 0))
+    section_start, section_end, section_index = start, end, index
+    if script and origin_frame:
+        from ..v2.prompts import resolve_prompt_mode
+        from ..constants import PROMPT_MODE_TIMELINE
+
+        if resolve_prompt_mode(prompts.get("mode", "Fixed"), script) == PROMPT_MODE_TIMELINE:
+            section_start, section_end = start - origin_frame, end - origin_frame
+            section_index = index - origin_frame // size
     if script:
         from ..v2.prompts import (
             resolve_prompt_mode,
@@ -384,19 +393,19 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
                 exact = [
                     s
                     for s in sections
-                    if (s["kind"] == "chunk" and s["index"] == index + 1)
+                    if (s["kind"] == "chunk" and s["index"] == section_index + 1)
                     or (
                         s["kind"] == "time"
-                        and rational(s["start"]) == Fraction(start, 24)
-                        and rational(s["end"]) == Fraction(end, 24)
+                        and rational(s["start"]) == Fraction(section_start, 24)
+                        and rational(s["end"]) == Fraction(section_end, 24)
                     )
                 ]
                 selected = exact or [
                     s
                     for s in sections
                     if s["kind"] == "time"
-                    and rational(s["start"]) < Fraction(end, 24)
-                    and Fraction(start, 24) < rational(s["end"])
+                    and rational(s["start"]) < Fraction(section_end, 24)
+                    and Fraction(section_start, 24) < rational(s["end"])
                 ]
                 base += "\n" + timeline_preamble(script)
                 if exact:
@@ -404,14 +413,14 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
 
                     inner = inspect_strict_inner_ranges(
                         {**exact[0], "kind": "time"},
-                        outer_start=Fraction(start, 24),
-                        outer_end=Fraction(end, 24),
+                        outer_start=Fraction(section_start, 24),
+                        outer_end=Fraction(section_end, 24),
                     )
                     if inner:
                         timed.extend(
                             (
-                                round(rational(s["start"]) * 24),
-                                round(rational(s["end"]) * 24),
+                                round(rational(s["start"]) * 24) + origin_frame,
+                                round(rational(s["end"]) * 24) + origin_frame,
                                 s["body"],
                                 False,
                             )
@@ -421,18 +430,18 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
                         base += "\n" + exact[0]["body"]
                 elif selected:
                     for section in selected:
-                        a = max(start, round(rational(section["start"]) * 24))
-                        b = min(end, round(rational(section["end"]) * 24))
+                        a = max(start, round(rational(section["start"]) * 24) + origin_frame)
+                        b = min(end, round(rational(section["end"]) * 24) + origin_frame)
                         if a < b:
                             timed.append((a, b, section["body"], False))
                 else:
                     preceding = [
                         s
                         for s in sections
-                        if (s["kind"] == "chunk" and s["index"] <= index + 1)
+                        if (s["kind"] == "chunk" and s["index"] <= section_index + 1)
                         or (
                             s["kind"] == "time"
-                            and rational(s["end"]) <= Fraction(start, 24)
+                            and rational(s["end"]) <= Fraction(section_start, 24)
                         )
                     ]
                     base += "\n" + (preceding[-1] if preceding else sections[0])["body"]

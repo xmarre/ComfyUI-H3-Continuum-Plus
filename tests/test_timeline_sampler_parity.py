@@ -413,3 +413,54 @@ def test_refine_connection_regenerates_all_chunks_and_aligns_exact_state(
         state["positive"] is call["conditioning"]
         for state, call in zip(result[5], calls)
     )
+
+def test_late_scene_timestamps_override_legacy_list_routing(runtime):
+    args, calls, _, _, _ = runtime
+    project = args["timeline"]["project"]
+    first = 89 * 120
+    project.update(duration_frames=first + 360, selection=[first, first + 240])
+    args.update(
+        timeline=compile_project(project),
+        sequence_prompt=(
+            "Cast and room.\\n[0-5s]\\nFIRST UTTERANCE\\n"
+            "[5-10s]\\nSECOND UTTERANCE\\n[10-15s]\\nLAST UTTERANCE"
+        ),
+        prompt_mode="List",
+        run_storage="Off",
+    )
+    result = nodes.H3ContinuumTimelineSampler().sample(**args)
+    session = session_io.load_session(prefix=result[3]["session_prefix"], slot=1)
+    prompts = [chunk["prompt"] for chunk in session["chunks"]]
+    assert len(calls) == 2
+    assert "FIRST UTTERANCE" in prompts[0]
+    assert "SECOND UTTERANCE" not in prompts[0]
+    assert "LAST UTTERANCE" not in prompts[0]
+    assert "SECOND UTTERANCE" in prompts[1]
+    assert "FIRST UTTERANCE" not in prompts[1]
+    assert "LAST UTTERANCE" not in prompts[1]
+    assert result[3]["prompt_override"]["origin_frame"] == first
+
+
+def test_absolute_movie_prompt_timestamps_are_preserved(runtime):
+    args, calls, _, _, _ = runtime
+    project = args["timeline"]["project"]
+    first = 89 * 120
+    project.update(duration_frames=first + 360, selection=[first, first + 240])
+    t = first // 24
+    args.update(
+        timeline=compile_project(project),
+        sequence_prompt=(
+            f"[{t}-{t+5}s]\\nproject first\\n"
+            f"[{t+5}-{t+10}s]\\nproject second"
+        ),
+        prompt_mode="Timeline",
+        run_storage="Off",
+    )
+    result = nodes.H3ContinuumTimelineSampler().sample(**args)
+    session = session_io.load_session(prefix=result[3]["session_prefix"], slot=1)
+    prompts = [chunk["prompt"] for chunk in session["chunks"]]
+    assert len(calls) == 2
+    assert "project first" in prompts[0] and "project second" not in prompts[0]
+    assert "project second" in prompts[1] and "project first" not in prompts[1]
+    assert result[3]["prompt_override"]["origin_frame"] == 0
+
