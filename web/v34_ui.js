@@ -1,6 +1,9 @@
 import { app } from "../../scripts/app.js";
+import { installProjectWidgets, orderSampler, refreshProjectWidgets, samplerStudio } from "./timeline/sampler_layout.js";
 
 const SAMPLER = "H3ContinuumSamplerV34";
+const TIMELINE_SAMPLER = "H3ContinuumTimelineSampler";
+const isSampler = (type) => type === SAMPLER || type === TIMELINE_SAMPLER;
 const ASSEMBLER = "H3ContinuumAssembleSeamV34";
 const BASE_REFERENCE_INPUTS = 3;
 const MAX_REFERENCE_INPUTS = 8;
@@ -134,6 +137,9 @@ function regenerateOptions(chunks) {
 }
 
 function reconcileContinuity(node) {
+    // Timeline guide coverage is scheduled per invocation. Runtime resolves
+    // the native constraints from that coverage rather than a graph socket.
+    if (node.comfyClass === TIMELINE_SAMPLER) return;
     const continuity = findWidget(node, "continuity");
     if (!continuity) return;
     const chunks = Number.parseInt(findWidget(node, "chunks")?.value, 10) || 1;
@@ -154,16 +160,21 @@ function reconcileContinuity(node) {
 }
 
 function refreshSampler(node) {
+    const timeline = node.comfyClass === TIMELINE_SAMPLER;
     reconcileReferences(node);
+    if (timeline) {
+        orderSampler(node);
+        refreshProjectWidgets(node);
+    }
     reconcileContinuity(node);
     const project = findWidget(node, "project_id");
-    if (project && !String(project.value || "").trim()) project.value = createProjectId();
+    if (!timeline && project && !String(project.value || "").trim()) project.value = createProjectId();
 
     const diagnostics = findWidget(node, "diagnostics");
     const debug = findWidget(node, "debug");
     const preview = findWidget(node, "show_preview");
     const strict = findWidget(node, "strict_compatibility");
-    const emitRefine = findWidget(node, "emit_refine_conditioning");
+    const emitRefine = findWidget(node, timeline ? "emit_refine_state" : "emit_refine_conditioning");
     if (diagnostics) diagnostics.value = settingValue(SETTINGS.detailedReport, false) ? "Detailed Report" : "Basic";
     if (debug) debug.value = Boolean(settingValue(SETTINGS.developerDiagnostics, false));
     if (preview) preview.value = Boolean(settingValue(SETTINGS.samplingPreview, true));
@@ -172,28 +183,32 @@ function refreshSampler(node) {
     for (const widget of [diagnostics, debug, preview, strict, project, emitRefine]) setWidgetVisible(widget, false);
 
     const chunks = findWidget(node, "chunks");
-    const regenerate = findWidget(node, "reroll_from_chunk");
+    const regenerate = findWidget(node, timeline ? "regenerate_from" : "reroll_from_chunk");
     const storage = findWidget(node, "run_storage");
     const nonce = findWidget(node, "reroll_nonce");
     const runName = findWidget(node, "run_name");
-    if (chunks && regenerate) {
+    if (!timeline && chunks && regenerate) {
         regenerate.options ||= {};
         regenerate.options.values = regenerateOptions(chunks.value);
         if (!regenerate.options.values.includes(regenerate.value)) regenerate.value = "Auto";
     }
     const storageEnabled = storage?.value === "Save + Auto Resume";
-    const explicitRegeneration = storageEnabled && regenerate?.value !== "Auto";
+    const explicitRegeneration = storageEnabled && (timeline ? Number(regenerate?.value) > 0 : regenerate?.value !== "Auto");
     setWidgetVisible(regenerate, storageEnabled);
     setWidgetVisible(runName, storageEnabled);
     setWidgetVisible(nonce, explicitRegeneration);
     setWidgetVisible(
         findWidget(node, "reference_size"),
-        linkedInput(node, Array.from({ length: MAX_REFERENCE_INPUTS }, (_, index) => `reference_image_${index + 1}`)),
+        timeline || linkedInput(node, Array.from({ length: MAX_REFERENCE_INPUTS }, (_, index) => `reference_image_${index + 1}`)),
     );
     setWidgetVisible(
         findWidget(node, "video_reference_size"),
-        linkedInput(node, ["reference_video_1"]),
+        timeline || linkedInput(node, ["reference_video_1"]),
     );
+    if (timeline && node.computeSize && node.setSize) {
+        const requiredSize = node.computeSize();
+        node.setSize([Math.max(node.size[0], requiredSize[0], 420), requiredSize[1]]);
+    }
     node.setDirtyCanvas?.(true, true);
     return project;
 }
@@ -230,11 +245,17 @@ function migrateLegacySampler(node, info) {
 function install(node) {
     if (!node || node.__h3ContinuumV34Installed) return;
     const type = String(node.comfyClass || node.type || "");
-    if (type !== SAMPLER && type !== ASSEMBLER) return;
+    if (!isSampler(type) && type !== ASSEMBLER) return;
     node.__h3ContinuumV34Installed = true;
+    if (type === TIMELINE_SAMPLER) {
+        installProjectWidgets(node);
+        orderSampler(node);
+    }
     const refresh = () => {
-        if (type === SAMPLER) refreshSampler(node);
+        if (isSampler(type)) refreshSampler(node);
         else refreshAssembler(node);
+        if (type === TIMELINE_SAMPLER)
+            samplerStudio(node)?.__timelineInputsChanged?.();
     };
     const previousConnections = node.onConnectionsChange;
     node.onConnectionsChange = function (...args) {
@@ -251,8 +272,15 @@ function install(node) {
     };
     for (const widgetName of [
         "chunks",
+        "base_seed",
+        "reference_size",
+        "video_reference_size",
+        "prompt_mode",
+        "width",
+        "height",
         "run_storage",
         "reroll_from_chunk",
+        "regenerate_from",
         "continuation_method",
         "audio_continuity",
         "timeline_mode",
@@ -285,10 +313,10 @@ app.registerExtension({
         const seen = new Set();
         for (const node of app.graph?._nodes || []) {
             const type = String(node.comfyClass || node.type || "");
-            if (type === SAMPLER) {
+            if (isSampler(type)) {
                 const project = refreshSampler(node);
                 let projectId = String(project?.value || "").trim();
-                if (!projectId || seen.has(projectId)) {
+                if (type === SAMPLER && (!projectId || seen.has(projectId))) {
                     projectId = createProjectId();
                     if (project) project.value = projectId;
                 }
@@ -302,7 +330,7 @@ app.registerExtension({
                     apiNode.inputs.diagnostics = settingValue(SETTINGS.detailedReport, false)
                         ? "Detailed Report"
                         : "Basic";
-                    apiNode.inputs.emit_refine_conditioning = linkedOutput(node, "refine_state");
+                    apiNode.inputs[type === TIMELINE_SAMPLER ? "emit_refine_state" : "emit_refine_conditioning"] = linkedOutput(node, "refine_state");
                     const continuity = findWidget(node, "continuity");
                     if (continuity) apiNode.inputs.continuity = continuity.value;
                 }
