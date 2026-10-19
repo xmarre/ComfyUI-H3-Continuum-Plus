@@ -17,6 +17,23 @@ export function sourceAt(clip, frame) {
   );
 }
 /** Only draw the visible surface of arbitrarily long clips. */
+/** A still in the main viewer should have at least the displayed pixel density.
+ * Filmstrip derivatives remain 240x136; never enlarge that image for inspection.
+ */
+export function viewerFrameDimensions(asset, viewportWidth, viewportHeight, dpr = 1) {
+  const source = asset?.video || {};
+  const sw = Math.max(1, Number(source.width) || 1024);
+  const sh = Math.max(1, Number(source.height) || 576);
+  const density = Math.min(2, Math.max(1, Number(dpr) || 1));
+  const availableW = Math.max(16, (Number(viewportWidth) || 1024) * density);
+  const availableH = Math.max(16, (Number(viewportHeight) || 576) * density);
+  const scale = Math.min(1, 2048 / sw, 1152 / sh, availableW / sw, availableH / sh);
+  return [
+    Math.max(16, Math.min(2048, Math.round(sw * scale))),
+    Math.max(16, Math.min(1152, Math.round(sh * scale))),
+  ];
+}
+
 export function visibleClipGeometry(x, width, viewportLeft, viewportRight, margin = 12) {
   const left = Math.max(x, viewportLeft - margin);
   const right = Math.min(x + width, viewportRight + margin);
