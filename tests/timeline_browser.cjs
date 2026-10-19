@@ -528,6 +528,26 @@ const { chromium } = require("playwright");
     assert.ok(geometry.width <= geometry.viewport + 24, JSON.stringify(geometry));
     assert.equal(geometry.trimLeft, true);
     assert.equal(geometry.trimRight, true);
+    // The selected chunk editor is a real project authoring surface, not
+    // placeholder text: typed prompts must become exact chunk prompt clips.
+    await page.locator(".h3ts-chunk-card").first().waitFor();
+    const chunkPrompt = page.locator(
+      '.h3ts-chunk-card textarea[aria-label^="Prompt for chunk"]',
+    ).first();
+    await chunkPrompt.fill("A precise authored H3 chunk prompt");
+    await chunkPrompt.press("Tab");
+    const authored = await page.evaluate(() => {
+      const studio = window.comfyAPI.app.app.graph._nodes.find((n) =>
+        n.comfyClass === "H3ContinuumTimelineStudio");
+      const p = JSON.parse(studio.widgets.find((w)=>w.name==="project_json").value);
+      const prompt = p.tracks.flatMap((t)=>t.role==="prompt" ? t.clips : [])
+        .find((c)=>c.chunk_prompt && c.text==="A precise authored H3 chunk prompt");
+      return prompt && {start:prompt.start,end:prompt.end,
+        frames:p.chunk_frames,override:prompt.override};
+    });
+    assert.ok(authored, "Chunk prompt text did not persist into project");
+    assert.equal(authored.end-authored.start,authored.frames);
+    assert.equal(authored.override,true);
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);
     console.log(
