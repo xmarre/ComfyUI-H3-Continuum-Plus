@@ -1463,6 +1463,22 @@ export class TimelineEditor {
     }
     await this.playSegment(this.playhead, epoch);
   }
+  cachedFilmstripStill(clip, frame) {
+    // Reuse already decoded filmstrip bytes instead of launching a second
+    // low-res FFmpeg seek while the display-resolution seek is in flight.
+    // This nearest-frame placeholder is explicitly temporary and never a
+    // source for model tensors or exported pixels.
+    let best=null;
+    for (const [key,img] of this.filmTileCache || []) {
+      if (!key.startsWith(clip.id+":") || !img.complete || !img.naturalWidth) continue;
+      const tile=Number(key.split(":")[1]);
+      const distance=Math.abs(tile-frame);
+      if (Number.isFinite(tile) && distance<=48 &&
+          (!best || distance<best.distance))
+        best={distance,src:img.src};
+    }
+    return best?.src || null;
+  }
   async preview(forceProxy = false) {
     this.compositionStart = null;
     const mode = this.compare.value;
@@ -1514,14 +1530,18 @@ export class TimelineEditor {
     if (asset.kind === "image" || !forceProxy) {
       this.video.pause();
       this.video.hidden = true;
-      const lowUrl=BASE + "/thumbnail/" + asset.id + "?pts=" +
+      const cached=asset.kind==="image" ? null :
+        this.cachedFilmstripStill(chosen,this.playhead);
+      const lowUrl=cached || BASE + "/thumbnail/" + asset.id + "?pts=" +
         source.toFixed(6);
       this.previewStillUrl=stillUrl;
       this.image.hidden=false;
       this.previewPlaceholder.hidden=false;
       this.previewPlaceholder.src=lowUrl;
       this.previewStatus.hidden=false;
-      this.previewStatus.textContent="Loading original-source display preview…";
+      this.previewStatus.textContent=cached
+        ? "Loading exact source frame… showing nearby cached filmstrip temporarily"
+        : "Loading original-source display preview…";
       this.image.onload=()=>{
         if (this.closed || this.previewStillUrl!==stillUrl) return;
         this.previewPlaceholder.hidden=true;
