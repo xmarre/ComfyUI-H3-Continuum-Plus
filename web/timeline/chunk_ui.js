@@ -3,7 +3,8 @@
 import {
   selectedChunkPage, overlappingChunkClips, setChunkPrompt,
   addChunkMedia, updateChunkSource, removeChunkClip, setChunkClipEnabled,
-  selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
+  selectedConveyorSlots, setConveyorSlotEnabled, setChunkConveyorSlots,
+  inheritConveyorSlots,
 } from "./chunk_workspace.js";
 import { changeTiming, selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
@@ -293,12 +294,19 @@ function conveyorReferenceControls(editor,index,sources) {
   const availableSlots=available.map(source=>source.slot);
   const checkedCount=available.filter(source=>
     chosen===null||chosen.includes(source.slot)).length;
-  group.append(el("strong",{text:"Reference images · "+
-    checkedCount+"/"+available.length+" enabled for this chunk"}));
-  group.append(el("small",{text:
-    "Showing only currently active Conveyor reference images. Each checkbox "+
-    "controls the corresponding Timeline Sampler IMAGE input for this chunk. "+
-    "The Conveyor's global output toggles remain authoritative."}));
+  const toolbar=el("div",{class:"h3ts-ref-actions"},
+    el("strong",{text:"2 · Reference images · "+
+      checkedCount+"/"+available.length+" selected"}),
+    button("All",()=>editor.guard(()=>editor.editChunkReferences(project=>
+      setChunkConveyorSlots(project,index,availableSlots,availableSlots))),
+      "Enable all available Conveyor references for this chunk"),
+    button("None",()=>editor.guard(()=>editor.editChunkReferences(project=>
+      setChunkConveyorSlots(project,index,[],availableSlots))),
+      "Disable all reference images for this chunk"),
+    button("Reset",()=>editor.guard(()=>editor.editChunkReferences(project=>
+      inheritConveyorSlots(project,index))),
+      "Use whatever reference outputs the Conveyor currently enables"));
+  group.append(toolbar);
   if(!available.length)group.append(el("p",{class:"h3ts-chunk-warning",
     text:"No active reference images found. Check the Image Conveyor shelf, "+
       "its reference-output toggles and Timeline Sampler connections."}));
@@ -354,9 +362,6 @@ function conveyorReferenceControls(editor,index,sources) {
     }
     group.append(card);
   }
-  group.append(button("Inherit active references",()=>editor.guard(()=>
-    editor.editChunkReferences(project=>
-      inheritConveyorSlots(project,index)))));
   return group;
 }
 
@@ -543,7 +548,7 @@ export function renderChunkWorkspace(editor) {
     prompt.value=ownPrompt?.clip.text || "";
     prompt.addEventListener("change",()=>editor.edit((next)=>
       setChunkPrompt(next,chunk.index,prompt.value)));
-    card.append(control("Per-chunk H3 prompt",prompt));
+    card.append(control("1 · Per-chunk H3 prompt",prompt));
     const preview=el("div",{class:"h3ts-chunk-compiled",
       "data-compiled-chunk":chunk.index});
     compiledLine(preview,editor.compiledWindows?.get(chunk.index),sampler,
@@ -556,14 +561,17 @@ export function renderChunkWorkspace(editor) {
         el("option",{value:v,text:v})));
     audioRoute.value="guide";
     const audio=sectionForRole(editor,chunk.index,"audio",audioRoute);
-    card.append(control("Add cut video guidance",video),
-      control("Add cut audio (guide / reference / final)",audio));
+    card.append(control("3 · Add chunk video guidance",video),
+      control("4 · Add chunk audio (guide / reference / final)",audio));
     const media=el("section",{class:"h3ts-chunk-media"},
-      el("strong",{text:"Timeline footage, video guidance & audio"}),
+      el("strong",{text:"5 · Media currently on this chunk"}),
       el("small",{text:"Switch media on or off for this chunk. Connected "+
         "tracks can also be muted globally. Original footage is a "+
         "timeline source, while Video guidance conditions H3."}));
     card.append(media);
+    if (!items.some(({track,clip})=>
+      track.role!=="prompt" && !!clip.asset_id))
+      media.append(el("small",{text:"No timeline media placed in this chunk"}));
     for (const {track,clip,start,end} of items) {
       if (track.role==="prompt" && clip.chunk_prompt) continue;
       const asset=p.assets.find((a)=>a.id===clip.asset_id);
@@ -590,7 +598,7 @@ export function renderChunkWorkspace(editor) {
       row.append(el("span",{class:"h3ts-chunk-media-name",
         text:(asset?.alias || asset?.name || clip.text || "source")+
           " · "+(end-start)+"f"}));
-      if (asset?.video && ["image_reference","video_guide"].includes(track.role))
+      if (asset?.video && ["retained","image_reference","video_guide"].includes(track.role))
         row.prepend(el("img",{
           class:"h3ts-chunk-asset-preview",
           loading:"lazy",alt:asset.alias || asset.name,
