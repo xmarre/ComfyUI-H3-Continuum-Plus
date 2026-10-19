@@ -23,6 +23,7 @@ import {
 } from "./core.js";
 import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-active-reference-chunks-v12";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom } from "./navigation.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
@@ -93,9 +94,7 @@ export class TimelineEditor {
     this.clipboard = [];
     this.chunkFocus = view.chunkFocus ?? true;
     this.playhead = view.playhead ?? this.p.selection[0];
-    if (this.chunkFocus &&
-        (this.playhead < this.p.selection[0] || this.playhead >= this.p.selection[1]))
-      this.playhead = this.p.selection[0];
+
     this.previewMode = view.previewMode || "composed";
     this.chunkPage = view.chunkPage || 0;
     this.layout = layoutView(view.layout);
@@ -143,8 +142,12 @@ export class TimelineEditor {
     this.applyLayout();
     this.render();
     this.conveyorPoll = setInterval(() => refreshConveyorControls(this), 1250);
-    this.scroller.scrollLeft = this.chunkFocus && view.chunkFocus == null
-      ? 0 : (view.scroll || 0);
+    // A focused edit range changes initial zoom/location, never the source
+    // movie's scrollable extent. Saved scroll position takes precedence.
+    this.scroller.scrollLeft = Number.isFinite(view.scroll)
+      ? view.scroll : scrollToFrame(this.p.selection[0],this.zoom,
+        this.scroller.clientWidth,this.p.duration_frames);
+    this.scheduleDraw();
     this.root.focus();
     this.guard(() => this.pruneQueued());
   }
@@ -656,12 +659,6 @@ export class TimelineEditor {
         this.layoutObserver.observe(child);
   }
   render() {
-    if (this.chunkFocus !== false &&
-        (this.playhead < this.p.selection[0] ||
-         this.playhead >= this.p.selection[1])) {
-      this.playhead = this.p.selection[0];
-      this.persistView();
-    }
     this.renderAssets();
     this.renderInspector();
     this.compiledWindows = null;
@@ -1063,8 +1060,29 @@ export class TimelineEditor {
     }
   }
   focusOrigin() {
-    return this.chunkFocus === false ? 0 :
-      Math.floor(this.p.selection[0] / this.p.chunk_frames) * this.p.chunk_frames;
+    // Rendering may be localized to selected chunks; navigation never is.
+    return 0;
+  }
+  jumpToFrame(frame) {
+    this.scroller.scrollLeft=scrollToFrame(frame,this.zoom,
+      this.scroller.clientWidth,this.p.duration_frames);
+    this.seek(frame);
+    this.scheduleDraw();
+  }
+  fitSelectedRange() {
+    this.zoom=fitRangeZoom(...this.p.selection,this.scroller.clientWidth);
+    this.chunkFocus=true;
+    this.drawTimeline();
+    this.scroller.scrollLeft=scrollToFrame(this.p.selection[0],this.zoom,
+      this.scroller.clientWidth,this.p.duration_frames);
+    this.persistView();
+  }
+  fitFullMovie() {
+    this.zoom=fitMovieZoom(this.p.duration_frames,this.scroller.clientWidth);
+    this.chunkFocus=false;
+    this.drawTimeline();
+    this.scroller.scrollLeft=0;
+    this.persistView();
   }
   frameX(f) {
     return 180 + ((f - this.focusOrigin()) * this.zoom) / 24;
@@ -1099,12 +1117,9 @@ export class TimelineEditor {
     const left = this.scroller.scrollLeft,
       right = left + this.scroller.clientWidth;
     const origin = this.focusOrigin();
-    const focusEnd = this.chunkFocus === false ? this.p.duration_frames :
-      Math.min(this.p.duration_frames,
-        Math.ceil(this.p.selection[1] / this.p.chunk_frames) * this.p.chunk_frames);
-    const width = Math.max(
-      this.scroller.clientWidth,
-      180 + ((focusEnd - origin) * this.zoom) / 24 + 30,
+    const focusEnd = this.p.duration_frames;
+    const width = movieTimelineWidth(
+      this.p.duration_frames,this.zoom,this.scroller.clientWidth,
     );
     this.timeline.style.width = width + "px";
     this.timeline.replaceChildren();
@@ -1793,7 +1808,8 @@ export class TimelineEditor {
     // The editor is modal: no ComfyUI shortcut (queue, delete node, ...) may
     // act on the graph behind it, including while typing in its fields.
     e.stopPropagation();
-    if (e.target.closest("input,textarea,select,[contenteditable=true]"))
+    if (e.defaultPrevented ||
+        e.target.closest("input,textarea,select,button,[role=separator],[contenteditable=true]"))
       return;
     let handled = true;
     const mod = e.ctrlKey || e.metaKey;
