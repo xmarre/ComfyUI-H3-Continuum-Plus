@@ -13,7 +13,7 @@ import uuid
 import numpy as np
 
 from .media import ProjectStore, run_process
-from .model import blank_project, compile_project, digest
+from .model import blank_project, compile_project, digest, with_external_prompt_source
 from .runtime import TimelineInputs
 
 CATEGORY = "MiniMax H3/Continuum/Timeline Studio"
@@ -57,9 +57,7 @@ def stale_take(
     from .model import compile_window
 
     if record.get("prompt_override"):
-        p = copy.deepcopy(p)
-        p["prompts"] = record["prompt_override"]
-        p["tracks"] = [t for t in p["tracks"] if t["role"] != "prompt"]
+        p = with_external_prompt_source(p, record["prompt_override"])
     limit = len(record["indices"])
     ranges = record.get("chunk_output_ranges", [])
     if end_frame is not None and ranges:
@@ -499,27 +497,13 @@ class H3ContinuumTimelineSampler:
                 chunk_seconds=p["chunk_frames"] / 24,
                 managed_prompt_source_json=managed_prompt_source_json,
             )
-            external_project = copy.deepcopy(p)
-            external_project["prompts"] = {
-                "global": "",
-                "mode": external["mode"],
-                "script": external["source"]["original_text"],
-            }
-            # A connected native prompt replaces legacy timeline scripts and
-            # free-form prompt regions, but deliberately retains *explicit*
-            # chunk-editor prompts. These are opt-in per-window overrides;
-            # older projects without chunk_prompt retain their old precedence.
-            external_project["tracks"] = [
-                {
-                    **t,
-                    "clips": [c for c in t["clips"] if c.get("chunk_prompt")],
-                }
-                if t["role"] == "prompt"
-                else t
-                for t in external_project["tracks"]
-                if t["role"] != "prompt"
-                or any(c.get("chunk_prompt") for c in t["clips"])
-            ]
+            external_project = with_external_prompt_source(
+                p, {
+                    "global": "",
+                    "mode": external["mode"],
+                    "script": external["source"]["original_text"],
+                },
+            )
             provider.project = external_project
             provider.set_offset(provider.offset)
             job = provider.job
