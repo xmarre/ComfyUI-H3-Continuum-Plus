@@ -16,6 +16,20 @@ export function sourceAt(clip, frame) {
     ((frame - clip.start) * ratio(clip.speed || 1)) / 24
   );
 }
+/** Only draw the visible surface of arbitrarily long clips. */
+export function visibleClipGeometry(x, width, viewportLeft, viewportRight, margin = 12) {
+  const left = Math.max(x, viewportLeft - margin);
+  const right = Math.min(x + width, viewportRight + margin);
+  if (right <= left) return null;
+  return {
+    left,
+    width: Math.max(4, right - left),
+    offset: left - x,
+    showStartTrim: left <= x,
+    showEndTrim: right >= x + width,
+  };
+}
+
 export function snap(frame, points, threshold = 3) {
   const near = points
     .filter((p) => Math.abs(p - frame) <= threshold)
