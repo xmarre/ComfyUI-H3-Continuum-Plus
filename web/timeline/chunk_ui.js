@@ -2,7 +2,7 @@
 // source of truth for H3 causal inputs; sampler-node overrides are inspectable.
 import {
   selectedChunkPage, overlappingChunkClips, setChunkPrompt,
-  addChunkMedia, updateChunkSource, removeChunkClip,
+  addChunkMedia, updateChunkSource, removeChunkClip, setChunkClipEnabled,
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
 } from "./chunk_workspace.js";
 import { changeTiming, selectionChunks } from "./sampler_layout.js";
@@ -444,19 +444,14 @@ export function renderChunkWorkspace(editor) {
     value:(p.chunk_frames/24).toFixed(3),"aria-label":"H3 chunk duration seconds"});
   seconds.addEventListener("change",()=>editor.edit((next)=>
     changeTiming(next,"chunk_seconds",Number(seconds.value))));
-  const focus = el("input",{type:"checkbox","aria-label":"Focus on selected H3 chunks"});
-  focus.checked = editor.chunkFocus !== false;
-  focus.addEventListener("change",()=>{
-    editor.chunkFocus = focus.checked;
-    editor.scroller.scrollLeft = 0;
-    editor.zoom = focus.checked ? Math.max(30,Math.min(160,
-      (editor.scroller.clientWidth - 210)/((p.selection[1]-p.selection[0])/24))) : 60;
-    editor.persistView();
-    editor.render();
-  });
   heading.append(
     control("Selected chunks",count),control("Seconds / chunk",seconds),
-    control("Chunk-focused timeline",focus));
+    button("Fit selected chunks",()=>editor.fitSelectedRange(),
+      "Zoom and navigate to the selected H3 render range"),
+    button("Fit full movie",()=>editor.fitFullMovie(),
+      "Zoom out to view the entire original timeline"),
+    button("Jump to selection",()=>editor.jumpToFrame(p.selection[0]),
+      "Move the playhead and view to the selected range"));
   host.append(heading);
   const refreshInputs=button("Refresh Conveyor connections",()=>{
     refreshConveyorControls(editor,true);
@@ -523,7 +518,9 @@ export function renderChunkWorkspace(editor) {
   host.append(pager);
   const cards=el("div",{class:"h3ts-chunk-cards"});
   for (const chunk of page.chunks) {
-    const items = overlappingChunkClips(p,chunk.index);
+    // Show muted media as well so the user can reactivate it. The compiled
+    // conditioning path continues to use active-only clip filtering.
+    const items = overlappingChunkClips(p,chunk.index,null,true);
     const ownPrompt = items.find(({clip,track})=>
       track.role==="prompt" && clip.chunk_prompt && clip.start===chunk.start &&
       clip.end===chunk.end);
@@ -561,15 +558,37 @@ export function renderChunkWorkspace(editor) {
     const audio=sectionForRole(editor,chunk.index,"audio",audioRoute);
     card.append(control("Add cut video guidance",video),
       control("Add cut audio (guide / reference / final)",audio));
+    const media=el("section",{class:"h3ts-chunk-media"},
+      el("strong",{text:"Timeline footage, video guidance & audio"}),
+      el("small",{text:"Switch media on or off for this chunk. Connected "+
+        "tracks can also be muted globally. Original footage is a "+
+        "timeline source, while Video guidance conditions H3."}));
+    card.append(media);
     for (const {track,clip,start,end} of items) {
       if (track.role==="prompt" && clip.chunk_prompt) continue;
       const asset=p.assets.find((a)=>a.id===clip.asset_id);
       const isEditable=!!clip.chunk_workspace &&
         clip.start===chunk.start && clip.end===chunk.end;
-      const row=el("div",{class:"h3ts-chunk-assigned"},
-        el("span",{text:(roleName[track.role] || track.role) +
-          (track.role==="audio" ? " ["+clip.audio_role+"]" : "")+
-          ": "+(asset?.alias || asset?.name || clip.text || "source")+
+      const active=!(track.muted||clip.muted);
+      const row=el("div",{class:"h3ts-chunk-assigned"+
+        (active?"":" h3ts-media-inactive")});
+      const checkbox=el("input",{
+        type:"checkbox",
+        "aria-label":"Use "+roleName[track.role]+" in chunk "+(chunk.index+1),
+        title:track.muted?"Globally disabled on the timeline track":"Use in this chunk",
+      });
+      checkbox.checked=active;
+      checkbox.disabled=!!track.locked||!!track.muted||track.role==="generated";
+      if(!checkbox.disabled)checkbox.addEventListener("change",()=>
+        editor.guard(()=>editor.edit(project=>
+          setChunkClipEnabled(project,chunk.index,track.id,clip.id,
+            checkbox.checked))));
+      row.append(el("label",{class:"h3ts-chunk-media-enable"},checkbox,
+        el("span",{text:roleName[track.role] +
+          (track.role==="audio"?" ("+clip.audio_role+")":"")+
+          (track.muted?" · track muted":clip.muted?" · disabled":" · active")})));
+      row.append(el("span",{class:"h3ts-chunk-media-name",
+        text:(asset?.alias || asset?.name || clip.text || "source")+
           " · "+(end-start)+"f"}));
       if (asset?.video && ["image_reference","video_guide"].includes(track.role))
         row.prepend(el("img",{
@@ -593,7 +612,7 @@ export function renderChunkWorkspace(editor) {
           editor.seek(Math.max(clip.start,chunk.start));
           editor.renderInspector();
         }));
-      card.append(row);
+      media.append(row);
     }
     card.addEventListener("dragover",(e)=>e.preventDefault());
     card.addEventListener("drop",(e)=>{
