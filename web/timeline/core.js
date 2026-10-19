@@ -194,6 +194,9 @@ export function setSceneStart(p, frame, count) {
     throw Error("Scene exceeds movie duration; reduce chunks or move the start earlier");
   p.chunk_origin_frame=frame;
   p.selection=[frame,end];
+  // Project-authored [0-7s] sections follow the same scene clock as the
+  // optional connected State Manager script.
+  if(p.prompts) p.prompts.origin_frame=frame;
   for(const track of p.tracks)
     track.clips=track.clips.filter(c=>!c.chunk_prompt&&!c.chunk_workspace);
   p.tracks=p.tracks.filter(t=>t.clips.length||!t.chunk_workspace);
@@ -216,6 +219,7 @@ export function restoreOriginalMovie(p, assetId=null) {
     throw Error("Invalid original movie duration");
   p.duration_frames=duration;
   p.chunk_origin_frame=0;
+  if(p.prompts) p.prompts.origin_frame=0;
   p.tracks=[];
   const track=makeTrack("retained","Original movie");
   p.tracks.push(track);

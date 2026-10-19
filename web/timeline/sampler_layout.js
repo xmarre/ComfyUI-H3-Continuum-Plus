@@ -163,8 +163,11 @@ export function changeTiming(p, name, value) {
       p.selection[0] = origin + newFirst * nextSize;
     }
   }
-  p.selection[1] =
+  const nextEnd =
     origin+(Math.floor((p.selection[0]-origin) / p.chunk_frames) + count) * p.chunk_frames;
+  if(origin>0 && nextEnd>p.duration_frames)
+    throw Error("Selected H3 chunks exceed the original movie; choose fewer chunks or an earlier scene start");
+  p.selection[1]=nextEnd;
   let last = Math.max(p.duration_frames, p.selection[1]);
   for (const t of p.tracks || [])
     for (const c of t.clips || []) last = Math.max(last, c.end);

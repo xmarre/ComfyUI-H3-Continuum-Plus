@@ -409,3 +409,16 @@ def test_legacy_project_keeps_zero_based_chunk_boundaries():
     plan = compile_project(p)
     assert [w["range"] for w in plan["jobs"][0]["windows"]] == [
         [0, 168], [168, 336], [336, 504]]
+
+def test_scene_local_timeline_prompt_sections_use_scene_clock():
+    p=blank_project()
+    p.update(duration_frames=25000, chunk_frames=168,
+             chunk_origin_frame=14955, selection=[14955,15291])
+    p["prompts"]={"global":"cast","mode":"Timeline",
+                  "script":"[0-7s]\nFIRST\n[7-14s]\nSECOND",
+                  "origin_frame":14955}
+    windows=compile_project(p)["jobs"][0]["windows"]
+    assert "FIRST" in windows[0]["prompt"]
+    assert "SECOND" not in windows[0]["prompt"]
+    assert "SECOND" in windows[1]["prompt"]
+    assert "FIRST" not in windows[1]["prompt"]

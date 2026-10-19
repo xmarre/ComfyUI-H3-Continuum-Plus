@@ -1856,3 +1856,12 @@ test("reset to original movie is non-destructive to registered assets",()=>{
   assert.equal(p.accepted,undefined);
   assert.deepEqual(p.markers,[]);
 });
+
+test("scene reset preserves the authored project-script clock across re-anchoring",()=>{
+  const p={duration_frames:10000,chunk_frames:168,selection:[0,336],
+    prompts:{mode:"Timeline",script:"[0-7s]\\nopening"},tracks:[]};
+  setSceneStart(p,2800,2);
+  assert.equal(p.prompts.origin_frame,2800);
+  setSceneStart(p,5400,2);
+  assert.equal(p.prompts.origin_frame,5400);
+});

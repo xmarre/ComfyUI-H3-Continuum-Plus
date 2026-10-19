@@ -387,7 +387,12 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
 
         if resolve_prompt_mode(prompts.get("mode", "Fixed"), script) == PROMPT_MODE_TIMELINE:
             section_start, section_end = start - origin_frame, end - origin_frame
-            section_index = index - origin_frame // size
+            # The legacy grid uses global movie chunk indices; an explicitly
+            # anchored scene already numbers its chunks from zero.
+            section_index = (
+                index if p.get("chunk_origin_frame", 0)
+                else index - origin_frame // size
+            )
     if script:
         from ..v2.prompts import (
             resolve_prompt_mode,

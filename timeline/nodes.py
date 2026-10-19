@@ -602,8 +602,14 @@ class H3ContinuumTimelineSampler:
                         ),
                         None,
                     )
+                    # An explicit new scene anchor takes precedence over
+                    # earlier takes of the same prompt script. In legacy
+                    # zero-origin projects, reuse the previous scene's first
+                    # take when rendering a later selection.
+                    scene_anchor = p.get("chunk_origin_frame", 0)
                     origin_frame = (
-                        prior_origin if prior_origin is not None
+                        scene_anchor if scene_anchor
+                        else prior_origin if prior_origin is not None
                         else job["range"][0]
                     )
             external_project = with_external_prompt_source(
