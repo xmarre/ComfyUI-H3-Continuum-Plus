@@ -150,6 +150,8 @@ view-only state and do not change render in/out, accepted takes or sampling.
 
 ## Activate or deactivate media for an individual chunk
 
+The selected-clip Inspector also exposes a whole-clip Active checkbox, clearly scoped to the clip's entire timeline span. Use the chunk card checkbox for changes limited to a single chunk.
+
 Every chunk card separates **the chunk prompt**, **Image Conveyor references**,
 **adding video or audio** and **media already on the chunk**. The media area
 shows original footage, video guidance and audio clips, including inactive
