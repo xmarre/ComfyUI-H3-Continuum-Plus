@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Restore intuitive horizontal navigation: regular mouse wheel and native
+  trackpad gestures pan the movie timeline, with explicit left/right pan,
+  fit-selection and fit-full-movie toolbar controls.
+- Present per-chunk video/audio/footage activation controls ahead of add-media
+  controls; collapse media insertion forms by default and clarify locked or
+  globally muted track restrictions. Keep per-chunk clip split/mute semantics.
+- Preserve horizontal scrollbar visibility and advance Studio protocol and
+  browser asset cache to v14.
+
+
 - Restore navigation across the complete source movie when the H3 render
   range contains only a small chunk selection; keep full timeline width
   independent of generation in/out and add selection/movie fit controls and
