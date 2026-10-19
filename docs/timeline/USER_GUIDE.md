@@ -32,6 +32,27 @@ The editor's **Export pixels** control defaults to **Original source resolution*
 
 **H3 sampling canvas** explicitly produces the lower/different timeline project width/height instead. Source resolution requires an unambiguous selected visual clip, or overlapping video clips with the same native geometry. For mixed-size material highlight the intended visual clip or choose the sampling canvas; the server never silently substitutes the lower-resolution canvas when Original source resolution is requested. H.264 requires even dimensions; use FFV1 for odd-sized native frames. The independent optional **Continuum Timeline Export** node keeps Timeline canvas as the default for existing workflows, with a Source resolution selector when desired.
 
+## Media Resolution wildcard input compatibility
+
+Studio follows ComfyUI's actual linked reference IMAGE inputs upstream through
+single-source pass-through and Media Resolution nodes. These nodes may expose
+generic or wildcard LiteGraph input types; source inspection now examines
+connected input, link and origin-output types rather than relying on an input
+named exactly `image` with type `IMAGE`. Non-image megapixel/width/height
+controls are excluded, and multi-image processors cannot be assigned an
+arbitrary single-source thumbnail. Image Conveyor reference outputs also have
+a stable output-index fallback for environments missing their output labels.
+
+A Conveyor shelf file can be represented by an annotated relative path,
+`relative_path`, or the `subfolder` plus `filename` supplied by its
+normalized metadata. Path traversal and absolute filesystem locations are
+rejected. Thumbnail URLs use ComfyUI's own API base path and the Conveyor's
+authenticated thumbnail endpoint. If a specific reference cannot be traced,
+the card reports why, rather than presenting an unexplained missing thumbnail.
+The Studio browser/backend/Windows compatibility string is
+`h3-timeline-conveyor-preview-v9`. Refresh the ComfyUI frontend after a
+Patcher overlay update so the versioned module is loaded.
+
 ## Reference thumbnails, intermediate processors and viewer behavior
 
 Connected references may pass through a one-to-one IMAGE processor such as
