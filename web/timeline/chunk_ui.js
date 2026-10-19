@@ -60,7 +60,7 @@ export function samplerInputDescription(editor) {
       .filter(linked),
   ];
   const overrides = [];
-  if (linked("sequence_prompt")) overrides.push("sequence_prompt overrides timeline prompt regions");
+  if (linked("sequence_prompt")) overrides.push("sequence_prompt supplies inherited prompts; authored chunk prompts override it inside their own spans");
   if (linked("driving_audio")) overrides.push("driving_audio overrides timeline guide audio");
   if (linked("reference_video_1")) overrides.push("persistent video reference applies where no scoped guide");
   if (linked("width")) overrides.push("width comes from a connected node");
@@ -122,13 +122,15 @@ function sectionForRole(editor, index, role, audioRoute) {
   row.append(choose.buttonAdd);
   return row;
 }
-function compiledLine(node, window, inputs) {
+function compiledLine(node, window, inputs, ownPrompt = "") {
   if (!window) {
     node.textContent = "Resolving project inputs…";
     return;
   }
   const prompt = inputs.promptOverridden
-    ? "Prompt: node sequence_prompt overrides timeline content"
+    ? (ownPrompt
+      ? "Chunk prompt overrides connected sequence_prompt: "+ownPrompt
+      : "Connected sequence_prompt supplies this chunk's prompt (runtime source)")
     : "Compiled prompt: "+(window.prompt || "(empty)");
   const warning = window.warnings?.length ? " · "+window.warnings.join(" · ") : "";
   node.textContent = prompt +
@@ -217,7 +219,8 @@ export function renderChunkWorkspace(editor) {
     card.append(control("Per-chunk H3 prompt",prompt));
     const preview=el("div",{class:"h3ts-chunk-compiled",
       "data-compiled-chunk":chunk.index});
-    compiledLine(preview,editor.compiledWindows?.get(chunk.index),sampler);
+    compiledLine(preview,editor.compiledWindows?.get(chunk.index),sampler,
+      ownPrompt?.clip.text || "");
     card.append(preview);
     const picture=sectionForRole(editor,chunk.index,"image_reference");
     const video=sectionForRole(editor,chunk.index,"video_guide");
@@ -276,5 +279,11 @@ export function renderChunkWorkspace(editor) {
 export function updateChunkCompiledLines(editor) {
   const inputs=samplerInputDescription(editor);
   for (const element of editor.chunkBoard?.querySelectorAll("[data-compiled-chunk]") || [])
-    compiledLine(element,editor.compiledWindows?.get(Number(element.dataset.compiledChunk)),inputs);
+    compiledLine(
+      element,
+      editor.compiledWindows?.get(Number(element.dataset.compiledChunk)),
+      inputs,
+      overlappingChunkClips(editor.p,Number(element.dataset.compiledChunk),["prompt"])
+        .find(({clip}) => clip.chunk_prompt)?.clip.text || "",
+    );
 }
