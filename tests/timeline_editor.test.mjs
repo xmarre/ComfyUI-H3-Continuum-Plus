@@ -10,7 +10,7 @@ import {
 import { samplerInputDescription, referenceSocketSources, activeReferenceSources } from "../web/timeline/chunk_ui.js";
 import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState, conveyorShelfAvailable } from "../web/timeline/conveyor_source.js";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
-import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom } from "../web/timeline/navigation.js";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan } from "../web/timeline/navigation.js";
 
 import {
   changeTiming,
@@ -1782,4 +1782,13 @@ test("bulk reference controls change only the chosen H3 chunk mask",()=>{
   assert.deepEqual(selectedConveyorSlots(p,1),[]);
   inheritConveyorSlots(p,1);
   assert.equal(selectedConveyorSlots(p,1),null);
+});
+
+test("ordinary wheel and horizontal trackpad gestures pan movie without stealing browser zoom",()=>{
+  assert.equal(timelineWheelPan(0,120),120);
+  assert.equal(timelineWheelPan(-55,120),-55);
+  assert.equal(timelineWheelPan(0,-75),-75);
+  assert.equal(timelineWheelPan(0,120,{ctrlKey:true}),0);
+  assert.equal(timelineWheelPan(30,0,{metaKey:true}),0);
+  assert.equal(timelineWheelPan(NaN,NaN),0);
 });
