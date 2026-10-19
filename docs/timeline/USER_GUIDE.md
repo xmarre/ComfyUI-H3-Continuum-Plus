@@ -53,6 +53,25 @@ The Studio browser/backend/Windows compatibility string is
 `h3-timeline-conveyor-preview-v9`. Refresh the ComfyUI frontend after a
 Patcher overlay update so the versioned module is loaded.
 
+## Multi-input Image Conveyor provenance
+
+A sampler reference can be produced by an upstream IMAGE processor that
+combines several IMAGE inputs. In that case there is no sound way to infer a
+single original thumbnail from the static connection graph. Timeline Studio
+shows a horizontally scrollable gallery of all **definitely reachable Image
+Conveyor shelf originals** for that reference socket, with filenames and
+shelf numbers. The gallery is explicitly identified as *upstream source
+images*; it does not claim any individual original represents the exact
+processed result. Click a candidate to inspect its larger original image.
+
+Single-image processor chains continue to display one original thumbnail
+with the intervening processing path. When no reachable Conveyor shelf source
+can be proven, the card reports the unresolved lineage rather than inventing
+a thumbnail. The gallery only inspects graph metadata and original shelf
+thumbnail URLs; the ComfyUI node chain still supplies the actual IMAGE tensor
+to MiniMax-H3. Checking a reference remains a per-chunk selection of the
+connected sampler socket, not a selection of gallery candidate files.
+
 ## Reference thumbnails, intermediate processors and viewer behavior
 
 Connected references may pass through a one-to-one IMAGE processor such as
