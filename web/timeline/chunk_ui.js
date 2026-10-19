@@ -199,12 +199,16 @@ function conveyorReferenceControls(editor, index, sources) {
   const connected=sources.filter((s)=>s.connected);
   group.append(el("strong",{text:"Image Conveyor references · "+
     (selected===null ? "inherit connected" : "chunk-specific selection")}));
-  group.append(el("small",{text:"Checks select actual sampler reference IMAGE sockets for this chunk; empty/disabled Conveyor outputs provide no image."}));
+  group.append(el("small",{text:"Checks select actual sampler reference IMAGE sockets for this chunk; empty/disabled Conveyor outputs provide no image. <Picture N> numbers are assigned contiguously after live inputs resolve."}));
   if (!connected.length)
     group.append(el("p",{class:"h3ts-chunk-warning",
       text:"Connect Image Conveyor ref_image_1…8 outputs to the corresponding Continuum Timeline Sampler reference_image_1…8 inputs."}));
+  let picture=0;
+  const allConveyor=connected.every((source)=>source.conveyor);
   for(const source of connected) {
     const checked=selected===null || selected.includes(source.slot);
+    const expectedPicture = allConveyor && checked && !source.unavailable
+      ? ++picture : null;
     const toggle=el("input",{
       type:"checkbox",
       "aria-label":"Chunk "+(index+1)+" reference input "+source.slot,
@@ -215,7 +219,8 @@ function conveyorReferenceControls(editor, index, sources) {
         connected.map((x)=>x.slot))));
     const item=el("label",{class:"h3ts-conveyor-ref"},
       toggle,
-      el("span",{text:"Ref "+source.slot+" · "+source.label}),
+      el("span",{text:"Ref "+source.slot+" · "+source.label+
+        (expectedPicture ? " · expected <Picture "+expectedPicture+">" : "")}),
     );
     if(source.thumbnail)
       item.append(el("img",{loading:"lazy",alt:"Image Conveyor shelf reference",
