@@ -376,6 +376,34 @@ export function renderChunkWorkspace(editor) {
     refreshConveyorControls(editor,true);
   });
   heading.append(refreshInputs);
+  for (const [name,title,min,max,step,defaultSize] of [
+    ["card","Chunk card minimum width",275,900,25,390],
+    ["thumb","Reference thumbnail size",54,260,10,100],
+    ["track","Timeline track height",44,160,4,60],
+  ]) {
+    const value=editor.layout?.[name]??defaultSize;
+    const slider=el("input",{
+      type:"range",min,max,step,value,
+      "aria-label":title,
+      title,
+    });
+    const output=el("output",{text:Math.round(value)+"px"});
+    slider.addEventListener("input",()=>{
+      editor.updateLayout(name,Number(slider.value),{persist:false});
+      output.textContent=editor.layout[name]+"px";
+    });
+    slider.addEventListener("change",()=>editor.persistView());
+    heading.append(el("label",{class:"h3ts-chunk-layout-control"},
+      el("span",{text:title.split(" ")[0]+
+        (name==="thumb"?" thumbs":name==="card"?" width":" height")}),
+      slider,output));
+  }
+  heading.append(button("Reset panel sizes",()=>{
+    editor.layout={};
+    editor.applyLayout();
+    editor.persistView();
+    renderChunkWorkspace(editor);
+  }));
   const settings=el("details",{class:"h3ts-chunk-settings"});
   settings.open=!!editor.samplerDetailsOpen;
   settings.append(el("summary",{text:sampler.warning ||
