@@ -14,6 +14,9 @@ import {
   visibleClipGeometry,
   viewerFrameDimensions,
   split,
+  mergeAdjacentClips,
+  setSceneStart,
+  restoreOriginalMovie,
   trim,
   move,
   remove,
@@ -548,6 +551,9 @@ export class TimelineEditor {
         button("Split", () =>
           this.edit((p) => split(p, this.selected, this.playhead)),
         ),
+        button("Merge adjacent", () => this.guard(() =>
+          this.edit((p) => mergeAdjacentClips(p, this.selected))),
+          "Rejoin only source-continuous adjacent pieces with identical settings"),
         button("Duplicate", () => this.duplicate()),
         button("Delete", () =>
           this.edit((p) => remove(p, this.selected, this.ripple.checked)),
@@ -562,6 +568,12 @@ export class TimelineEditor {
         button("Pan →", () => {
           this.scroller.scrollLeft+=Math.max(120,this.scroller.clientWidth*.75);
         },"Move timeline right without changing source/playhead"),
+        button("New scene at playhead", () =>
+          this.guard(() => this.startScene(this.playhead)),
+          "Scene starts at this original movie frame; later H3 chunks are virtual"),
+        button("Restore original movie", () =>
+          this.guard(() => this.restoreMovie()),
+          "Clear authored cuts and reset to the original uncut movie"),
         button("Fit selection", () => this.fitSelectedRange(),
           "Zoom to the selected H3 render window"),
         button("Fit movie", () => this.fitFullMovie(),
@@ -810,19 +822,8 @@ export class TimelineEditor {
       if (!p.assets.some((x) => x.id === a.id)) p.assets.push(a);
     });
     this.place(a);
-    if (a.audio && a.kind === "video") {
-      this.edit((p) => {
-        const t = makeTrack("audio", "Original soundtrack");
-        placeAsset(
-          p,
-          a,
-          t,
-          this.playhead,
-          Math.round(ratio(a.duration) * 24),
-        );
-        p.tracks.push(t);
-      });
-    }
+    // Embedded audio is attached to its retained video clip (both H3 guide
+    // and final output). Never add a duplicate audio track for a new import.
   }
   async relink(old, file) {
     if (!file) return;
@@ -1142,8 +1143,9 @@ export class TimelineEditor {
         ),
       ),
       ...Array.from(
-        { length: Math.ceil(this.p.duration_frames / this.p.chunk_frames) + 1 },
-        (_, i) => i * this.p.chunk_frames,
+        { length: Math.ceil((this.p.duration_frames -
+          (this.p.chunk_origin_frame||0)) / this.p.chunk_frames) + 1 },
+        (_, i) => (this.p.chunk_origin_frame||0)+i*this.p.chunk_frames,
       ),
     ];
   }
@@ -1186,7 +1188,9 @@ export class TimelineEditor {
     for (
       let f = Math.max(
         0,
-        Math.floor((origin + ((left - 180) * 24) / this.zoom) / this.p.chunk_frames) *
+        (this.p.chunk_origin_frame||0) +
+        Math.max(0,Math.floor((origin+((left-180)*24)/this.zoom-
+          (this.p.chunk_origin_frame||0))/this.p.chunk_frames)) *
           this.p.chunk_frames,
       );
       f <= focusEnd && this.frameX(f) < right + 100;
@@ -1196,7 +1200,8 @@ export class TimelineEditor {
         el("div", {
           class: "h3ts-boundary",
           style: `left:${this.frameX(f)}px`,
-          title: `Logical chunk ${Math.floor(f / this.p.chunk_frames) + 1}`,
+          title: `Scene chunk ${Math.floor((f-(this.p.chunk_origin_frame||0)) /
+            this.p.chunk_frames) + 1}`,
         }),
       );
     this.timeline.append(
@@ -1411,6 +1416,8 @@ export class TimelineEditor {
         "Split here",
         () => this.edit((p) => split(p, this.selected, this.playhead)),
       ],
+      ["Merge adjacent", () =>
+        this.guard(() => this.edit(p=>mergeAdjacentClips(p,this.selected)))],
       ["Duplicate", () => this.duplicate()],
       [
         "Delete",
@@ -1684,7 +1691,9 @@ export class TimelineEditor {
           if (c.start <= this.playhead && this.playhead < c.end) chosen = c;
     this.counter.textContent =
       time(this.playhead) +
-      ` · chunk ${Math.floor(this.playhead / this.p.chunk_frames) + 1}`;
+      ` · scene chunk ${this.playhead<(this.p.chunk_origin_frame||0)?
+        "before start":Math.floor((this.playhead-(this.p.chunk_origin_frame||0)) /
+        this.p.chunk_frames)+1}`;
     if (!chosen) {
       this.previewStillUrl=null;
       this.video.pause();
@@ -1809,7 +1818,9 @@ export class TimelineEditor {
     if (this.counter)
       this.counter.textContent =
         time(this.playhead) +
-        ` · chunk ${Math.floor(this.playhead / this.p.chunk_frames) + 1}`;
+        ` · scene chunk ${this.playhead<(this.p.chunk_origin_frame||0)?
+        "before start":Math.floor((this.playhead-(this.p.chunk_origin_frame||0)) /
+        this.p.chunk_frames)+1}`;
   }
   setZoom(z) {
     this.zoom = Math.max(0.1, Math.min(1000, z));
@@ -1866,6 +1877,8 @@ export class TimelineEditor {
       this.edit((p) => remove(p, this.selected, this.ripple.checked));
     else if (e.key.toLowerCase() === "s")
       this.edit((p) => split(p, this.selected, this.playhead));
+    else if (e.key.toLowerCase() === "j")
+      this.guard(() => this.edit(p=>mergeAdjacentClips(p,this.selected)));
     else if (e.key === "ArrowLeft") this.seek(this.playhead - 1);
     else if (e.key === "ArrowRight") this.seek(this.playhead + 1);
     else if (e.key === " ") {
@@ -1879,6 +1892,58 @@ export class TimelineEditor {
       e.preventDefault();
       e.stopPropagation();
     }
+  }
+  startScene(frame) {
+    const count=Math.max(1,Math.ceil((this.p.selection[1]-
+      this.p.selection[0])/this.p.chunk_frames));
+    const hasScopedEdits=this.p.tracks.some(t=>t.clips.some(c=>
+      c.chunk_prompt||c.chunk_workspace)) ||
+      !!this.p.accepted_windows?.length ||
+      !!Object.keys(this.p.accepted||{}).length;
+    if(hasScopedEdits && !globalThis.confirm?.(
+      "Start a new scene? Existing scene-specific inputs and accepted bindings " +
+      "are cleared. Original media and stored take files remain. Undo restores " +
+      "the previous editor state."))return;
+    this.edit(p=>{
+      setSceneStart(p,frame,count);
+      const sources=p.tracks.flatMap(t=>t.role==="retained" &&
+        !t.muted ? t.clips.filter(c=>!c.muted&&c.start<=frame&&frame<c.end &&
+        p.assets.some(a=>a.id===c.asset_id&&a.video)) : []);
+      if(sources.length===1) {
+        const source=sources[0];
+        const asset=p.assets.find(a=>a.id===source.asset_id);
+        if(asset?.audio && !p.tracks.some(t=>t.role==="audio" && !t.muted &&
+          t.clips.some(c=>!c.muted && c.audio_role==="guide" &&
+            c.start<=frame && c.end>=p.selection[1]))) {
+          const legacyFinal=p.tracks.some(t=>t.role==="audio"&&!t.muted &&
+            t.clips.some(c=>!c.muted&&c.asset_id===source.asset_id &&
+              ["final","both"].includes(c.audio_role)));
+          source.audio_role=legacyFinal ? "guide" : "both";
+        }
+        if(p.operation!=="recreate" && !p.tracks.some(t=>
+          t.role==="video_guide"&&!t.muted&&t.clips.some(c=>!c.muted &&
+          c.start<=frame && c.end>=p.selection[1]))) {
+          routeClipToGuidance(p,[source.id]);
+          p.selection=[frame,frame+count*p.chunk_frames];
+        }
+      }
+      this.selected=[];
+    });
+    this.jumpToFrame(frame);
+    this.message("Scene starts at "+time(frame)+
+      ". The source movie and soundtrack remain whole; subsequent chunks are automatic.");
+  }
+  restoreMovie() {
+    const clips=selectedClips(this.p,this.selected)
+      .filter(([track])=>track.role==="retained");
+    const assetId=clips.length===1 ? clips[0][1].asset_id : null;
+    if(!globalThis.confirm?.(
+      "Restore original movie? This resets timeline clips, cuts, overrides " +
+      "and accepted placements. Registered assets and saved take files stay " +
+      "available. Undo restores the previous editor state."))return;
+    this.edit(p=>{restoreOriginalMovie(p,assetId);this.selected=[];});
+    this.jumpToFrame(0);
+    this.message("Original movie restored with synchronized source audio.");
   }
   guideSelectedClip() {
     this.edit((p) => routeClipToGuidance(p, this.selected));

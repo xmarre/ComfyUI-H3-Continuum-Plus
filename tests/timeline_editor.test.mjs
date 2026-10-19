@@ -21,6 +21,11 @@ import {
 import {
   History,
   split,
+  mergeAdjacentClips,
+  setSceneStart,
+  restoreOriginalMovie,
+  makeTrack,
+  placeAsset,
   trim,
   move,
   remove,
@@ -1791,4 +1796,63 @@ test("ordinary wheel and horizontal trackpad gestures pan movie without stealing
   assert.equal(timelineWheelPan(0,120,{ctrlKey:true}),0);
   assert.equal(timelineWheelPan(30,0,{metaKey:true}),0);
   assert.equal(timelineWheelPan(NaN,NaN),0);
+});
+
+test("virtual scene chunks preserve original full-length footage and align to scene start",()=>{
+  const p={duration_frames:60000,chunk_frames:168,selection:[0,336],
+    tracks:[{id:"movie",role:"retained",clips:[
+      {id:"c",asset_id:"asset",start:0,end:60000,source_in:"0",speed:"1"}]}]};
+  setSceneStart(p,14955,2);
+  assert.deepEqual(p.selection,[14955,15291]);
+  assert.deepEqual(chunkWindow(p,0),[14955,15123]);
+  assert.deepEqual(chunkWindow(p,1),[15123,15291]);
+  assert.equal(selectedChunkPage(p).total,2);
+  assert.equal(p.tracks[0].clips.length,1);
+  changeTiming(p,"chunk_seconds",8);
+  assert.deepEqual(p.selection,[14955,14955+384]);
+});
+
+test("new video has clip-owned guide and final audio without secondary track",()=>{
+  const p={duration_frames:1000,tracks:[]},t=makeTrack("retained","movie");
+  p.tracks.push(t);
+  const movie={id:"asset",name:"movie",duration:"20",video:{start_time:"0"},audio:{start_time:"0"}};
+  const c=placeAsset(p,movie,t,240,480);
+  assert.equal(c.audio_role,"both");
+  c.source_in="30";
+  split(p,[c.id],480);
+  const pieces=[...t.clips].sort((a,b)=>a.start-b.start);
+  assert.equal(pieces[1].source_in,"40");
+  assert.equal(mergeAdjacentClips(p,[pieces[1].id]),1);
+  assert.equal(t.clips.length,1);
+  assert.equal(t.clips[0].audio_role,"both");
+  assert.equal(t.clips[0].source_in,"30");
+});
+
+test("merge refuses discontinuous, muted or faded splits",()=>{
+  const a={id:"a",asset_id:"x",start:0,end:120,source_in:"2",speed:"1",audio_role:"both"};
+  const b={...a,id:"b",start:120,end:240,source_in:"8"};
+  const p={tracks:[{id:"t",role:"retained",clips:[a,b]}]};
+  assert.throws(()=>mergeAdjacentClips(p,["a"]),/No matching/);
+  b.source_in="7";b.muted=true;
+  assert.throws(()=>mergeAdjacentClips(p,["a"]),/No matching/);
+  delete b.muted;b.fade_in=1;
+  assert.throws(()=>mergeAdjacentClips(p,["a"]),/No matching/);
+  delete b.fade_in;
+  assert.equal(mergeAdjacentClips(p,["a"]),1);
+});
+
+test("reset to original movie is non-destructive to registered assets",()=>{
+  const movie={id:"a",name:"movie",duration:"120",video:{start_time:"0"},audio:{start_time:"0"}};
+  const p={assets:[movie],duration_frames:5000,chunk_frames:168,selection:[168,504],
+    chunk_origin_frame:168,tracks:[],markers:[{id:"m",frame:170}],
+    accepted:{"0":"x"},accepted_windows:[],conveyor_reference_slots:{"0":[1]}};
+  restoreOriginalMovie(p);
+  assert.equal(p.duration_frames,2880);
+  assert.deepEqual(p.selection,[0,504]);
+  assert.equal(p.chunk_origin_frame,0);
+  assert.equal(p.tracks.length,1);
+  assert.equal(p.tracks[0].clips[0].audio_role,"both");
+  assert.equal(p.assets[0].id,"a");
+  assert.equal(p.accepted,undefined);
+  assert.deepEqual(p.markers,[]);
 });

@@ -439,7 +439,7 @@ export function renderChunkWorkspace(editor) {
   const heading = el("div",{class:"h3ts-chunk-heading"},
     el("strong",{text:"CHUNK INPUTS · THE ACTUAL H3 TIMELINE"}),
     el("span",{text:page.total+" selected chunks · "+
-      (p.chunk_frames/24).toFixed(3)+"s per chunk · 24 fps"}),
+      (p.chunk_frames/24).toFixed(3)+"s per chunk · virtual windows · 24 fps"}),
   );
   const count = el("input",{type:"number",min:"1",max:"65536",value:selectionChunks(p),
     "aria-label":"Selected H3 chunk count"});
@@ -449,8 +449,20 @@ export function renderChunkWorkspace(editor) {
     value:(p.chunk_frames/24).toFixed(3),"aria-label":"H3 chunk duration seconds"});
   seconds.addEventListener("change",()=>editor.edit((next)=>
     changeTiming(next,"chunk_seconds",Number(seconds.value))));
+  const sceneStart=el("input",{type:"number",min:"0",
+    max:String(Math.max(0,p.duration_frames-1)),step:"1",
+    value:String(p.chunk_origin_frame||0),
+    "aria-label":"First scene frame in original movie"});
   heading.append(
     control("Selected chunks",count),control("Seconds / chunk",seconds),
+    control("Scene start frame",sceneStart),
+    button("Start scene",()=>editor.guard(()=>editor.startScene(Number(sceneStart.value))),
+      "Choose first movie frame only; the remaining chunks are automatic"),
+    button("At playhead",()=>editor.guard(()=>editor.startScene(editor.playhead)),
+      "Use currently displayed frame as scene start"),
+    button("Restore movie",()=>editor.guard(()=>editor.restoreMovie()),
+      "Restore an uncut original movie with soundtrack"),
+
     button("Fit selected chunks",()=>editor.fitSelectedRange(),
       "Zoom and navigate to the selected H3 render range"),
     button("Fit full movie",()=>editor.fitFullMovie(),
