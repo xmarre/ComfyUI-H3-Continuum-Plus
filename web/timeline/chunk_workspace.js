@@ -1,6 +1,6 @@
 // Chunk-first authoring operations. All spans use the same 24 fps project
 // frame clock as timeline/model.py and the connected Continuum sampler.
-import { makeTrack, placeAsset, sourceAt, uid } from "./core.js";
+import { makeTrack, placeAsset, sourceAt, uid, ratio } from "./core.js";
 
 export function chunkWindow(project, index) {
   if (!Number.isSafeInteger(index) || index < 0) throw new Error("Invalid chunk");
@@ -120,11 +120,17 @@ export function addChunkMedia(project, index, role, assetId, audioRole = "guide"
   return clip;
 }
 export function updateChunkSource(project, clipId, sourceIn) {
-  const value = Number(sourceIn);
-  if (!Number.isFinite(value) || value < 0) throw new Error("Invalid source timestamp");
+  const raw = String(sourceIn).trim();
+  // The backend accepts exact rational PTS. Preserve that precision, rather
+  // than rejecting its legal "numerator/denominator" representation.
+  if (!/^-?\d+(?:\.\d+)?(?:\/-?\d+(?:\.\d+)?)?$/.test(raw))
+    throw new Error("Invalid source timestamp");
+  const value = ratio(raw);
+  if (!Number.isFinite(value) || value < 0)
+    throw new Error("Invalid source timestamp");
   const clip = project.tracks.flatMap((t) => t.clips).find((c) => c.id === clipId);
   if (!clip) throw new Error("Chunk clip no longer exists");
-  clip.source_in = String(sourceIn);
+  clip.source_in = raw;
 }
 export function removeChunkClip(project, clipId) {
   const track = project.tracks.find((t) =>
