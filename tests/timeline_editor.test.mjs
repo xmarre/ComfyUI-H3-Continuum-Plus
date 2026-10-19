@@ -1260,6 +1260,12 @@ test("Conveyor shelf filenames and thumbnail URLs follow actual wired source out
   assert.equal(sourceInputs[1].connected,false);
   const desc=samplerInputDescription(editor);
   assert.deepEqual(desc.connectedReferenceSlots,[1,3]);
+  source.__bil={state:{output_mode:"queue_group",reference_slots:[]}};
+  const dynamic=referenceSocketSources(editor);
+  assert.equal(dynamic[0].dynamic,true);
+  assert.match(dynamic[0].label,/queue-group image 2/);
+  assert.equal(dynamic[0].thumbnail,null);
+  assert.equal(dynamic[0].unavailable,false);
 });
 
 
