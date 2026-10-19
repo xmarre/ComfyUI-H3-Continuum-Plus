@@ -7,6 +7,7 @@ import {
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
 } from "../web/timeline/chunk_workspace.js";
 import { samplerInputDescription, referenceSocketSources } from "../web/timeline/chunk_ui.js";
+import { traceReferenceSocket, shelfImagePath } from "../web/timeline/conveyor_source.js";
 
 import {
   changeTiming,
@@ -1289,4 +1290,61 @@ test("Conveyor masks follow selected chunks on duration change and collisions fa
   const initial=JSON.stringify(conflicting);
   assert.throws(()=>changeTiming(conflicting,"chunk_seconds",15),/merges two/);
   assert.equal(JSON.stringify(conflicting),initial);
+});
+
+test("Conveyor shelf thumbnails trace through Media Resolution IMAGE processors", () => {
+  const studio={id:1,comfyClass:"H3ContinuumTimelineStudio"};
+  const conveyor={id:8,comfyClass:"ImageConveyor",
+    widgets:[{name:"state_json",value:JSON.stringify({
+      output_mode:"persistent_refs",
+      reference_slots:[{
+        type:"input",filename:"Alice.png",
+        annotated:"actors/Alice.png [input]",source_version:"mtime-v8",
+      }],
+    })}],
+    outputs:Array.from({length:14},(_,i)=>({name:i===6?"ref_image_1":"misc"})),
+  };
+  const mp={id:9,title:"Media Resolution",comfyClass:"UniversalMediaResolution",
+    inputs:[{name:"image",type:"IMAGE",link:30},
+      {name:"megapixels",type:"FLOAT",link:31}],
+    outputs:[{name:"IMAGE",type:"IMAGE"}],
+  };
+  const sampler={id:2,comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[{name:"timeline",link:1},
+      {name:"reference_image_1",type:"IMAGE",link:32}]};
+  const nodes=[studio,conveyor,mp,sampler];
+  const graph={
+    _nodes:nodes,
+    links:{
+      1:{origin_id:1,origin_slot:0},
+      30:{origin_id:8,origin_slot:6},
+      31:{origin_id:11,origin_slot:0},
+      32:{origin_id:9,origin_slot:0},
+    },
+    getNodeById(id){return nodes.find((n)=>n.id===id)},
+  };
+  sampler.graph=graph;
+  const editor={node:studio,app:{graph},p:{
+    chunk_frames:168,selection:[0,336],
+  }};
+  const traced=traceReferenceSocket(graph,sampler,1);
+  assert.equal(traced.conveyor,true);
+  assert.equal(traced.shelfNumber,1);
+  assert.deepEqual(traced.via,["Media Resolution"]);
+  const sources=referenceSocketSources(editor);
+  assert.match(sources[0].label,/Alice.png.*Media Resolution/);
+  assert.match(sources[0].thumbnail,/relative_path=actors%2FAlice.png/);
+  assert.match(sources[0].thumbnail,/size=160/);
+  assert.match(sources[0].thumbnail,/v=mtime-v8/);
+  assert.equal(sources[0].unavailable,false);
+  assert.equal(shelfImagePath({
+    output_mode:"persistent_refs",
+    reference_slots:[{type:"input",annotated:"../secret.png [input]"}],
+  },1),null);
+  // Do not invent a source when an intermediate node combines two images.
+  mp.inputs.push({name:"image_2",type:"IMAGE",link:33});
+  graph.links[33]={origin_id:8,origin_slot:7};
+  const ambiguous=referenceSocketSources(editor)[0];
+  assert.equal(ambiguous.conveyor,false);
+  assert.equal(ambiguous.thumbnail,null);
 });
