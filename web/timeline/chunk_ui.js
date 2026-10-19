@@ -299,6 +299,56 @@ function conveyorReferenceControls(editor, index, sources) {
         overlay.showModal();
       });
       item.append(thumb,status);
+    } else if (source.candidatePreviews?.length) {
+      const candidates=source.candidatePreviews;
+      const group=el("div",{class:"h3ts-conveyor-candidate-list"});
+      const label=el("small",{class:"h3ts-conveyor-candidate-description",
+        text:candidates.length+" connected Conveyor shelf source"+
+          (candidates.length===1?"":"s")+
+          " · this processed IMAGE output has multiple inputs; its exact"+
+          " pixel composition cannot be inferred from the graph"});
+      group.append(label);
+      const gallery=el("div",{class:"h3ts-conveyor-candidate-gallery"});
+      for(const candidate of candidates) {
+        const tile=el("div",{class:"h3ts-conveyor-candidate"});
+        if(candidate.thumbnail) {
+          const image=el("img",{
+            loading:"lazy",alt:candidate.label+
+              (candidate.filename?" "+candidate.filename:""),
+            src:candidate.thumbnail,
+            title:"Upstream shelf original, not the processed output",
+          });
+          image.addEventListener("error",()=>{
+            image.hidden=true;
+            tile.append(el("small",{text:"Original image unavailable"}));
+          });
+          image.addEventListener("click",()=>{
+            const zoom=el("dialog",{class:"h3ts-ref-lightbox"},
+              el("header",{},el("strong",{text:candidate.label}),
+                button("Close",()=>zoom.close())),
+              el("img",{
+                src:candidate.thumbnail.replace(/([?&])size=\\d+/,"$1size=512"),
+                alt:candidate.label,
+              }),
+              el("p",{text:"Upstream Conveyor original. The intervening node"+
+                " combines or processes IMAGE inputs; this is not a"+
+                " representation of the exact output tensor."}));
+            editor.root.append(zoom);
+            zoom.addEventListener("close",()=>zoom.remove(),{once:true});
+            zoom.showModal();
+          });
+          tile.append(image);
+        }
+        tile.append(el("small",{text:candidate.label+
+          (candidate.filename?" · "+candidate.filename:"")+
+          (!candidate.thumbnail?" · no stable shelf file":"")}));
+        gallery.append(tile);
+      }
+      group.append(gallery);
+      if(source.ancestryTruncated)group.append(
+        el("small",{class:"h3ts-chunk-warning",
+          text:"Further upstream branches were truncated for safety"}));
+      item.append(group);
     } else if (source.conveyor && source.dynamic) {
       item.append(el("small",{text:"Dynamic image · pixels resolved during queue"}));
     } else if (!source.reason) {
@@ -306,7 +356,10 @@ function conveyorReferenceControls(editor, index, sources) {
     }
     if(source.reason)
       item.append(el("small",{class:"h3ts-chunk-warning",
-        text:source.unavailable ? "Inactive: "+source.reason : source.reason}));
+        text:source.unavailable ? "Inactive: "+source.reason :
+          source.candidatePreviews?.length
+            ? "Processor has multiple IMAGE inputs; showing upstream shelf images"
+            : source.reason}));
     group.append(item);
   }
   group.append(button("Inherit connected references",()=>editor.guard(()=>
