@@ -1,6 +1,6 @@
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-navigation-media-v13";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-navigation-media-v14";
 import {
   History,
   clone,
@@ -21,7 +21,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-navigation-media-v13";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-navigation-media-v14";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom } from "./navigation.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
