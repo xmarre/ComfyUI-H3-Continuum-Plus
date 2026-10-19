@@ -422,8 +422,8 @@ def test_late_scene_timestamps_override_legacy_list_routing(runtime):
     args.update(
         timeline=compile_project(project),
         sequence_prompt=(
-            "Cast and room.\\n[0-5s]\\nFIRST UTTERANCE\\n"
-            "[5-10s]\\nSECOND UTTERANCE\\n[10-15s]\\nLAST UTTERANCE"
+            "Cast and room.\n[0-5s]\nFIRST UTTERANCE\n"
+            "[5-10s]\nSECOND UTTERANCE\n[10-15s]\nLAST UTTERANCE"
         ),
         prompt_mode="List",
         run_storage="Off",
@@ -450,8 +450,8 @@ def test_absolute_movie_prompt_timestamps_are_preserved(runtime):
     args.update(
         timeline=compile_project(project),
         sequence_prompt=(
-            f"[{t}-{t+5}s]\\nproject first\\n"
-            f"[{t+5}-{t+10}s]\\nproject second"
+            f"[{t}-{t+5}s]\nproject first\n"
+            f"[{t+5}-{t+10}s]\nproject second"
         ),
         prompt_mode="Timeline",
         run_storage="Off",
