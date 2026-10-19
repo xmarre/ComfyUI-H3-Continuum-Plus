@@ -1432,6 +1432,9 @@ test("Media Resolution wildcard IMAGE input resolves upstream Conveyor without f
   assert.match(sources[0].label,/character.png/);
   assert.match(sources[0].label,/Media Resolution/);
   assert.equal(sources[0].reason,null);
+  // A FLOAT control with a reference-like name is not a second IMAGE path.
+  processor.inputs[1].name="reference_strength";
+  assert.equal(traceReferenceSocket(graph,sampler,1).shelfNumber,1);
   // An unknown wildcard second IMAGE is genuinely ambiguous.
   processor.inputs[1].type="*";
   graph.links[102].type="IMAGE";
