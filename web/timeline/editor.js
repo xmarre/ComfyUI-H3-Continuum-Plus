@@ -183,6 +183,16 @@ export class TimelineEditor {
     this.persistWidget();
     this.render();
   }
+  editChunkReferences(fn) {
+    // The reference checkbox edits only input routing. Do not stop an active
+    // source preview, rebuild the movie track DOM, or restart decodes.
+    this.editVersion++;
+    this.history.commit(fn);
+    this.persistWidget();
+    refreshConveyorControls(this, true);
+    this.compiledWindows=null;
+    this.scheduleChunkCompile();
+  }
   persistView() {
     this.node.properties.h3_timeline_view = {
       playhead: this.playhead,
