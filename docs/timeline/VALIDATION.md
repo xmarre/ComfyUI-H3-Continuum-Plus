@@ -122,6 +122,12 @@ thumbnail/waveform/proxy requests are cancellable. These changes do not relax
 the generation/export audio phase contract. Long-source WSL performance and
 physical native playback still require runtime qualification.
 
+## Long-source UI and State Manager queue regression (2026-10-19)
+
+The screenshot's main still previously magnified the **240×136 filmstrip JPEG**, introducing visible softness independent of H3 sampling or final-export quality. The viewer now requests a separately cached display-resolution still, and 90-quality non-subsampled JPEG is used for that path. Filmstrips stay small. The 2-hour clip surface is projected into the visible viewport instead of creating an enormous clip DOM box, preserving true trim-edge visibility and source timing. JS regressions assert clip bounds, viewer pixel density and seek coalescing; HTTP acceptance checks reuse of a cached JPEG and separate 960×540 still sizes. **Actual long-MKV speed improvement remains unmeasured** on the user's Windows/WSL installation.
+
+The queue guard was traced to the connected DoRA State Manager `DSM_UNSAVED_MANAGED_TEXT` safety check, not an H3 model error. Timeline queueing still honors that external guard. Failure messages distinguish confirmed jobs from uncertain submissions; prompt persistence is intentionally not automatic. A JS test checks the diagnostic. The selected persistent State Manager prompt must be saved through **Save connected** before the queue can succeed.
+
 ## Source-resolution export and explicit H3 guidance regression (2026-10-18)
 
 The editor originally wrote the selected movie clip through the project canvas
