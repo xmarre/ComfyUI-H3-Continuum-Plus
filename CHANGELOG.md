@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Restore an independently resizable source media viewer and add accessible
+  drag handles between the viewer, chunk-input editor and track timeline.
+  The timeline remains visible while each pane changes size. The two
+  media/inspector sidebars have horizontal drag handles.
+- Add live chunk-card width, Conveyor thumbnail size and track-height
+  controls, keyboard splitter adjustment, double-click grip reset and an
+  overall panel-size reset. Persist preferred sizes in workflow UI
+  properties, never the causal H3 project or prompt state.
+- Remove competing viewport-based flex heights responsible for the collapsed
+  video viewer. Use a bounded responsive dialog layout with aspect-preserving
+  preview content and no new decoders or model-input changes.
+- Advance Timeline Studio frontend/backend/Windows contract to v10 to
+  invalidate stale deployed browser modules.
+
+
 - Fix missing Image Conveyor thumbnails in Timeline Studio when references
   pass through Media Resolution / wildcard-typed IMAGE processors.
   Follow unambiguous actual graph links, use normalized Conveyor shelf path
