@@ -258,6 +258,13 @@ export function renderChunkWorkspace(editor) {
           (track.role==="audio" ? " ["+clip.audio_role+"]" : "")+
           ": "+(asset?.alias || asset?.name || clip.text || "source")+
           " · "+(end-start)+"f"}));
+      if (asset?.video && ["image_reference","video_guide"].includes(track.role))
+        row.prepend(el("img",{
+          class:"h3ts-chunk-asset-preview",
+          loading:"lazy",alt:asset.alias || asset.name,
+          src:"/h3_continuum/timeline/thumbnail/"+asset.id+"?pts="+
+            sourceAt(clip,start).toFixed(6),
+        }));
       if (isEditable && track.role!=="image_reference") {
         const sourceIn=el("input",{type:"text",value:clip.source_in,
           "aria-label":"Source PTS for chunk "+(chunk.index+1)});
