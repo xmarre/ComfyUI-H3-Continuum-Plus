@@ -122,6 +122,31 @@ thumbnail/waveform/proxy requests are cancellable. These changes do not relax
 the generation/export audio phase contract. Long-source WSL performance and
 physical native playback still require runtime qualification.
 
+## Full-source horizontal scrolling and media activation
+
+The movie timeline must remain horizontally navigable over the entire
+source duration. The H3 render selection controls generation only; using
+it as a timeline's right-hand bound prevents scrolling when the selected
+window fits the viewport. The frontend now uses full-project width and
+global-frame coordinates, with separate view-only fit-to-selection,
+fit-to-movie and jump-to-selection operations. Tests cover a two-hour source,
+a fourteen-second selected range, a nonzero absolute selection origin,
+and seeking outside that range.
+
+Chunk media activation uses existing model compiler semantics. Tests cover
+a long retained clip toggled off in its middle chunk, unchanged active clips
+on either side, source-time continuity at split boundaries, toggling back
+on without producing additional splits, locked/muted track behavior, and
+explicit rejection of implicit splitting of faded media. Backend tests
+independently confirm that inactive video-guide and audio clips disappear
+from the compiled conditioning/output roles while adjacent native windows
+retain their original PTS. Reference All/None/Reset controls affect one
+logical chunk without mutating the Conveyor.
+
+These tests verify structure and native conditioning contracts, not media
+playback frame accuracy, actual audio fade quality, or the display interaction
+on a particular ComfyUI/browser installation.
+
 ## User-resizable Timeline Studio layout
 
 The main viewer previously used `flex:1` while the chunk editor claimed
