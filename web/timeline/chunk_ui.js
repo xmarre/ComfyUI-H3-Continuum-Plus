@@ -284,130 +284,77 @@ function sectionForRole(editor, index, role, audioRoute) {
   row.append(choose.buttonAdd);
   return row;
 }
-function conveyorReferenceControls(editor, index, sources) {
+function conveyorReferenceControls(editor,index,sources) {
   const group=el("div",{class:"h3ts-conveyor-refs"});
-  const selected=selectedConveyorSlots(editor.p,index);
-  const connected=sources.filter((s)=>s.connected);
-  group.append(el("strong",{text:"Image Conveyor references · "+
-    (selected===null ? "inherit connected" : "chunk-specific selection")}));
-  group.append(el("small",{text:"Checks select actual sampler reference IMAGE sockets for this chunk; empty/disabled Conveyor outputs provide no image. <Picture N> numbers are assigned contiguously after live inputs resolve."}));
-  if (!connected.length)
-    group.append(el("p",{class:"h3ts-chunk-warning",
-      text:"Connect Image Conveyor ref_image_1…8 outputs to the corresponding Continuum Timeline Sampler reference_image_1…8 inputs."}));
-  let picture=0;
-  const allConveyor=connected.every((source)=>source.conveyor);
-  for(const source of connected) {
-    const checked=selected===null || selected.includes(source.slot);
-    const expectedPicture = allConveyor && checked && !source.unavailable &&
-      !source.dynamic ? ++picture : null;
+  const chosen=selectedConveyorSlots(editor.p,index);
+  const available=activeReferenceSources(sources);
+  const availableSlots=available.map(source=>source.slot);
+  const checkedCount=available.filter(source=>
+    chosen===null||chosen.includes(source.slot)).length;
+  group.append(el("strong",{text:"Reference images · "+
+    checkedCount+"/"+available.length+" enabled for this chunk"}));
+  group.append(el("small",{text:
+    "Showing only currently active Conveyor reference images. Each checkbox "+
+    "controls the corresponding Timeline Sampler IMAGE input for this chunk. "+
+    "The Conveyor's global output toggles remain authoritative."}));
+  if(!available.length)group.append(el("p",{class:"h3ts-chunk-warning",
+    text:"No active reference images found. Check the Image Conveyor shelf, "+
+      "its reference-output toggles and Timeline Sampler connections."}));
+  if(available.some(source=>source.inferred))group.append(
+    el("small",{class:"h3ts-conveyor-candidate-description",
+      text:"Thumbnails show Conveyor originals; intermediate Media Resolution "+
+        "processing may alter or combine the images before H3 receives them."}));
+  for(const source of available) {
+    const checked=chosen===null||chosen.includes(source.slot);
+    const card=el("div",{class:"h3ts-conveyor-ref"});
     const toggle=el("input",{
       type:"checkbox",
       "aria-label":"Chunk "+(index+1)+" reference input "+source.slot,
     });
     toggle.checked=checked;
     toggle.addEventListener("change",()=>editor.guard(()=>
-      editor.editChunkReferences((next)=>
-        setConveyorSlotEnabled(next,index,source.slot,toggle.checked,
-          connected.map((x)=>x.slot)))));
-    const label=el("label",{class:"h3ts-conveyor-ref-label"},
-      toggle,
-      el("span",{text:"Ref "+source.slot+" · "+source.label+
-        (expectedPicture ? " · expected <Picture "+expectedPicture+">" : "")}),
-    );
-    const item=el("div",{class:"h3ts-conveyor-ref"},label);
+      editor.editChunkReferences(project=>
+        setConveyorSlotEnabled(project,index,source.slot,toggle.checked,
+          availableSlots))));
+    const caption=el("label",{class:"h3ts-conveyor-ref-label"},
+      toggle,el("span",{text:"Ref "+source.slot+" · "+source.label}));
+    card.append(caption);
     if(source.thumbnail) {
-      const thumb=el("img",{
-        class:"h3ts-conveyor-thumb",
-        loading:"eager",
-        alt:"Image Conveyor reference "+source.slot,
-        title:(source.previewNote || "Conveyor source image")+" · click for larger preview",
+      const image=el("img",{
+        class:"h3ts-conveyor-thumb",loading:"eager",
+        alt:"Conveyor reference "+source.slot,
+        title:"Click to enlarge the original Conveyor reference",
         src:source.thumbnail,
       });
-      const status=el("small",{class:"h3ts-chunk-warning",text:""});
-      thumb.addEventListener("error",()=>{
-        thumb.hidden=true;
-        status.textContent="Thumbnail unavailable · use Conveyor Refresh";
+      const message=el("small",{class:"h3ts-chunk-warning",text:""});
+      image.addEventListener("error",()=>{
+        image.hidden=true;
+        message.textContent="Source thumbnail unavailable";
       });
-      thumb.addEventListener("click",()=>{
-        const overlay=el("dialog",{class:"h3ts-ref-lightbox",
-          "aria-label":"Reference image preview"},
+      image.addEventListener("click",()=>{
+        const dialog=el("dialog",{class:"h3ts-ref-lightbox",
+          "aria-label":"Conveyor reference preview"},
           el("header",{},el("strong",{text:source.label}),
-            button("Close",()=>overlay.close())),
-          el("img",{src:source.thumbnail.replace(/([?&])size=\d+/, "$1size=512"),
+            button("Close",()=>dialog.close())),
+          el("img",{
+            src:source.thumbnail.replace(/([?&])size=\d+/,"$1size=512"),
             alt:source.label}),
-          el("p",{text:source.previewNote || "Source reference preview"}),
-        );
-        editor.root.append(overlay);
-        overlay.addEventListener("close",()=>overlay.remove(),{once:true});
-        overlay.showModal();
+          el("p",{text:source.previewNote||
+            "Conveyor shelf original. Model input uses connected IMAGE processing."}));
+        editor.root.append(dialog);
+        dialog.addEventListener("close",()=>dialog.remove(),{once:true});
+        dialog.showModal();
       });
-      item.append(thumb,status);
-    } else if (source.candidatePreviews?.length) {
-      const candidates=source.candidatePreviews;
-      const group=el("div",{class:"h3ts-conveyor-candidate-list"});
-      const label=el("small",{class:"h3ts-conveyor-candidate-description",
-        text:candidates.length+" connected Conveyor shelf source"+
-          (candidates.length===1?"":"s")+
-          " · this processed IMAGE output has multiple inputs; its exact"+
-          " pixel composition cannot be inferred from the graph"});
-      group.append(label);
-      const gallery=el("div",{class:"h3ts-conveyor-candidate-gallery"});
-      for(const candidate of candidates) {
-        const tile=el("div",{class:"h3ts-conveyor-candidate"});
-        if(candidate.thumbnail) {
-          const image=el("img",{
-            loading:"lazy",alt:candidate.label+
-              (candidate.filename?" "+candidate.filename:""),
-            src:candidate.thumbnail,
-            title:"Upstream shelf original, not the processed output",
-          });
-          image.addEventListener("error",()=>{
-            image.hidden=true;
-            tile.append(el("small",{text:"Original image unavailable"}));
-          });
-          image.addEventListener("click",()=>{
-            const zoom=el("dialog",{class:"h3ts-ref-lightbox"},
-              el("header",{},el("strong",{text:candidate.label}),
-                button("Close",()=>zoom.close())),
-              el("img",{
-                src:candidate.thumbnail.replace(/([?&])size=\d+/,"$1size=512"),
-                alt:candidate.label,
-              }),
-              el("p",{text:"Upstream Conveyor original. The intervening node"+
-                " combines or processes IMAGE inputs; this is not a"+
-                " representation of the exact output tensor."}));
-            editor.root.append(zoom);
-            zoom.addEventListener("close",()=>zoom.remove(),{once:true});
-            zoom.showModal();
-          });
-          tile.append(image);
-        }
-        tile.append(el("small",{text:candidate.label+
-          (candidate.filename?" · "+candidate.filename:"")+
-          (!candidate.thumbnail?" · no stable shelf file":"")}));
-        gallery.append(tile);
-      }
-      group.append(gallery);
-      if(source.ancestryTruncated)group.append(
-        el("small",{class:"h3ts-chunk-warning",
-          text:"Further upstream branches were truncated for safety"}));
-      item.append(group);
-    } else if (source.conveyor && source.dynamic) {
-      item.append(el("small",{text:"Dynamic image · pixels resolved during queue"}));
-    } else if (!source.reason) {
-      item.append(el("small",{text:"No source thumbnail available"}));
+      card.append(image,message);
+    } else {
+      card.append(el("small",{class:"h3ts-chunk-warning",
+        text:source.reason||"Upstream source has no stable preview"}));
     }
-    if(source.reason)
-      item.append(el("small",{class:"h3ts-chunk-warning",
-        text:source.unavailable ? "Inactive: "+source.reason :
-          source.candidatePreviews?.length
-            ? "Processor has multiple IMAGE inputs; showing upstream shelf images"
-            : source.reason}));
-    group.append(item);
+    group.append(card);
   }
-  group.append(button("Inherit connected references",()=>editor.guard(()=>
-    editor.editChunkReferences((next)=>
-      inheritConveyorSlots(next,index)))));
+  group.append(button("Inherit active references",()=>editor.guard(()=>
+    editor.editChunkReferences(project=>
+      inheritConveyorSlots(project,index)))));
   return group;
 }
 
