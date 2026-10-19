@@ -58,7 +58,7 @@ function independent(node) {
 }
 const style = document.createElement("link");
 style.rel = "stylesheet";
-style.href = new URL("./timeline/studio.css", import.meta.url).href;
+style.href = new URL("./timeline/studio.css?v=h3-timeline-resizable-layout-v10", import.meta.url).href;
 document.head.append(style);
 app.registerExtension({
   name: "H3Continuum.TimelineStudio",
