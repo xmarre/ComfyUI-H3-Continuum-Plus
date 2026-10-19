@@ -122,6 +122,43 @@ const { chromium } = require("playwright");
         () => h3TestNode.properties.h3_timeline_view?.zoom > 0,
       ),
     );
+    // A short H3 selection must not eliminate horizontal navigation over
+    // the full registered movie. Verify the real scroll range, not only
+    // pure geometry helpers.
+    await page.getByRole("button",{name:"Fit selected chunks"}).click();
+    const movieExtent=await page.evaluate(()=>{
+      const el=document.querySelector(".h3ts-scroll");
+      return {scrollWidth:el.scrollWidth,viewport:el.clientWidth};
+    });
+    assert.ok(movieExtent.scrollWidth>movieExtent.viewport+200,
+      JSON.stringify(movieExtent));
+    const pan=await page.evaluate(()=>{
+      const el=document.querySelector(".h3ts-scroll");
+      el.scrollLeft=120;
+      return el.scrollLeft;
+    });
+    assert.ok(pan>30,"Horizontal scrollbar must pan beyond selected chunks");
+    await page.getByRole("button",{name:"Fit full movie"}).click();
+    const fitted=await page.evaluate(()=>{
+      const el=document.querySelector(".h3ts-scroll");
+      return {scrollWidth:el.scrollWidth,viewport:el.clientWidth};
+    });
+    assert.ok(fitted.scrollWidth<=fitted.viewport+2,JSON.stringify(fitted));
+    await page.getByRole("button",{name:"Fit selected chunks"}).click();
+    // Existing retained footage must be independently activatable from the
+    // chunk card and still shown when muted so the user can restore it.
+    const originalUse=page.getByRole("checkbox",{
+      name:"Use Original footage in chunk 1",
+    });
+    assert.equal(await originalUse.count(),1);
+    await originalUse.uncheck();
+    assert.equal(await page.evaluate(()=>
+      JSON.parse(h3TestNode.widgets.find(w=>w.name==="project_json").value)
+        .tracks.find(t=>t.role==="retained").clips[0].muted),true);
+    await originalUse.check();
+    assert.equal(await page.evaluate(()=>
+      JSON.parse(h3TestNode.widgets.find(w=>w.name==="project_json").value)
+        .tracks.find(t=>t.role==="retained").clips[0].muted),false);
     // Select source clip, split at frame 24 with the keyboard, undo and redo.
     await page.locator(".h3ts-clip").first().click();
     await page.evaluate(() => {
