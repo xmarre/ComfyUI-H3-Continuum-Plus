@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- Use existing Image Conveyor `ref_image_1..8` → Timeline Sampler `reference_image_1..8` connections as the per-chunk reference source. Show shelf previews/filenames and independent chunk checkboxes, including explicit zero selected images and inherited all-connected defaults; no duplicate media import or reference file materialization.
+- Filter actual native reference IMAGE tensors by per-chunk socket selection in both normal H3 sampling and conditioning lookahead. Preserve contiguous Picture numbering for surviving inputs, V3.4 bundled socket groups, causal hashes, and stale-take validation. Preserve legacy file-based reference clips but remove the imported-image picker from new chunk cards.
+- Keep Conveyor reference masks aligned when chunk duration changes, rejecting ambiguous collisions before mutation.
+
+
+- Make Timeline Studio chunk-first: a selected-chunk workspace shows exactly the connected sampler's logical chunk count/duration, editable prompt text for each chunk, image references, video-guidance cuts, routed audio cuts and exact source PTS; retain full-film editing and native sampler settings. The editor displays project-compiled per-window inputs and calls out persistent node connections/overrides.
+- Honor only explicit new chunk-authored prompts over a connected native `sequence_prompt` inside their own chunk, preserving old free-form prompt precedence. Share the transformation with stale-take validation and keep native Run Storage contracts consistent. Realign chunk-owned tracks on duration edits while preserving source-in timestamps.
+- Add JS/backend tests for late-film chunk selection, exact 24 fps spans, prompts, media, sampler connections, relayout and external prompt precedence.
+
+
+- Fix low-resolution main-viewer stills: use high-detail cached JPEGs sized for the actual viewer instead of enlarging 240×136 filmstrip thumbnails; bound very long clip DOM surfaces to the viewport and retain trim-edge accuracy.
+- Improve multi-hour-source timeline responsiveness: persist bounded/cancellable thumbnail JPEG derivatives and coalesce duplicate source-frame requests, retain image elements across filmstrip redraws, and debounce rapid still-frame scrubbing without changing playback/export resolution. Report direct-source versus composed playback strategy.
+- Preserve DoRA State Manager's fail-closed persistent prompt guard on Timeline queue submissions and explain `Save connected` recovery. Show confirmed submissions on interrupted multi-job batches, without silently writing unrelated preset state.
+- Bump the native Python/frontend/desktop contract for these UI and preview changes.
+
+
+- Default editor clip exports to explicitly resolved **native source pixel dimensions**, separate from the H3 sampling canvas; retain an explicit canvas-size option and the existing Export output-node default. Refuse ambiguous source geometry instead of silently downscaling. Bound RGB export batches and report output pixel dimensions; lossless FFV1 preserves 8-bit compositor pixels, not higher-bit-depth source streams.
+- Make original footage's H3 path explicit with a repeat-safe **Guide H3 with selected clip** action and a visible explanation that native video guidance is compiled from the timeline project directly, while export produces a standalone output file. Version the native desktop/frontend/backend compatibility contract.
+
+- Add Timeline Studio's compact project node and resizable editor, scoped image/video/audio conditions, typed native sampler facade, immutable takes, accepted-prefix reuse, bounded previews and composition/export.
+- Preserve existing V3.4 identifiers, widget ordering, native continuation and external accelerator ownership.
+- Route timed prompt regions through native physical re-basing; serve audio windows from a bounded whole-stream PCM cache; queue multi-job selections in order and give each reroll a fresh nonce; keep editor view state out of prompt inputs; scope guide-audio invalidation to each job.
+- Harden PCM eviction/cancellation and oversized-stream fallback, duplicate-import identity checks, exact multi-job guide scope and rejected-revision reuse; preserve strict inner prompt schedules and fill generated-audio gaps against the current final soundtrack. Ripple cuts and extensions preserve spanning-clip source coordinates. Long queue ownership survives reopening, and cancellation rechecks jobs that start while pending deletion is in flight.
+- Support imports without hard links and verified repair of corrupt assets, with cancellable per-asset publication. Move reject requeueing to the sampler, preserve selected reroll seed schedules, and prune finished queue IDs without dropping newly queued work.
+- Add real-media, editor-operation, ComfyUI HTTP/queue and browser verification plus importable workflows. Trained-H3 quality, AV phase and accelerator/performance qualification remain pending; no release version is assigned.
+
 ## 3.4.11
 
 Configure Continuum-Plus for publication under its maintainer-owned Comfy Registry identity, separate from the original H3 Continuum project.
