@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Fix missing Image Conveyor thumbnails in Timeline Studio when references
+  pass through Media Resolution / wildcard-typed IMAGE processors.
+  Follow unambiguous actual graph links, use normalized Conveyor shelf path
+  metadata and API-base-aware thumbnail URLs, and report unresolved provenance.
+- Preserve strict rejection of ambiguous multi-IMAGE branches, reject unsafe
+  source paths, and check known Conveyor reference output indices if the
+  frontend omitted their labels.
+- Advance frontend/backend/native preview contract to v9 for cache-busting
+  and compatible packaged desktop operation.
+
+
 - Resolve Image Conveyor source images through an unambiguous chain of
   IMAGE-processing nodes (e.g. Media Resolution), displaying live source
   thumbnails and filenames on each chunk with provenance and zoom preview.
