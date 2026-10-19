@@ -51,7 +51,55 @@ class TimelineInputs:
 
         self.video_reference_size = REFERENCE_VIDEO_SIZE_EFFICIENT
         self.picture_offset = 0
+        # Slot sizes follow the eight physical sampler reference sockets.
+        # A V3.4 bundle can occupy one socket but contain several images.
+        self.reference_slot_sizes = (0,) * 8
         self.driving_audio = None
+
+    def picture_offset_for(self, absolute_index):
+        from .model import reference_slots_for_chunk
+
+        selection = reference_slots_for_chunk(self.project, absolute_index)
+        if selection is None:
+            return sum(self.reference_slot_sizes)
+        return sum(self.reference_slot_sizes[slot - 1] for slot in selection)
+
+    def select_persistent_references(self, assets, local_index):
+        """Slice the already prepared native socket tensors for this H3 chunk.
+
+        Preserve each socket's original tensor identity and reference sizing.
+        Only the chosen images are sent to this invocation's conditioning.
+        """
+        from .model import reference_slots_for_chunk
+
+        selection = reference_slots_for_chunk(
+            self.project, self.windows[local_index]["index"]
+        )
+        if selection is None or assets is None:
+            return assets
+        indices = []
+        offset = 0
+        selected = set(selection)
+        for slot, size in enumerate(self.reference_slot_sizes, start=1):
+            if slot in selected:
+                indices.extend(range(offset, offset + size))
+            offset += size
+        if not indices:
+            return None
+        from ..reference import ReferenceAssets, _canonical_hash, REFERENCE_CONTRACT_VERSION
+
+        hashes = tuple(assets.image_hashes[i] for i in indices)
+        return ReferenceAssets(
+            images=tuple(assets.images[i] for i in indices),
+            latents=tuple(assets.latents[i] for i in indices),
+            image_hashes=hashes,
+            combined_hash=_canonical_hash({
+                "reference_contract_version": REFERENCE_CONTRACT_VERSION,
+                "size_mode": assets.size_mode,
+                "image_hashes": list(hashes),
+            }),
+            size_mode=assets.size_mode,
+        )
 
     def set_offset(self, offset):
         from .model import compile_window, guide_scope_for
@@ -62,7 +110,8 @@ class TimelineInputs:
         self.job["guide_scope"] = list(scope)
         self.windows = [
             compile_window(
-                self.project, i, guide_scope=scope, picture_offset=self.picture_offset
+                self.project, i, guide_scope=scope,
+                picture_offset=self.picture_offset_for(i)
             )
             for i in indices
         ]
