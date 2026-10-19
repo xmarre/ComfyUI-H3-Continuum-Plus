@@ -7,7 +7,7 @@ import {
 } from "./chunk_workspace.js";
 import { changeTiming, selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
-import { traceReferenceSocket, collectReferenceProvenance, conveyorState, shelfImagePath } from "./conveyor_source.js";
+import { traceReferenceSocket, collectReferenceProvenance, conveyorState, shelfImagePath, conveyorShelfAvailable } from "./conveyor_source.js";
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -73,6 +73,7 @@ function conveyorSourcePreviews(editor,graph,sampler,slot) {
         label:"Conveyor #"+node.id+" · Shelf "+shelfNumber,
         via,
         state:state.output_mode||"unknown",
+        active:conveyorShelfAvailable(node,state,shelfNumber),
       };
     }),
     truncated:ancestry.truncated,
@@ -96,10 +97,12 @@ export function referenceSocketSources(editor) {
     const ref=shelfNumber ? state.reference_slots?.[shelfNumber-1] : null;
     const path=shelfImagePath(state,shelfNumber);
     const persistent=state.output_mode==="persistent_refs";
+    const active=source.conveyor &&
+      conveyorShelfAvailable(node,state,shelfNumber);
     const disabled=source.conveyor && persistent && shelfNumber &&
-      node?.properties?.image_conveyor_reference_enabled?.[shelfNumber-1] === false;
+      !active && !!ref;
     const inactive=source.conveyor && persistent && shelfNumber &&
-      (disabled || !ref);
+      !active;
     const dynamic=source.conveyor && !persistent;
     const filename=ref?.filename || path?.split("/").at(-1);
     // Request enough pixels for the resized thumbnail (and high-DPI
@@ -142,6 +145,46 @@ export function referenceSocketSources(editor) {
       ancestryTruncated:ancestry.truncated,
     };
   });
+}
+
+// One selectable tile per *currently active* persistent reference output,
+// never eight copies of the complete upstream shelf. Selection IDs remain
+// physical Timeline Sampler reference_image_N sockets. For opaque multi-input
+// processors, the same ordinal Conveyor shelf image is a source illustration,
+// not a claim that its pixels equal the post-processor output.
+export function activeReferenceSources(sources) {
+  const cards=[];
+  for (const source of sources) {
+    if (!source.connected) continue;
+    if (source.conveyor) {
+      if(!source.unavailable && !source.dynamic)
+        cards.push({...source,inferred:false});
+      continue;
+    }
+    // The previous implementation rendered *all* 8 reachable images under
+    // every output. Match at most the shelf ordinal for this sampler socket.
+    const matches=(source.candidatePreviews||[]).filter(candidate=>
+      candidate.shelfNumber===source.slot && candidate.active);
+    const uniqueNodes=new Set(matches.map(candidate=>String(candidate.nodeId)));
+    if(matches.length===1 && uniqueNodes.size===1) {
+      const candidate=matches[0];
+      cards.push({
+        ...source,
+        thumbnail:candidate.thumbnail,
+        label:(candidate.filename||candidate.label)+
+          " · Conveyor shelf "+candidate.shelfNumber,
+        previewNote:"Original Conveyor image before Media Resolution",
+        inferred:true,
+      });
+    } else if(matches.length>1) {
+      // Multiple active Conveyors claim the same ordinal: never pretend one
+      // is the image associated with this sampler socket.
+      cards.push({...source,thumbnail:null,candidatePreviews:[],
+        label:"Reference socket "+source.slot+
+          " · multiple Conveyor sources (mapping unresolved)",inferred:true});
+    }
+  }
+  return cards;
 }
 
 export function samplerInputDescription(editor) {
