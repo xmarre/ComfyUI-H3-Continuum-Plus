@@ -74,7 +74,8 @@ export function samplerInputDescription(editor) {
   if (linked("height")) overrides.push("height comes from a connected node");
   return {
     sampler,
-    persistent, supplied, overrides, promptOverridden: externalPrompt,
+    persistent, supplied, overrides, persistentPictureSockets: pinned.length,
+    promptOverridden: externalPrompt,
     audioOverridden: linked("driving_audio"),
     settings: [
       ["Chunks",String(selectionChunks(editor.p))],
@@ -147,7 +148,15 @@ function compiledLine(node, window, inputs, ownPrompt = "") {
       ? "Chunk prompt overrides connected sequence_prompt: "+ownPrompt
       : "Connected sequence_prompt supplies this chunk's prompt (runtime source)")
     : "Compiled prompt: "+(window.prompt || "(empty)");
-  const warning = window.warnings?.length ? " · "+window.warnings.join(" · ") : "";
+  const possibleImageTotal =
+    (inputs.persistentPictureSockets || 0) + window.images.length;
+  const imageBudgetWarning = possibleImageTotal > 8
+    ? " · WARNING: "+window.images.length+" scoped images plus "+
+      inputs.persistentPictureSockets+" connected persistent picture sockets "+
+      "may exceed H3's eight-picture limit; check which connections resolve to nonempty images"
+    : "";
+  const warning = (window.warnings?.length
+    ? " · "+window.warnings.join(" · ") : "") + imageBudgetWarning;
   node.textContent = prompt +
     " | images: "+window.images.length +
     ", video guides: "+window.video.length +
