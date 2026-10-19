@@ -90,7 +90,11 @@ const { chromium } = require("playwright");
         h3TestNode.properties.h3_timeline_view.layout.left>190),
     );
     await page.getByRole("slider",{name:"Reference thumbnail size"})
-      .fill("150");
+      .evaluate((slider)=>{
+        slider.value="150";
+        slider.dispatchEvent(new Event("input",{bubbles:true}));
+        slider.dispatchEvent(new Event("change",{bubbles:true}));
+      });
     assert.equal(
       await page.evaluate(() =>
         h3TestNode.properties.h3_timeline_view.layout.thumb),
