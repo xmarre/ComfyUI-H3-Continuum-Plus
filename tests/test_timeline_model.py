@@ -374,3 +374,38 @@ def test_muted_chunk_media_removed_from_effective_native_conditioning():
     assert compile_window(p, 1)["final"] == []
     p["tracks"][-1]["clips"][0]["muted"] = False
     assert len(compile_window(p, 1)["final"]) == 1
+
+def test_scene_anchor_compiles_virtual_chunks_at_exact_movie_frame():
+    p = blank_project()
+    p.update(duration_frames=24 * 3600, chunk_frames=168,
+             chunk_origin_frame=14955, selection=[14955, 14955 + 336])
+    plan = compile_project(p)
+    assert [w["range"] for w in plan["jobs"][0]["windows"]] == [
+        [14955, 15123], [15123, 15291]]
+    assert [w["index"] for w in plan["jobs"][0]["windows"]] == [0, 1]
+    assert plan["jobs"][0]["range"] == [14955, 15291]
+    assert plan["jobs"][0]["guide_scope"] == [14955, 15291 + 34]
+    assert compile_window(p, 0)["range"] == [14955, 15123]
+
+
+def test_scene_anchor_rejects_render_before_start_and_invalid_masks():
+    p = blank_project()
+    p.update(chunk_origin_frame=170, duration_frames=600,
+             selection=[170, 338])
+    validate(p)
+    p["selection"] = [0, 168]
+    with pytest.raises(ValueError, match="precede"):
+        validate(p)
+    p["selection"] = [170, 338]
+    p["conveyor_reference_slots"] = {"3": [1]}
+    with pytest.raises(ValueError, match="reference selection"):
+        validate(p)
+
+
+def test_legacy_project_keeps_zero_based_chunk_boundaries():
+    p = blank_project()
+    del p["chunk_origin_frame"]
+    p["selection"] = [100, 450]
+    plan = compile_project(p)
+    assert [w["range"] for w in plan["jobs"][0]["windows"]] == [
+        [0, 168], [168, 336], [336, 504]]

@@ -59,6 +59,7 @@ def blank_project():
         "fps": "24/1",
         "duration_frames": 504,
         "chunk_frames": 168,
+        "chunk_origin_frame": 0,
         "width": 768,
         "height": 512,
         "operation": "generate",
@@ -111,6 +112,11 @@ def validate(project):
     integer(p.get("chunk_frames"), "chunk length", 1)
     if not 96 <= p["chunk_frames"] <= 360:
         raise ValueError("Continuum chunk duration must be between 4 and 15 seconds")
+    # The scene's first H3 frame is independent of absolute movie frame zero.
+    # Omitted on legacy projects to retain their original global chunk grid.
+    origin = integer(p.setdefault("chunk_origin_frame", 0), "scene start")
+    if origin >= duration:
+        raise ValueError("Scene start must precede the end of the movie")
     for key in ("width", "height"):
         if integer(p.get(key), key, 32) % 32:
             raise ValueError(f"Timeline {key} must be a multiple of 32")
@@ -130,7 +136,7 @@ def validate(project):
     for key, slots in slot_masks.items():
         if (not isinstance(key, str) or not key.isascii() or not key.isdecimal()
                 or str(int(key)) != key
-                or int(key) * p["chunk_frames"] >= duration):
+                or origin + int(key) * p["chunk_frames"] >= duration):
             raise ValueError("Chunk reference selection is outside the project")
         if (not isinstance(slots, list) or len(slots) > 8
                 or any(type(slot) is not int or not 1 <= slot <= 8 for slot in slots)
@@ -175,6 +181,8 @@ def validate(project):
     a, b = p.setdefault("selection", [0, duration])
     if integer(a, "selection start") >= integer(b, "selection end", 1) or b > duration:
         raise ValueError("Render selection is outside the timeline")
+    if a < origin:
+        raise ValueError("Render selection cannot precede the active scene start")
     p.setdefault("prompts", {"global": "", "script": "", "mode": "Fixed"})
     p.setdefault("takes", [])
     p.setdefault("markers", [])
@@ -323,7 +331,13 @@ def clip_input(p, t, c, start, end):
 
 def compile_window(p, index, guide_scope=None, picture_offset=0):
     size = p["chunk_frames"]
-    start, end = index * size, min((index + 1) * size, p["duration_frames"])
+    origin = p.get("chunk_origin_frame", 0)
+    if not isinstance(index, int) or index < 0:
+        raise ValueError("Invalid scene-local chunk index")
+    start = origin + index * size
+    if start >= p["duration_frames"]:
+        raise ValueError("Chunk outside project")
+    end = min(start + size, p["duration_frames"])
     active = active_clips(p, start, end)
     inputs = [clip_input(p, t, c, start, end) for t, c in active]
     if p["operation"] == "recreate" and not any(
@@ -585,8 +599,9 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
 def guide_scope_for(p, indices, offset=None):
     """Encoder interval; runtime supplies the actual causal output offset."""
     size = p["chunk_frames"]
-    a = indices[0] * size
-    b = min(p["duration_frames"], (indices[-1] + 1) * size)
+    scene_origin = p.get("chunk_origin_frame", 0)
+    a = scene_origin + indices[0] * size
+    b = min(p["duration_frames"], scene_origin + (indices[-1] + 1) * size)
     origin = a if offset is None else offset
     return (origin, origin + b - a + 34)
 
@@ -596,10 +611,12 @@ def compile_project(project):
     # Editor view state is not part of the request-local plan or its identity.
     p.pop("ui", None)
     size = p["chunk_frames"]
+    origin = p.get("chunk_origin_frame", 0)
     a, b = p["selection"]
     # Selected intervals may cut inside a chunk. Render its complete causal
     # input window; the composer only replaces the selected intersection.
-    first, stop = a // size, (b + size - 1) // size
+    first = (a - origin) // size
+    stop = (b - origin + size - 1) // size
     # Accepted native prefixes are included for reuse, even when the requested
     # replacement begins inside their job. Only the selection is composited.
     reuse = next(
@@ -613,7 +630,7 @@ def compile_project(project):
     if reuse is not None:
         first = reuse["first_chunk"]
         stop = max(
-            stop, min(reuse["stop_chunk"], (p["duration_frames"] + size - 1) // size)
+            stop, min(reuse["stop_chunk"], (p["duration_frames"] - origin + size - 1) // size)
         )
     jobs = []
     for start in range(first, stop, 16):
