@@ -105,7 +105,7 @@ export function setChunkClipEnabled(project,index,trackId,clipId,enabled) {
   // If a native clip has time-based gain ramps, splitting it would restart the
   // fades. Do not make an unrequested change in audio/image amplitude.
   if((original.start<start||original.end>end) &&
-    (Number(original.fade_in||0)>0||Number(original.fade_out||0)>0))
+    (ratio(original.fade_in||0)>0||ratio(original.fade_out||0)>0))
     throw new Error("This spanning clip has fades. Split and adjust the fades in the timeline before toggling one chunk.");
   let clip=original;
   const clipStart=Math.max(start,clip.start);
