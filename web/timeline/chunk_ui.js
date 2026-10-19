@@ -288,13 +288,26 @@ export function renderChunkWorkspace(editor) {
     card.addEventListener("dragover",(e)=>e.preventDefault());
     card.addEventListener("drop",(e)=>{
       const assetId=e.dataTransfer?.getData("application/x-h3-asset");
-      if (!assetId) return;
+      const files=Array.from(e.dataTransfer?.files || []);
+      if (!assetId && !files.length) return;
       e.preventDefault();e.stopPropagation();
-      const asset=editor.p.assets.find((a)=>a.id===assetId);
-      const role=asset?.kind==="image" ? "image_reference"
-        : asset?.video ? "video_guide" : "audio";
-      editor.guard(()=>editor.edit((next)=>
-        addChunkMedia(next,chunk.index,role,assetId)));
+      editor.guard(async ()=>{
+        const assets=assetId
+          ? [editor.p.assets.find((a)=>a.id===assetId)]
+          : await Promise.all(files.map((file)=>editor.resolveOriginal(file)));
+        for (const asset of assets) {
+          if (!asset) throw new Error("Chunk drop referenced missing media");
+          const role=asset.kind==="image" ? "image_reference"
+            : asset.video ? "video_guide" : "audio";
+          editor.edit((next)=>{
+            if (!next.assets.some((a)=>a.id===asset.id)) next.assets.push(asset);
+            const clip=addChunkMedia(next,chunk.index,role,asset.id);
+            editor.selected=[clip.id];
+          });
+        }
+        editor.message("Registered original media linked directly to H3 chunk "+
+          (chunk.index+1)+" without an intermediate export.");
+      });
     });
     cards.append(card);
   }
