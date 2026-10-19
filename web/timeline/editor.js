@@ -556,6 +556,16 @@ export class TimelineEditor {
         el("label", {}, this.snapping, "Snap"),
         button("Undo", () => this.undo()),
         button("Redo", () => this.redo()),
+        button("← Pan", () => {
+          this.scroller.scrollLeft-=Math.max(120,this.scroller.clientWidth*.75);
+        },"Move timeline left without changing source/playhead"),
+        button("Pan →", () => {
+          this.scroller.scrollLeft+=Math.max(120,this.scroller.clientWidth*.75);
+        },"Move timeline right without changing source/playhead"),
+        button("Fit selection", () => this.fitSelectedRange(),
+          "Zoom to the selected H3 render window"),
+        button("Fit movie", () => this.fitFullMovie(),
+          "Zoom out to see the entire original movie"),
         button("− Zoom", () => this.setZoom(this.zoom / 1.5)),
         button("+ Zoom", () => this.setZoom(this.zoom * 1.5)),
         button("Marker", () =>
@@ -590,12 +600,17 @@ export class TimelineEditor {
       this.scheduleDraw();
       this.persistView();
     });
-    // Trackpads scroll the movie natively. Alt+vertical-wheel provides a
-    // horizontal pan on mice that have no separate horizontal wheel.
+    // A video timeline navigates horizontally with the ordinary wheel.
+    // Preserve native horizontal trackpad movement and explicit vertical
+    // scrolling when Shift is held. Never capture browser zoom shortcuts.
     this.scroller.addEventListener("wheel",(event)=>{
-      if(!event.altKey||event.ctrlKey||event.metaKey)return;
+      if(event.ctrlKey||event.metaKey)return;
+      const pan=event.deltaX ||
+        (event.shiftKey ? event.deltaY :
+          (Math.abs(event.deltaY)>=Math.abs(event.deltaX) ? event.deltaY : 0));
+      if(!pan || this.scroller.scrollWidth<=this.scroller.clientWidth)return;
       event.preventDefault();
-      this.scroller.scrollLeft+=event.deltaY;
+      this.scroller.scrollLeft+=pan;
     },{passive:false});
     this.root.addEventListener("dragover", (e) => e.preventDefault());
     this.root.addEventListener("drop", (e) => {
