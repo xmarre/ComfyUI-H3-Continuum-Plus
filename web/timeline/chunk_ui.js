@@ -296,6 +296,21 @@ function compiledLine(node, window, inputs, ownPrompt = "") {
     ", audio refs: "+window.voice.length +
     ", final audio: "+window.final.length+warning;
 }
+// Detect Conveyor shelf/preset/toggle changes without rebuilding prompt
+// textareas, losing card scroll position, or polling backend media decoders.
+export function refreshConveyorControls(editor, force = false) {
+  if (!editor.chunkBoard || editor.closed) return;
+  const sources=referenceSocketSources(editor);
+  const signature=JSON.stringify(sources);
+  if (!force && signature===editor.conveyorSignature) return;
+  editor.conveyorSignature=signature;
+  for (const card of editor.chunkBoard.querySelectorAll("[data-chunk-index]")) {
+    const index=Number(card.dataset.chunkIndex);
+    const previous=card.querySelector(".h3ts-conveyor-refs");
+    if (previous) previous.replaceWith(conveyorReferenceControls(editor,index,sources));
+  }
+  updateChunkCompiledLines(editor);
+}
 export function renderChunkWorkspace(editor) {
   const host = editor.chunkBoard;
   if (!host) return;
@@ -304,6 +319,7 @@ export function renderChunkWorkspace(editor) {
   editor.chunkPage = page.page;
   const sampler = samplerInputDescription(editor);
   const referenceSources = referenceSocketSources(editor);
+  editor.conveyorSignature=JSON.stringify(referenceSources);
   host.replaceChildren();
   const heading = el("div",{class:"h3ts-chunk-heading"},
     el("strong",{text:"CHUNK INPUTS · THE ACTUAL H3 TIMELINE"}),
@@ -333,8 +349,7 @@ export function renderChunkWorkspace(editor) {
     control("Chunk-focused timeline",focus));
   host.append(heading);
   const refreshInputs=button("Refresh Conveyor connections",()=>{
-    renderChunkWorkspace(editor);
-    editor.scheduleChunkCompile();
+    refreshConveyorControls(editor,true);
   });
   heading.append(refreshInputs);
   const settings=el("details",{class:"h3ts-chunk-settings"});
