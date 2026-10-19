@@ -122,6 +122,37 @@ thumbnail/waveform/proxy requests are cancellable. These changes do not relax
 the generation/export audio phase contract. Long-source WSL performance and
 physical native playback still require runtime qualification.
 
+## Image Conveyor per-chunk reference routing (2026-10-19)
+
+Prior chunk cards incorrectly offered imported still-image assets as the primary
+reference source, while H3 reference IMAGE tensors actually arrive from existing
+Image Conveyor → Timeline Sampler connections. The editor now enumerates real
+wired sampler `reference_image_1..8` inputs, inspects the connected Conveyor's
+`state_json.reference_slots` shelf (with live `__bil.state` fallback), and
+shows its filenames, cached thumbnails, global output-disabled/empty states,
+and per-chunk checkboxes. No source image is imported, duplicated or written
+to the Timeline project. The optional `conveyor_reference_slots` map stores
+one-based selected socket IDs only; missing means inherit every connected
+reference (old projects remain unchanged), `[]` means none.
+
+The native sampler preprocesses only the union of sockets required by the
+bounded current job, preserves slot-boundary mapping even for V3.4 bundled
+references, and filters image/latent tensors for each invocation and speculative
+lookahead. Compiled per-window reference selection contributes to the causal
+hash. Picture indices are contiguous per chunk and stale-take verification
+uses recorded physical socket counts to avoid false aliases after disabling
+a Conveyor reference. Changing sampler chunk duration reflows explicit
+selections or vetoes collisions before mutating project state. Global Conveyor
+output toggles remain upstream-authoritative; an empty/disabled reference
+cannot be forced active by checking it within the timeline.
+
+Regression tests exercise inherited vs explicit empty selections, rejected
+invalid masks, per-chunk causal hash isolation, tensors selected by physical
+socket (including bundle groups), alias offsets, run reuse/staleness, current
+Conveyor graph shelf display metadata and timing reflow. CI validates the
+code and browser modules, but real Image Conveyor preset switching and GPU
+MiniMax-H3 visual behavior still need an installation-site test.
+
 ## Chunk-first sampler-input authoring regression (2026-10-19)
 
 The generation editor previously exposed global project prompts and a full
