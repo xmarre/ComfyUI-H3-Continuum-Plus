@@ -122,6 +122,26 @@ thumbnail/waveform/proxy requests are cancellable. These changes do not relax
 the generation/export audio phase contract. Long-source WSL performance and
 physical native playback still require runtime qualification.
 
+## Source preview and chunk workspace integration
+
+The Image Conveyor shelf is often wired through a Media Resolution IMAGE
+processor. A direct-only source inspection silently omitted all thumbnails in
+that topology. The new graph resolver traverses one IMAGE input per step,
+stopping at Image Conveyor (or at an ambiguous or missing source), while
+preserving the untouched image execution wiring. Shelf previews use Image
+Conveyor's existing relative-path thumbnail endpoint and versioned image
+metadata; the source image is explicitly labeled as pre-processor.
+
+The input workspace now uses its available width with full-size two-column
+reference previews and one shared chunk scroll region, plus collapsible
+sampler details. A source-preview overlay distinguishes loading from missing
+footage and decoding errors. A cached small still is temporary until the
+independent high-detail display still resolves. Regression coverage checks
+Image Conveyor through Media Resolution, ambiguous upstream multi-image
+branches, versioned thumbnail URLs, safe path rejection and reference updates
+without restarting playback. Real long-source seek throughput, browser UI
+geometry, and MiniMax-H3 GPU output still require installation validation.
+
 ## Image Conveyor per-chunk reference routing (2026-10-19)
 
 Prior chunk cards incorrectly offered imported still-image assets as the primary
