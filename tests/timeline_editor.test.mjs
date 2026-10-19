@@ -6,8 +6,8 @@ import {
   setChunkPrompt, addChunkMedia, updateChunkSource, removeChunkClip,
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
 } from "../web/timeline/chunk_workspace.js";
-import { samplerInputDescription, referenceSocketSources } from "../web/timeline/chunk_ui.js";
-import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState } from "../web/timeline/conveyor_source.js";
+import { samplerInputDescription, referenceSocketSources, activeReferenceSources } from "../web/timeline/chunk_ui.js";
+import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState, conveyorShelfAvailable } from "../web/timeline/conveyor_source.js";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
 
 import {
@@ -1599,4 +1599,94 @@ test("multi-input Media Resolution displays all proven Conveyor source thumbnail
     widgets:[{name:"state_json",value:conveyor.widgets[0].value}]};
   graph._nodes.push(other);
   assert.equal(collectReferenceProvenance(graph,sampler,1).images.length,2);
+});
+
+test("Conveyor output toggles and shelf presence determine currently available references",()=>{
+  const state={output_mode:"persistent_refs",
+    reference_slots:Array.from({length:8},(_,i)=>({
+      annotated:"ref"+(i+1)+".png [input]",type:"input",
+    })),
+    reference_output_enabled:[true,true,true,true,false,false,false,false],
+  };
+  const node={properties:{}};
+  assert.deepEqual(Array.from({length:8},(_,i)=>
+    conveyorShelfAvailable(node,state,i+1)),
+    [true,true,true,true,false,false,false,false]);
+  // Pending canvas toggles take precedence over serialized backend state.
+  node.properties.image_conveyor_reference_enabled=[
+    true,false,true,false,false,false,false,false];
+  assert.deepEqual(Array.from({length:8},(_,i)=>
+    conveyorShelfAvailable(node,state,i+1)),
+    [true,false,true,false,false,false,false,false]);
+  delete node.properties.image_conveyor_reference_enabled;
+  state.reference_slots[1]=null;
+  assert.equal(conveyorShelfAvailable(node,state,2),false);
+  assert.equal(conveyorShelfAvailable(node,{...state,output_mode:"queue_group"},1),false);
+});
+test("eight shared upstream shelf candidates yield four unique active per-chunk reference cards",()=>{
+  const studio={id:1,comfyClass:"H3ContinuumTimelineStudio"};
+  const conveyor={id:8,comfyClass:"ImageConveyor",
+    widgets:[{name:"state_json",value:JSON.stringify({
+      output_mode:"persistent_refs",
+      reference_slots:Array.from({length:8},(_,i)=>({
+        annotated:"refs/person-"+(i+1)+".png [input]",
+        type:"input",filename:"person-"+(i+1)+".png",
+      })),
+      reference_output_enabled:[true,true,true,true,false,false,false,false],
+    })}],
+    outputs:Array.from({length:14},(_,i)=>({
+      name:i>=6?"ref_image_"+(i-5):"extra",
+      type:i>=6?"IMAGE":"STRING",
+    })),
+  };
+  const processor={id:9,comfyClass:"MediaResolution",
+    title:"Media Resolution — Image Conveyor",
+    inputs:Array.from({length:8},(_,i)=>({
+      name:"image_"+(i+1),type:"IMAGE",link:100+i,
+    })),
+    outputs:Array.from({length:8},(_,i)=>({
+      type:"IMAGE",name:"reference_"+(i+1),
+    })),
+  };
+  const sampler={id:2,comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[{name:"timeline",link:1},
+      ...Array.from({length:8},(_,i)=>({
+        name:"reference_image_"+(i+1),type:"IMAGE",link:200+i,
+      }))]};
+  const graph={_nodes:[studio,conveyor,processor,sampler],
+    getNodeById(id){return this._nodes.find(n=>n.id===id)},
+    links:{1:{origin_id:1,origin_slot:0}}};
+  for(let i=0;i<8;i++) {
+    graph.links[100+i]={origin_id:8,origin_slot:6+i,type:"IMAGE"};
+    graph.links[200+i]={origin_id:9,origin_slot:i,type:"IMAGE"};
+  }
+  sampler.graph=graph;
+  const project={chunk_frames:168,duration_frames:336,
+    selection:[0,336],assets:[],tracks:[]};
+  const editor={node:studio,app:{graph},p:project,layout:{thumb:140}};
+  const raw=referenceSocketSources(editor);
+  assert.equal(raw.length,8);
+  assert.ok(raw.every(x=>x.candidatePreviews.length===8));
+  const available=activeReferenceSources(raw);
+  assert.deepEqual(available.map(x=>x.slot),[1,2,3,4]);
+  assert.equal(new Set(available.map(x=>x.thumbnail)).size,4);
+  for(let i=0;i<4;i++)assert.match(available[i].thumbnail,
+    new RegExp("person-"+(i+1)+"\\.png"));
+  const settings=samplerInputDescription(editor);
+  assert.deepEqual(settings.connectedReferenceSlots,[1,2,3,4,5,6,7,8]);
+  assert.deepEqual(settings.availableReferenceSlots,[1,2,3,4]);
+  assert.equal(settings.availableReferenceSlots.length,4);
+  // The checkbox changes only the chosen chunk's physical sampler socket
+  // mask. There is no imported image and no extra media track.
+  setConveyorSlotEnabled(project,0,2,false,settings.availableReferenceSlots);
+  assert.deepEqual(selectedConveyorSlots(project,0),[1,3,4]);
+  assert.equal(selectedConveyorSlots(project,1),null);
+  // A newly enabled fifth output becomes visible automatically to chunks
+  // that inherit. Explicit masks retain their authored choices.
+  conveyor.properties={image_conveyor_reference_enabled:[
+    true,true,true,true,true,false,false,false]};
+  const more=activeReferenceSources(referenceSocketSources(editor));
+  assert.deepEqual(more.map(x=>x.slot),[1,2,3,4,5]);
+  assert.deepEqual(selectedConveyorSlots(project,0),[1,3,4]);
+  assert.equal(selectedConveyorSlots(project,1),null);
 });
