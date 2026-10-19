@@ -1508,3 +1508,31 @@ test("resizing sidebars cannot remove the preview and does not change model inpu
   assert.throws(()=>setLayoutDimension(valid,"preview",NaN),/Invalid/);
   assert.deepEqual(layoutView(null),{});
 });
+
+test("resized Conveyor preview requests enough original pixels and zoom stays full detail",()=>{
+  const conveyor={id:8,comfyClass:"ImageConveyor",
+    widgets:[{name:"state_json",value:JSON.stringify({
+      output_mode:"persistent_refs",
+      reference_slots:[{annotated:"refs/portrait.png [input]",type:"input",
+        filename:"portrait.png"}],
+    })}],
+    outputs:Array.from({length:14},(_,i)=>({
+      name:i===6?"ref_image_1":"other",type:"IMAGE"})),
+  };
+  const node={id:1,comfyClass:"H3ContinuumTimelineStudio"};
+  const sampler={id:2,comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[{name:"timeline",link:1},{name:"reference_image_1",link:10}]};
+  const graph={_nodes:[node,sampler,conveyor],links:{
+    1:{origin_id:1,origin_slot:0},
+    10:{origin_id:8,origin_slot:6,type:"IMAGE"},
+  },getNodeById(id){return this._nodes.find(x=>x.id===id)}};
+  sampler.graph=graph;
+  const editor={node,app:{graph},p:{chunk_frames:168,selection:[0,168]},
+    layout:{thumb:250}};
+  const thumbnails=referenceSocketSources(editor);
+  assert.match(thumbnails[0].thumbnail,/size=250/);
+  editor.layout.thumb=999;
+  assert.match(referenceSocketSources(editor)[0].thumbnail,/size=512/);
+  editor.layout.thumb=54;
+  assert.match(referenceSocketSources(editor)[0].thumbnail,/size=160/);
+});
