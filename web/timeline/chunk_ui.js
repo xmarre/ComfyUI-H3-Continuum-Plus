@@ -63,10 +63,12 @@ export function referenceSocketSources(editor) {
       .includes(String(node?.comfyClass || node?.type || ""));
     const name=String(output?.name || output?.label || "");
     const shelfMatch=isConveyor && /^ref_image_([1-8])$/.exec(name);
-    let state={};
-    try {
-      state=JSON.parse(node?.widgets?.find((w)=>w.name==="state_json")?.value || "{}");
-    } catch {}
+    let state=node?.__bil?.state;
+    if (!state || typeof state!=="object") {
+      try {
+        state=JSON.parse(node?.widgets?.find((w)=>w.name==="state_json")?.value || "{}");
+      } catch { state={}; }
+    }
     const shelfNumber=shelfMatch ? Number(shelfMatch[1]) : null;
     const source=shelfNumber ? state.reference_slots?.[shelfNumber-1] : null;
     const enabled=shelfNumber && node?.properties?.image_conveyor_reference_enabled?.[
