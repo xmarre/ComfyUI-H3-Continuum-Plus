@@ -21,7 +21,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-resizable-layout-v10";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
