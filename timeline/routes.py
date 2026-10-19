@@ -28,6 +28,9 @@ _tasks = {}
 _media_slots = asyncio.Semaphore(2)
 # Low-latency playback must not queue behind thumbnail/waveform jobs.
 _preview_slots = asyncio.Semaphore(1)
+# Parallel filmstrips can request the same source frame from several tracks.
+# Coalesce each cold thumbnail, then serve its immutable derived JPEG from disk.
+_thumbnail_locks = {}
 # Registered media is content addressed, so derived views never change.
 _IMMUTABLE = {"Cache-Control": "private, max-age=31536000, immutable"}
 
@@ -341,23 +344,50 @@ def register_routes():
 
     @endpoint("get", "/thumbnail/{asset_id}")
     async def thumbnail(request):
+        from .model import rational
         from PIL import Image
         import io
 
+        store = project_store()
+        asset_id = request.match_info["asset_id"]
+        # Validate even on a cache hit: linked files remain verified by stat
+        # and are never served after modification under the original identity.
         path = await asyncio.to_thread(
-            project_store().assets.verify, request.match_info["asset_id"],
-            cancel=_request_cancel,
+            store.assets.verify, asset_id, cancel=_request_cancel,
         )
-        stamp = request.query.get("pts", "0")
-        pixels = await _media_cpu_cancellable(
-            request, video_frames,
-            path, [stamp], 240, 136, padding="hold",
-        )
-        data = io.BytesIO()
-        Image.fromarray(pixels[0]).save(data, format="JPEG")
-        return web.Response(
-            body=data.getvalue(), content_type="image/jpeg", headers=_IMMUTABLE
-        )
+        stamp = str(rational(request.query.get("pts", "0")))
+        key = asset_id + "-" + hashlib.sha256(stamp.encode("ascii")).hexdigest()
+        root = store.root / "thumbnails"
+        root.mkdir(exist_ok=True)
+        output = root / (key + ".jpg")
+        if output.is_file():
+            return web.FileResponse(output, headers={**_IMMUTABLE, "Content-Type": "image/jpeg"})
+        lock = _thumbnail_locks.setdefault(key, asyncio.Lock())
+        try:
+            async with lock:
+                if not output.is_file():
+                    pixels = await _media_cpu_cancellable(
+                        request, video_frames,
+                        path, [stamp], 240, 136, padding="hold",
+                    )
+                    # Serialize a tiny derived JPEG, not the source movie.
+                    data = io.BytesIO()
+                    Image.fromarray(pixels[0]).save(data, format="JPEG")
+                    temporary = output.with_name(
+                        output.stem + "-" + uuid.uuid4().hex + ".jpg"
+                    )
+                    try:
+                        temporary.write_bytes(data.getvalue())
+                        temporary.replace(output)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                    _prune(root, "*.jpg", 512 * 1024**2, output)
+        finally:
+            # New callers can create a new lock once the file exists. Existing
+            # waiters retain their lock object until they complete.
+            if _thumbnail_locks.get(key) is lock:
+                _thumbnail_locks.pop(key, None)
+        return web.FileResponse(output, headers={**_IMMUTABLE, "Content-Type": "image/jpeg"})
 
     @endpoint("get", "/waveform/{asset_id}")
     async def waveform(request):
@@ -537,7 +567,7 @@ def register_routes():
     async def composition_preview(request):
         """Generate a tiny seek-based playback segment; never a 30s export."""
         from .model import digest
-        from .preview import MAX_SEGMENT_FRAMES, render_preview_segment
+        from .preview import MAX_SEGMENT_FRAMES, render_preview_segment, simple_source
 
         started_at = time.perf_counter()
         data = await request.json()
@@ -557,6 +587,7 @@ def register_routes():
         # Preview quality follows the timeline canvas, never a hidden 480px
         # longest-edge cap. Speed comes from bounded temporal work/seek,
         # not from quietly degrading the movie to 160p or 270p.
+        strategy = "direct-source" if simple_source(p, start, stop) else "composed"
         key = digest([
             {k: v for k, v in p.items() if k != "ui"},
             start, stop, "low-latency-play-v1",
@@ -608,6 +639,7 @@ def register_routes():
             {"url": _PREFIX + "/composition/" + key,
              "start": start, "end": stop,
              "cache_hit": cache_hit,
+             "strategy": strategy,
              "prepare_ms": round((time.perf_counter() - started_at) * 1000)}
         )
 
