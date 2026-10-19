@@ -61,7 +61,7 @@ export function setChunkPrompt(project, index, text) {
   }
   if (!clip) {
     clip = {
-      id: uid(), start, end, chunk_prompt: true, source_in: "0",
+      id: uid(), start, end, chunk_prompt: true, chunk_index: index, source_in: "0",
       speed: "1", padding: "error", audio_role: "neither",
       override: true, text: "",
     };
@@ -105,6 +105,7 @@ export function addChunkMedia(project, index, role, assetId, audioRole = "guide"
   if (retained) clip.source_in = String(sourceAt(retained.clip, start));
   clip.end = end;
   clip.chunk_workspace = true;
+  clip.chunk_index = index;
   clip.audio_role = role === "audio" ? audioRole : "neither";
   clip.padding = role === "audio" ? "silence" : "hold";
   // Preserve existing lane content; overlapping guides follow top-track
