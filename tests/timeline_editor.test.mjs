@@ -1348,3 +1348,22 @@ test("Conveyor shelf thumbnails trace through Media Resolution IMAGE processors"
   assert.equal(ambiguous.conveyor,false);
   assert.equal(ambiguous.thumbnail,null);
 });
+
+test("reference checkbox edits persist without stopping video or rebuilding movie tracks", () => {
+  const p={duration_frames:504,chunk_frames:168,selection:[0,336],
+    tracks:[],assets:[]};
+  const observed=[];
+  const editor={
+    editVersion:0,history:{commit(fn){fn(p)}},
+    chunkBoard:null,closed:false,
+    persistWidget(){observed.push("persist")},
+    scheduleChunkCompile(){observed.push("compile")},
+    stopPlayback(){throw new Error("Video should continue playing")},
+    render(){throw new Error("Movie track must not be rebuilt")},
+  };
+  TimelineEditor.prototype.editChunkReferences.call(editor,(next)=>
+    setConveyorSlotEnabled(next,0,2,false,[1,2,3]));
+  assert.equal(editor.editVersion,1);
+  assert.deepEqual(p.conveyor_reference_slots,{"0":[1,3]});
+  assert.deepEqual(observed,["persist","compile"]);
+});
