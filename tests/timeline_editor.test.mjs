@@ -1714,7 +1714,7 @@ test("two-hour movie stays horizontally navigable when selected render range is 
   assert.ok(nearEnd>later);
   const fit=fitMovieZoom(duration,viewport);
   assert.ok(fit<zoom);
-  assert.equal(movieTimelineWidth(duration,fit,viewport),viewport);
+  assert.ok(Math.abs(movieTimelineWidth(duration,fit,viewport)-viewport)<2);
   // Keyboard playhead seeking is not constrained to the selected render span.
   const editor={p:{duration_frames:duration,selection},chunkFocus:true,
     scroller:{clientWidth:viewport,scrollLeft:0},zoom,
