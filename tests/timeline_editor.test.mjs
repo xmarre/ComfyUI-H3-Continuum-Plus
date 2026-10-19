@@ -5,7 +5,7 @@ import {
   selectedChunkPage, chunkWindow, overlappingChunkClips,
   setChunkPrompt, addChunkMedia, updateChunkSource, removeChunkClip,
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
-  setChunkClipEnabled,
+  setChunkClipEnabled, setChunkConveyorSlots,
 } from "../web/timeline/chunk_workspace.js";
 import { samplerInputDescription, referenceSocketSources, activeReferenceSources } from "../web/timeline/chunk_ui.js";
 import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState, conveyorShelfAvailable } from "../web/timeline/conveyor_source.js";
@@ -1769,4 +1769,17 @@ test("chunk-local audio/media toggles protect locked tracks and clip fades",()=>
   setChunkClipEnabled(p,1,"sound","a",false);
   assert.equal(overlappingChunkClips(p,1,["audio"]).length,0);
   assert.equal(overlappingChunkClips(p,0,["audio"]).length,1);
+});
+
+test("bulk reference controls change only the chosen H3 chunk mask",()=>{
+  const p={duration_frames:504,chunk_frames:168,tracks:[]};
+  setChunkConveyorSlots(p,1,[4,2,2],[1,2,3,4]);
+  assert.deepEqual(selectedConveyorSlots(p,1),[2,4]);
+  assert.equal(selectedConveyorSlots(p,0),null);
+  assert.throws(()=>setChunkConveyorSlots(p,1,[7],[1,2,3,4]),/available/);
+  assert.deepEqual(selectedConveyorSlots(p,1),[2,4]);
+  setChunkConveyorSlots(p,1,[],[1,2,3,4]);
+  assert.deepEqual(selectedConveyorSlots(p,1),[]);
+  inheritConveyorSlots(p,1);
+  assert.equal(selectedConveyorSlots(p,1),null);
 });
