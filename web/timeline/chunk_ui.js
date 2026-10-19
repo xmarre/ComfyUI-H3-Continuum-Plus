@@ -220,7 +220,10 @@ export function renderChunkWorkspace(editor) {
       "data-chunk-index":chunk.index});
     const sub=chunk.selectedStart!==chunk.start || chunk.selectedEnd!==chunk.end
       ? " · selection trims this chunk" : "";
-    card.append(el("h4",{},button("CHUNK "+(chunk.index+1),
+    const selectionOrdinal = chunk.index -
+      Math.floor(p.selection[0] / p.chunk_frames) + 1;
+    card.append(el("h4",{},button(
+      "CHUNK "+selectionOrdinal+"/"+page.total+" · global #"+(chunk.index+1),
       ()=>editor.seek(chunk.start)),
       el("small",{text:frameTime(chunk.start)+" — "+frameTime(chunk.end)+
         " · "+(chunk.end-chunk.start)+" frames"+sub})));
