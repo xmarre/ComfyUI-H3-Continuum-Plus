@@ -12,6 +12,7 @@ import {
   exportTarget,
   routeClipToGuidance,
   visibleClipGeometry,
+  viewerFrameDimensions,
   split,
   trim,
   move,
@@ -1432,20 +1433,26 @@ export class TimelineEditor {
     this.previewAsset = asset;
     const source = sourceAt(chosen, this.playhead),
       origin = ratio(asset.video?.start_time || 0);
+    const [stillWidth, stillHeight] = viewerFrameDimensions(
+      asset, this.image.parentElement?.clientWidth,
+      this.image.parentElement?.clientHeight,
+      globalThis.devicePixelRatio || 1,
+    );
+    const stillUrl = BASE + "/thumbnail/" + asset.id + "?pts=" +
+      source.toFixed(6) + "&w=" + stillWidth + "&h=" + stillHeight;
     if (asset.kind === "image") {
       this.video.hidden = true;
       this.image.hidden = false;
-      this.image.src = BASE + "/thumbnail/" + asset.id + "?pts=" + source;
+      this.image.src = stillUrl;
       return;
     }
     if (!forceProxy) {
-      // Single-frame inspection never needs an expensive transcoded video.
-      // Scrubbing a two-hour source therefore does not start FFmpeg jobs.
+      // Use a display-resolution still for the main viewer. Filmstrip JPEGs
+      // remain tiny; both paths decode only one seeked source frame.
       this.video.pause();
       this.video.hidden = true;
       this.image.hidden = false;
-      this.image.src = BASE + "/thumbnail/" + asset.id +
-        "?pts=" + source.toFixed(6);
+      this.image.src = stillUrl;
       return;
     }
     this.video.hidden = false;
