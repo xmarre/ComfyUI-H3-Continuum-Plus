@@ -1670,7 +1670,21 @@ export class TimelineEditor {
         }
         // Number 0 appends in submission order; -1 would queue each later job
         // ahead of its predecessor.
-        const queued = await this.api.queuePrompt(0, payload);
+        let queued;
+        try {
+          // State Manager patches api.queuePrompt to flush persistent writes
+          // and reject unsaved managed prompt text. Never bypass that guard.
+          queued = await this.api.queuePrompt(0, payload);
+        } catch (error) {
+          const reason = error?.code === "DSM_UNSAVED_MANAGED_TEXT"
+            ? "State Manager has unsaved connected Text Box text. Close Timeline Studio, open the State Manager, select the intended persistent prompt preset, click Save connected and wait for the save to finish. Then reopen Studio and queue again."
+            : error?.message || "Queue submission failed";
+          throw new Error(
+            "Queue stopped: " + submitted + " of " + plan.jobs.length +
+            " job(s) confirmed. " + reason,
+            { cause: error },
+          );
+        }
         submitted++;
         this.queuedIds.add(queued.prompt_id);
         this.persistView();
