@@ -315,6 +315,75 @@ def _sampling_contract(
     )
 
 
+@pytest.mark.parametrize("preferred,exact", [(False,False), (True,False), (False,True), (True,True)])
+def test_timeline_rejected_revision_is_never_a_prefix_candidate(tmp_path, monkeypatch, preferred, exact):
+    import ComfyUI_H3_Continuum_Join.run_storage as storage
+    import ComfyUI_H3_Continuum_Join.graph_contract as graph_contract
+    controller, _ = _controller(tmp_path)
+    contract, safe, reasons = _sampling_contract(reroll_nonce=1)
+    assert safe, reasons
+    monkeypatch.setattr(storage, "build_sampling_contract", lambda **k: (copy.deepcopy(contract), True, []))
+    monkeypatch.setattr(graph_contract, "build_upstream_graph_contract", lambda *a, **k: ({}, True, []))
+    revision, contract_sha = revision_identity(contract)
+    rejected = revision if exact else "d" * 16
+    controller.preferred_revision = rejected if preferred else None
+    controller.excluded_revisions = {rejected}
+    directory = controller.revisions_root / rejected
+    directory.mkdir(parents=True)
+    (directory / "manifest.json").write_text(json.dumps({
+        "revision_id": rejected, "contract_sha256": contract_sha,
+        "run_storage_schema_version": storage.RUN_STORAGE_SCHEMA_VERSION,
+    }))
+    def rejected_read(*args):
+        pytest.fail("Rejected revision reached prefix loading")
+    monkeypatch.setattr(controller, "_valid_prefix", rejected_read)
+    monkeypatch.setattr(controller, "_write_project", lambda: None)
+    assert controller.prepare(
+        model=None, model_fingerprint_value="f" * 64, clip=None, video_vae=None, sampler=None,
+        sigmas=torch.tensor([1., 0.]), prompt_plan={"prompts": ["same"] * 3},
+        width=96, height=64, chunk_seconds=5., continuity="Balanced", audio_continuity=True,
+        base_seed=1, reroll_from_chunk=2, reroll_nonce=1, first_frame_hash="a" * 64,
+        last_frame_hash="", identity_hash="none", strict_compatibility=False, existing_session=None, conditioning_mode="t2va",
+    ) is None
+
+
+@pytest.mark.parametrize("status", ["complete", "interrupted"])
+def test_rejected_timeline_requeue_allocates_new_revision_and_keeps_rejected_manifest(tmp_path, monkeypatch, status):
+    import ComfyUI_H3_Continuum_Join.run_storage as storage
+    import ComfyUI_H3_Continuum_Join.graph_contract as graph_contract
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import take_seed_request
+    controller, _ = _controller(tmp_path)
+    old, safe, reasons = _sampling_contract(reroll_nonce=1)
+    assert safe, reasons
+    old_id, old_sha = revision_identity(old)
+    old_root = controller.revisions_root / old_id
+    old_root.mkdir(parents=True)
+    old_path = old_root / "manifest.json"
+    old_path.write_text(json.dumps({"run_storage_schema_version": storage.RUN_STORAGE_SCHEMA_VERSION,
+        "revision_id": old_id, "contract_sha256": old_sha, "status": status,
+        "contract": old, "nonce_lifecycle": old["nonce_lifecycle"]}), encoding="utf-8")
+    before = old_path.read_bytes()
+    project = {"selection": [168,336], "chunk_frames": 168, "rejected": ["rejected"]}
+    job = {"start_chunk": 0, "requires_previous_job": False}
+    record = {"id": "rejected", "indices": [0], "settings_hash": "settings"}
+    boundary, nonce, _ = take_seed_request(project, job, [record], None, "settings", "storage", 0, 1)
+    draft = _apply_nonce_contract(old, requested_nonce=0, effective_nonce=0)
+    monkeypatch.setattr(storage, "build_sampling_contract", lambda **kwargs: (copy.deepcopy(draft), True, []))
+    monkeypatch.setattr(graph_contract, "build_upstream_graph_contract", lambda *a, **k: ({}, True, []))
+    monkeypatch.setattr(controller, "_write_project", lambda: None)
+    controller.excluded_revisions = {old_id}
+    assert controller.prepare(model=None, model_fingerprint_value="f" * 64,
+        clip=None, video_vae=None, sampler=None, sigmas=torch.tensor([1.,0.]),
+        prompt_plan={"prompts": ["same"] * 3}, width=96, height=64,
+        chunk_seconds=5., continuity="Balanced", audio_continuity=True, base_seed=1,
+        reroll_from_chunk=boundary, reroll_nonce=nonce, first_frame_hash="a" * 64,
+        last_frame_hash="", identity_hash="none", strict_compatibility=False,
+        existing_session=None, conditioning_mode="t2va") is None
+    assert controller.effective_reroll_nonce == 2
+    assert controller.revision_id != old_id
+    assert old_path.read_bytes() == before
+
+
 def test_v322_golden_reference_contract_preserves_revision_identity():
     model = _Model()
     clip = _Clip()
@@ -482,6 +551,12 @@ def test_auto_nonce_resumes_interrupted_revision(tmp_path):
         draft, requested_nonce=0, resume_safe=True
     )
     assert (nonce, decision) == (2, "resume_interrupted")
+
+    controller.force_fresh_nonce = True
+    nonce, decision = controller._resolve_effective_nonce(
+        draft, requested_nonce=0, resume_safe=True
+    )
+    assert (nonce, decision) == (3, "new_revision")
 
 
 def test_auto_nonce_increments_only_after_completed_revision(tmp_path):
