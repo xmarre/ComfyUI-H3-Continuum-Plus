@@ -997,3 +997,38 @@
   scrollbar-gutter: stable;
 }
 .h3ts-ruler { user-select: none; }
+
+/* Chunk authoring has an explicit reading order. Keep chunk identity visible
+   while scrolling the shared workspace. Reference bulk actions are compact. */
+.h3ts-chunk-card > h4 {
+  position: sticky;
+  top: -8px;
+  z-index: 3;
+  margin: -8px -8px 8px;
+  padding: 9px;
+  border-bottom: 1px solid #5d778e;
+  background: #263648;
+}
+.h3ts-ref-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 3px;
+}
+.h3ts-ref-actions strong {
+  flex: 1 1 170px;
+  color: #d8edee;
+}
+.h3ts-ref-actions button {
+  min-width: 55px;
+}
+.h3ts-chunk-media-enable:has(input:disabled) {
+  opacity: .75;
+  cursor: not-allowed;
+}
+.h3ts-tools button,
+.h3ts-chunk-heading button {
+  white-space: nowrap;
+}
