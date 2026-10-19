@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { installProjectWidgets, orderSampler, refreshProjectWidgets } from "./timeline/sampler_layout.js";
+import { installProjectWidgets, orderSampler, refreshProjectWidgets, samplerStudio } from "./timeline/sampler_layout.js";
 
 const SAMPLER = "H3ContinuumSamplerV34";
 const TIMELINE_SAMPLER = "H3ContinuumTimelineSampler";
@@ -254,6 +254,8 @@ function install(node) {
     const refresh = () => {
         if (isSampler(type)) refreshSampler(node);
         else refreshAssembler(node);
+        if (type === TIMELINE_SAMPLER)
+            samplerStudio(node)?.__timelineInputsChanged?.();
     };
     const previousConnections = node.onConnectionsChange;
     node.onConnectionsChange = function (...args) {
@@ -270,6 +272,12 @@ function install(node) {
     };
     for (const widgetName of [
         "chunks",
+        "base_seed",
+        "reference_size",
+        "video_reference_size",
+        "prompt_mode",
+        "width",
+        "height",
         "run_storage",
         "reroll_from_chunk",
         "regenerate_from",
