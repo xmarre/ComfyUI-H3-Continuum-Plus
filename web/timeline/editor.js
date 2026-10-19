@@ -484,7 +484,16 @@ export class TimelineEditor {
         ),
       ),
     );
-    this.root.append(el("main", {}, this.assets, center, this.inspector));
+    this.splitters={
+      left:this.splitter("vertical","left","Resize media library width"),
+      right:this.splitter("vertical","right","Resize inspector width"),
+    };
+    this.main=el("main", {},this.assets,this.splitters.left,
+      center,this.splitters.right,this.inspector);
+    this.root.append(this.main);
+    this.previewDivider=this.splitter("horizontal","preview",
+      "Resize media preview and upper workspace height");
+    this.root.append(this.previewDivider);
     const role = el(
       "select",
       { "aria-label": "New track kind" },
@@ -562,6 +571,9 @@ export class TimelineEditor {
     this.root.append(this.inputRoute);
     this.chunkBoard = el("section", {class:"h3ts-chunk-workspace"});
     this.root.append(this.chunkBoard);
+    this.chunkDivider=this.splitter("horizontal","chunk",
+      "Resize chunk editor and track timeline height");
+    this.root.append(this.chunkDivider);
     this.scroller = el("div", { class: "h3ts-scroll" });
     this.timeline = el("div", { class: "h3ts-timeline" });
     this.scroller.append(this.timeline);
@@ -632,6 +644,8 @@ export class TimelineEditor {
     );
     this.resize = new ResizeObserver(() => this.scheduleDraw());
     this.resize.observe(this.scroller);
+    this.layoutObserver=new ResizeObserver(() => this.applyLayout());
+    this.layoutObserver.observe(this.root);
   }
   render() {
     if (this.chunkFocus !== false &&
@@ -2272,6 +2286,7 @@ export class TimelineEditor {
     this.filmTileCache?.clear();
     try { this.abort.abort(); } catch { /* no pending requests */ }
     try { this.resize?.disconnect(); } catch {}
+    try { this.layoutObserver?.disconnect(); } catch {}
     try { cancelAnimationFrame(this.drawPending); } catch {}
     try {
       this.stopPlayback();
