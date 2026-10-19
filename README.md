@@ -2,6 +2,10 @@
 
 ## Timeline Studio (draft integration)
 
+Timeline filmstrips reuse immutable cached JPEG derivatives from long linked movies instead of repeating identical decoder seeks for each scroll/track redraw. Preview status distinguishes direct-source seeking from slower composition, without silently lowering output resolution. Timeline queues respect connected DoRA State Manager's persistent prompt write protection: if a selected preset is empty while a controlled Text Box has unsaved text, save it explicitly through State Manager's **Save connected** before queueing.
+
+
+
 A compact Timeline Studio node opens a resizable editor for retained footage,
 scoped prompts/references/audio, native Continuum jobs, alternatives and final
 composition. **True no-copy Explorer drag requires the Windows
