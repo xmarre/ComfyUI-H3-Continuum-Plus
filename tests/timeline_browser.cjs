@@ -548,6 +548,31 @@ const { chromium } = require("playwright");
     assert.ok(authored, "Chunk prompt text did not persist into project");
     assert.equal(authored.end-authored.start,authored.frames);
     assert.equal(authored.override,true);
+    const dropSource = await page.evaluate(() => {
+      const app=window.comfyAPI.app.app;
+      const studio=app.graph._nodes.find((n)=>
+        n.comfyClass==="H3ContinuumTimelineStudio");
+      const project=JSON.parse(studio.widgets.find((w)=>
+        w.name==="project_json").value);
+      const source=project.assets.find((a)=>a.video);
+      if (!source) return null;
+      const transfer=new DataTransfer();
+      transfer.setData("application/x-h3-asset",source.id);
+      document.querySelector(".h3ts-chunk-card").dispatchEvent(new DragEvent(
+        "drop",{bubbles:true,cancelable:true,dataTransfer:transfer},
+      ));
+      return source.id;
+    });
+    if (dropSource) {
+      await page.waitForFunction((id) => {
+        const studio=window.comfyAPI.app.app.graph._nodes.find((n)=>
+          n.comfyClass==="H3ContinuumTimelineStudio");
+        const project=JSON.parse(studio.widgets.find((w)=>
+          w.name==="project_json").value);
+        return project.tracks.some((track)=>track.role==="video_guide" &&
+          track.clips.some((c)=>c.asset_id===id && c.chunk_workspace));
+      },dropSource);
+    }
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);
     console.log(
