@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Restore navigation across the complete source movie when the H3 render
+  range contains only a small chunk selection; keep full timeline width
+  independent of generation in/out and add selection/movie fit controls and
+  Alt+wheel horizontal panning.
+- Add chunk-local enable/disable switches for existing original-footage,
+  video-guidance and audio clips. Muted clips remain visible to reactivate.
+  Spanning clips isolate the selected logical chunk without moving source
+  timestamps or unintentionally disabling adjacent chunks. Refuse unsafe
+  implicit splits of clips with nonzero fades.
+- Clarify chunk-editor sections, media activation state, and connected
+  source-vs-guidance roles. Add per-chunk Conveyor reference All/None/Reset
+  actions and keep chunk headers visible during workspace scrolling.
+- Version frontend/browser stylesheet, backend and Windows native desktop
+  compatibility to v13.
+
+
 - Show only available Image Conveyor references in each chunk, with exactly
   one thumbnail/checkbox per active reference output. Eliminate the repeated
   eight-image provenance gallery under every sampler reference socket.
