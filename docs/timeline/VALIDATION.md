@@ -122,6 +122,26 @@ thumbnail/waveform/proxy requests are cancellable. These changes do not relax
 the generation/export audio phase contract. Long-source WSL performance and
 physical native playback still require runtime qualification.
 
+## Wildcard Media Resolution / Image Conveyor shelf tracing
+
+The reference editor previously stopped upstream tracing when an intermediate
+IMAGE processor exposed a wildcard or nonstandard input signature. This is
+independent of a successful connected IMAGE execution path: the compositor
+could receive the correct tensor even though the editor did not know the
+Conveyor shelf origin. The current trace examines input, actual LiteGraph link,
+and origin-output types. If exactly one image-carrying edge exists it continues
+through that edge; typed FLOAT/INT controls are ignored. Unknown ambiguous
+multi-image inputs remain unresolved rather than showing a potentially wrong
+reference picture.
+
+Frontend regression fixtures include a Media Resolution node with generic
+`*` image and megapixel inputs, a typed IMAGE upstream link, a typed FLOAT
+control, missing output labels on a known Image Conveyor class, absent
+`annotated` metadata with relative subfolder/filename fallback, path traversal
+rejection, and a second ambiguous IMAGE source. No actual user workflow graph
+or complete ComfyUI session has been supplied; CI cannot establish image
+visibility for a specific installed third-party Media Resolution node.
+
 ## Source preview and chunk workspace integration
 
 The Image Conveyor shelf is often wired through a Media Resolution IMAGE
