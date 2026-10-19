@@ -4,8 +4,9 @@ import { TimelineEditor } from "../web/timeline/editor.js";
 import {
   selectedChunkPage, chunkWindow, overlappingChunkClips,
   setChunkPrompt, addChunkMedia, updateChunkSource, removeChunkClip,
+  selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
 } from "../web/timeline/chunk_workspace.js";
-import { samplerInputDescription } from "../web/timeline/chunk_ui.js";
+import { samplerInputDescription, referenceSocketSources } from "../web/timeline/chunk_ui.js";
 
 import {
   changeTiming,
@@ -1199,4 +1200,64 @@ test("changing selected chunk duration does not move authored clips in other pro
     index:outside.chunk_index,
   },original);
   assert.deepEqual([p.selection[0],p.selection[1]],[14784,15168]);
+});
+
+
+test("Image Conveyor references are selected by connected sampler socket per H3 chunk", () => {
+  const project={duration_frames:504,chunk_frames:168,selection:[0,504],
+    tracks:[],assets:[]};
+  assert.equal(selectedConveyorSlots(project,0),null);
+  setConveyorSlotEnabled(project,0,2,false,[1,2,3]);
+  assert.deepEqual(selectedConveyorSlots(project,0),[1,3]);
+  assert.equal(selectedConveyorSlots(project,1),null);
+  setConveyorSlotEnabled(project,0,1,false,[1,2,3]);
+  setConveyorSlotEnabled(project,0,3,false,[1,2,3]);
+  assert.deepEqual(selectedConveyorSlots(project,0),[]);
+  setConveyorSlotEnabled(project,0,2,true,[1,2,3]);
+  assert.deepEqual(selectedConveyorSlots(project,0),[2]);
+  assert.throws(()=>setConveyorSlotEnabled(project,0,4,true,[1,2,3]),/Connect/);
+  inheritConveyorSlots(project,0);
+  assert.equal(selectedConveyorSlots(project,0),null);
+  assert.equal("conveyor_reference_slots" in project,false);
+});
+
+test("Conveyor shelf filenames and thumbnail URLs follow actual wired source outputs", () => {
+  const studio={id:1,comfyClass:"H3ContinuumTimelineStudio"};
+  const source={
+    id:9,comfyClass:"ImageConveyor",
+    widgets:[{name:"state_json",value:JSON.stringify({
+      output_mode:"persistent_refs",
+      reference_slots:[
+        {type:"input",filename:"Alice.png",annotated:"characters/Alice.png [input]"},
+        null,
+        {type:"input",filename:"Bob.jpg",annotated:"Bob.jpg [input]"},
+      ],
+    })}],
+    outputs:Array.from({length:14},(_,i)=>({name:i>=6?"ref_image_"+(i-5):"misc"})),
+    properties:{image_conveyor_reference_enabled:[true,false,true]},
+  };
+  const sampler={id:2,comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[
+      {name:"timeline",link:1},
+      {name:"reference_image_1",link:11},
+      {name:"reference_image_3",link:13},
+    ],
+  };
+  const nodes=[studio,sampler,source], links={
+    1:{origin_id:1,origin_slot:0},
+    11:{origin_id:9,origin_slot:6},
+    13:{origin_id:9,origin_slot:8},
+  };
+  const graph={_nodes:nodes,links,getNodeById(id){return nodes.find((n)=>n.id===id)}};
+  sampler.graph=graph;
+  const editor={app:{graph},node:studio,
+    p:{chunk_frames:168,selection:[0,168]}};
+  const sourceInputs=referenceSocketSources(editor);
+  assert.deepEqual(sourceInputs.filter((x)=>x.connected).map((x)=>x.slot),[1,3]);
+  assert.match(sourceInputs[0].label,/Alice.png/);
+  assert.match(sourceInputs[0].thumbnail,/relative_path=characters%2FAlice.png/);
+  assert.match(sourceInputs[2].label,/Bob.jpg/);
+  assert.equal(sourceInputs[1].connected,false);
+  const desc=samplerInputDescription(editor);
+  assert.deepEqual(desc.connectedReferenceSlots,[1,3]);
 });
