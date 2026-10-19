@@ -38,10 +38,14 @@ function candidates(graph, node) {
     const link=linkAt(graph,input.link);
     const source=nodeAt(graph,link.origin_id);
     const output=source?.outputs?.[link.origin_slot];
+    const types=[input.type,link?.type,output?.type].filter(Boolean);
+    const knownNonImage=types.some(type=>
+      /^(?:FLOAT|INT|INTEGER|BOOLEAN|BOOL|STRING|TEXT|CLIP|MODEL|VAE|LATENT|MASK|SIGMAS|SAMPLER)$/i.test(
+        String(type)));
     return isImageType(input.type) ||
       isImageType(link?.type) ||
       isImageType(output?.type) ||
-      isImageName(input.name);
+      (!knownNonImage && isImageName(input.name));
   });
   // Do not attribute a mixed IMAGE output to just one upstream source.
   if (image.length>1) return null;
