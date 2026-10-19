@@ -337,17 +337,25 @@ export function renderChunkWorkspace(editor) {
     editor.scheduleChunkCompile();
   });
   heading.append(refreshInputs);
-  const settings = el("div",{class:"h3ts-chunk-settings"});
-  settings.append(el("strong",{text:"CONNECTED SAMPLER · EFFECTIVE INPUT SOURCES"}));
-  if (sampler.warning) settings.append(el("p",{text:sampler.warning}));
+  const settings=el("details",{class:"h3ts-chunk-settings"});
+  settings.open=!!editor.samplerDetailsOpen;
+  settings.append(el("summary",{text:sampler.warning ||
+    "Connected sampler · "+sampler.connectedReferenceSlots.length+
+    " image inputs · "+(p.chunk_frames/24).toFixed(3)+" s/chunk · "+
+    (sampler.settings?.find(([name])=>name==="Continuity")?.[1] || "continuity unknown")+
+    " · expand for complete settings and overrides"}));
+  const details=el("div",{class:"h3ts-chunk-settings-body"});
+  if (sampler.warning) details.append(el("p",{text:sampler.warning}));
   else {
-    settings.append(el("p",{text:sampler.settings.map(([k,v])=>k+": "+v).join("  |  ")}));
-    settings.append(el("p",{text:"Native model inputs: "+sampler.supplied.join(" · ")}));
-    settings.append(el("p",{text:"Persistent conditioning sockets: "+
+    details.append(el("p",{text:sampler.settings.map(([k,v])=>k+": "+v).join("  |  ")}));
+    details.append(el("p",{text:"Native model inputs: "+sampler.supplied.join(" · ")}));
+    details.append(el("p",{text:"Persistent conditioning sockets: "+
       (sampler.persistent.join(" · ") || "none connected")}));
-    if (sampler.overrides.length) settings.append(
+    if (sampler.overrides.length) details.append(
       el("p",{class:"h3ts-chunk-warning",text:"OVERRIDES: "+sampler.overrides.join(" · ")}));
   }
+  settings.append(details);
+  settings.addEventListener("toggle",()=>{editor.samplerDetailsOpen=settings.open;});
   host.append(settings);
   const pager = el("div",{class:"h3ts-chunk-pager"},
     button("Previous chunks",()=>{editor.chunkPage--;renderChunkWorkspace(editor);editor.scheduleChunkCompile();}),
