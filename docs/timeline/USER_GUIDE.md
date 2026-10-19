@@ -53,6 +53,34 @@ The Studio browser/backend/Windows compatibility string is
 `h3-timeline-conveyor-preview-v9`. Refresh the ComfyUI frontend after a
 Patcher overlay update so the versioned module is loaded.
 
+## Select active Image Conveyor references for each H3 chunk
+
+The chunk editor presents **one image thumbnail and one checkbox for each
+currently available Image Conveyor reference**, not the entire upstream shelf
+repeated under each sampler input. Availability follows the Conveyor's
+persistent-mode shelf contents and global reference-output toggle mask:
+`image_conveyor_reference_enabled` on the live node, falling back to its
+backend-visible `reference_output_enabled` state. Connected sockets without
+an enabled and populated Conveyor shelf reference are omitted from the chunk
+picker. For example, if only the first four of eight Conveyor outputs are
+active, each chunk displays four selectable reference images.
+
+The checkboxes control the existing physical sampler `reference_image_N`
+inputs independently for each chunk; switching off one reference in chunk 1
+does not alter chunk 2 or the Conveyor's global state. With no explicit chunk
+override, all upstream-connected references are inherited and the Conveyor
+decides which outputs actually produce nonempty tensors. Once a user edits a
+chunk, the saved selection records its chosen socket indices. Resetting a
+chunk to **Inherit active references** removes that override, including any
+historical selections no longer visible due to global toggle changes.
+
+When the IMAGE processing node exposes multiple input paths, the UI can show
+the original Conveyor image with the matching reference ordinal; it must not
+claim the exact post-processor pixels can be recovered from the graph without
+an explicit routing contract. The checker still enables/disables the sampler
+IMAGE socket itself. Changes to the Conveyor's active shelf or output mask
+refresh the displayed choices without copying any image into Timeline Studio.
+
 ## Multi-input Image Conveyor provenance
 
 A sampler reference can be produced by an upstream IMAGE processor that
