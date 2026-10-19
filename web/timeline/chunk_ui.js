@@ -587,10 +587,16 @@ export function renderChunkWorkspace(editor) {
       });
       checkbox.checked=active;
       checkbox.disabled=!!track.locked||!!track.muted||track.role==="generated";
-      if(!checkbox.disabled)checkbox.addEventListener("change",()=>
+      if(!checkbox.disabled)checkbox.addEventListener("change",()=>{
+        const requested=checkbox.checked;
         editor.guard(()=>editor.edit(project=>
           setChunkClipEnabled(project,chunk.index,track.id,clip.id,
-            checkbox.checked))));
+            requested))).finally(()=>{
+              // Failed edits (e.g. an unsplittable audio fade) leave the
+              // original card mounted. Revert that checkbox to real state.
+              if(row.isConnected)checkbox.checked=active;
+            });
+      });
       row.append(el("label",{class:"h3ts-chunk-media-enable"},checkbox,
         el("span",{text:roleName[track.role] +
           (track.role==="audio"?" ("+clip.audio_role+")":"")+
