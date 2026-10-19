@@ -105,6 +105,10 @@ export class TimelineEditor {
     this.closed = false;
     this.editVersion = 0;
     this.waveCache = new Map();
+    // Keep image elements across viewport redraws: detaching and recreating
+    // them on each scroll otherwise restarts in-flight 1080p thumbnail seeks.
+    this.filmTileCache = new Map();
+    this.seekTimer = null;
     this.root = el("dialog", {
       class: "h3ts",
       tabindex: "0",
@@ -1187,20 +1191,21 @@ export class TimelineEditor {
     for (let f = visibleStart; f < visibleEnd; f += step) {
       const tile = Math.max(f - (f % step), c.start);
       const x = ((tile - c.start) * this.zoom) / 24;
-      element.append(
-        el("img", {
-          class: "h3ts-filmstrip",
-          src:
-            BASE +
-            "/thumbnail/" +
-            c.asset_id +
-            "?pts=" +
-            sourceAt(c, tile).toFixed(6),
-          loading: "lazy",
-          alt: "",
-          style: `left:${x}px;width:${(step * this.zoom) / 24}px`,
-        }),
-      );
+      const src = BASE + "/thumbnail/" + c.asset_id + "?pts=" +
+        sourceAt(c, tile).toFixed(6);
+      const key = c.id + ":" + tile + ":" + step + ":" + src;
+      let image = this.filmTileCache?.get(key);
+      if (!image) {
+        image = el("img", {
+          class: "h3ts-filmstrip", src, loading: "lazy", alt: "",
+        });
+        this.filmTileCache?.set(key, image);
+        while (this.filmTileCache?.size > 192)
+          this.filmTileCache.delete(this.filmTileCache.keys().next().value);
+      }
+      image.style.left = x + "px";
+      image.style.width = (step * this.zoom) / 24 + "px";
+      element.append(image);
       f = tile;
     }
   }
@@ -1336,7 +1341,8 @@ export class TimelineEditor {
         this.message(
           "Playing · segment ready in " +
           ((result.prepare_ms || 0) / 1000).toFixed(2) +
-          "s" + (result.cache_hit ? " (cached)" : "") +
+          "s" + (result.strategy ? " · " + result.strategy : "") +
+          (result.cache_hit ? " (cached)" : "") +
           " · next segment prefetching"
         );
         this.prefetchSegment(this.compositionEnd);
@@ -1470,12 +1476,18 @@ export class TimelineEditor {
   seek(f) {
     this.stopPlayback();
     this.compositionStart = null;
+    clearTimeout(this.seekTimer);
     this.playhead = Math.min(
       this.p.duration_frames - 1,
       Math.max(0, Math.round(f)),
     );
     this.drawPlayhead();
-    this.guard(() => this.preview());
+    // Seek updates immediately, but only the last position in a rapid scrub
+    // should submit a decoder request. Keep editing/playback paths unchanged.
+    this.seekTimer = setTimeout(() => {
+      this.seekTimer = null;
+      if (!this.closed) this.guard(() => this.preview());
+    }, 80);
     this.persistView();
   }
   drawPlayhead() {
@@ -1965,6 +1977,8 @@ export class TimelineEditor {
     const activeExport = this.exportPending ? this.exportId : null;
     this.exportPending = false;
     clearTimeout(this.exportTimer);
+    clearTimeout(this.seekTimer);
+    this.filmTileCache?.clear();
     try { this.abort.abort(); } catch { /* no pending requests */ }
     try { this.resize?.disconnect(); } catch {}
     try { cancelAnimationFrame(this.drawPending); } catch {}
