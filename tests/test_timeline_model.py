@@ -429,7 +429,7 @@ def test_external_scene_local_prompt_uses_local_chunk_indices():
              chunk_origin_frame=14955, selection=[14955,15291])
     merged=with_external_prompt_source(p,{
         "global":"","mode":"Timeline",
-        "script":"[0-7s]\\nfirst utterance\\n[7-14s]\\nsecond utterance",
+        "script":"[0-7s]\nfirst utterance\n[7-14s]\nsecond utterance",
         "origin_frame":14955,
     })
     windows=compile_project(merged)["jobs"][0]["windows"]
