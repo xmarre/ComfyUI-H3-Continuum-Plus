@@ -1049,3 +1049,34 @@
   overflow-x: auto !important;
   overscroll-behavior-x: contain;
 }
+
+/* Scene authoring is the primary workflow; auxiliary navigation and layout
+   settings stay available without overwhelming the movie/chunk controls. */
+.h3ts-scene-controls {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+.h3ts-scene-controls .h3ts-chunk-control { display: inline-flex; align-items: center; }
+.h3ts-scene-view-tools {
+  border-bottom: 1px solid #35465b;
+  background: #1d2835;
+  padding: 3px 12px;
+  font-size: 11px;
+}
+.h3ts-scene-view-tools > summary { cursor: pointer; color: #c8d9e9; }
+.h3ts-scene-view-tools-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 0;
+}
+.h3ts-scene-view-tools-body .h3ts-chunk-layout-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}

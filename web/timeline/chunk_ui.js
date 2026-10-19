@@ -453,27 +453,32 @@ export function renderChunkWorkspace(editor) {
     max:String(Math.max(0,p.duration_frames-1)),step:"1",
     value:String(p.chunk_origin_frame||0),
     "aria-label":"First scene frame in original movie"});
-  heading.append(
-    control("Selected chunks",count),control("Seconds / chunk",seconds),
-    control("Scene start frame",sceneStart),
+  const sceneControls=el("div",{class:"h3ts-scene-controls"});
+  sceneControls.append(
+    control("Start frame",sceneStart),
+    control("Chunks",count),control("Seconds per chunk",seconds),
     button("Start scene",()=>editor.guard(()=>editor.startScene(Number(sceneStart.value))),
-      "Choose first movie frame only; the remaining chunks are automatic"),
-    button("At playhead",()=>editor.guard(()=>editor.startScene(editor.playhead)),
-      "Use currently displayed frame as scene start"),
-    button("Restore movie",()=>editor.guard(()=>editor.restoreMovie()),
-      "Restore an uncut original movie with soundtrack"),
-
+      "Only specify the first original movie frame; following chunks are automatic"),
+    button("Use playhead",()=>editor.guard(()=>editor.startScene(editor.playhead)),
+      "Start the scene at the currently displayed movie frame"),
+    button("Restore original",()=>editor.guard(()=>editor.restoreMovie()),
+      "Clear all timeline edits and return to the uncut original movie"));
+  heading.append(sceneControls);
+  host.append(heading);
+  const viewTools=el("details",{class:"h3ts-scene-view-tools"});
+  viewTools.append(el("summary",{text:"View, media refresh and layout options"}));
+  const tools=el("div",{class:"h3ts-scene-view-tools-body"});
+  tools.append(
     button("Fit selected chunks",()=>editor.fitSelectedRange(),
       "Zoom and navigate to the selected H3 render range"),
     button("Fit full movie",()=>editor.fitFullMovie(),
       "Zoom out to view the entire original timeline"),
     button("Jump to selection",()=>editor.jumpToFrame(p.selection[0]),
       "Move the playhead and view to the selected range"));
-  host.append(heading);
   const refreshInputs=button("Refresh Conveyor connections",()=>{
     refreshConveyorControls(editor,true);
   });
-  heading.append(refreshInputs);
+  tools.append(refreshInputs);
   for (const [name,title,min,max,step,defaultSize] of [
     ["card","Chunk card minimum width",275,900,25,390],
     ["thumb","Reference thumbnail size",54,260,10,100],
@@ -494,17 +499,19 @@ export function renderChunkWorkspace(editor) {
       editor.persistView();
       if(name==="thumb")refreshConveyorControls(editor,true);
     });
-    heading.append(el("label",{class:"h3ts-chunk-layout-control"},
+    tools.append(el("label",{class:"h3ts-chunk-layout-control"},
       el("span",{text:title.split(" ")[0]+
         (name==="thumb"?" thumbs":name==="card"?" width":" height")}),
       slider,output));
   }
-  heading.append(button("Reset panel sizes",()=>{
+  tools.append(button("Reset panel sizes",()=>{
     editor.layout={};
     editor.applyLayout();
     editor.persistView();
     renderChunkWorkspace(editor);
   }));
+  viewTools.append(tools);
+  host.append(viewTools);
   const settings=el("details",{class:"h3ts-chunk-settings"});
   settings.open=!!editor.samplerDetailsOpen;
   settings.append(el("summary",{text:sampler.warning ||
@@ -619,7 +626,13 @@ export function renderChunkWorkspace(editor) {
       });
       row.append(el("label",{class:"h3ts-chunk-media-enable"},checkbox,
         el("span",{text:roleName[track.role] +
-          (track.role==="audio"?" ("+clip.audio_role+")":"")+
+          (track.role==="audio"?" ("+clip.audio_role+")":
+            track.role==="retained" && asset?.audio
+              ? " · original sound: "+
+                (clip.audio_role==="both"?"H3 guide + final":
+                 clip.audio_role==="guide"?"H3 guide":
+                 clip.audio_role==="final"?"final only":"not routed")
+              : "")+
           (track.muted?" · track muted":clip.muted?" · disabled":" · active")})));
       row.append(el("span",{class:"h3ts-chunk-media-name",
         text:(asset?.alias || asset?.name || clip.text || "source")+

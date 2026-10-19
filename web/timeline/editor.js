@@ -568,12 +568,8 @@ export class TimelineEditor {
         button("Pan →", () => {
           this.scroller.scrollLeft+=Math.max(120,this.scroller.clientWidth*.75);
         },"Move timeline right without changing source/playhead"),
-        button("New scene at playhead", () =>
-          this.guard(() => this.startScene(this.playhead)),
-          "Scene starts at this original movie frame; later H3 chunks are virtual"),
-        button("Restore original movie", () =>
-          this.guard(() => this.restoreMovie()),
-          "Clear authored cuts and reset to the original uncut movie"),
+        // Scene start and reset belong to the H3 chunk workspace, not the
+        // crowded general-purpose timeline editing toolbar.
         button("Fit selection", () => this.fitSelectedRange(),
           "Zoom to the selected H3 render window"),
         button("Fit movie", () => this.fitFullMovie(),
