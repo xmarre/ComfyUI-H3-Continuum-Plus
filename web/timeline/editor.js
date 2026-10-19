@@ -501,6 +501,12 @@ export class TimelineEditor {
     this.resize.observe(this.scroller);
   }
   render() {
+    if (this.chunkFocus !== false &&
+        (this.playhead < this.p.selection[0] ||
+         this.playhead >= this.p.selection[1])) {
+      this.playhead = this.p.selection[0];
+      this.persistView();
+    }
     this.renderAssets();
     this.renderInspector();
     this.compiledWindows = null;
