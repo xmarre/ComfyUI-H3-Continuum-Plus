@@ -100,9 +100,12 @@ export function addChunkMedia(project, index, role, assetId, audioRole = "guide"
   // A video cut from retained footage must start at that source's actual PTS,
   // including late cuts in a multi-hour source. An unrelated asset starts at
   // its own stream origin and can be trimmed directly in the chunk card.
-  const retained = overlappingChunkClips(project, index, ["retained"])
-    .find((row) => row.clip.asset_id === assetId && row.start <= start);
-  if (retained) clip.source_in = String(sourceAt(retained.clip, start));
+  const mappedSource = overlappingChunkClips(project, index,
+    ["retained","audio","video_guide"])
+    .find((row) => row.clip !== clip && row.clip.asset_id === assetId &&
+      row.start <= start);
+  if (mappedSource)
+    clip.source_in = String(sourceAt(mappedSource.clip, start));
   clip.end = end;
   clip.chunk_workspace = true;
   clip.chunk_index = index;
