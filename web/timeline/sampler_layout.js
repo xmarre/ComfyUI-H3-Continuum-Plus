@@ -138,6 +138,25 @@ export function changeTiming(p, name, value) {
           // Preserve authored source_in and speed: only output placement and
           // the source-out inferred from its new duration change.
         }
+      const previousSelections=p.conveyor_reference_slots;
+      if (previousSelections) {
+        const migrated={};
+        for (const [key, selected] of Object.entries(previousSelections)) {
+          const oldIndex=Number(key);
+          // Selected logical chunks follow their original sequence position;
+          // other masks remain anchored near their absolute project time.
+          const newIndex=oldIndex>=oldFirst && oldIndex<oldFirst+oldCount
+            ? newFirst+oldIndex-oldFirst
+            : Math.floor(oldIndex*oldSize/nextSize);
+          if (String(newIndex) in migrated)
+            throw new Error(
+              "Changing chunk duration merges two independently configured "+
+              "reference selections. Resolve their overlap before resizing."
+            );
+          migrated[String(newIndex)]=selected;
+        }
+        p.conveyor_reference_slots=migrated;
+      }
       p.chunk_frames = nextSize;
       p.selection[0] = newFirst * nextSize;
     }
