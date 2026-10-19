@@ -563,3 +563,12 @@
 .h3ts-chunk-assigned .h3ts-chunk-control { flex: 1 1 80px; }
 .h3ts-chunk-assigned input { width: 80px; }
 .h3ts-chunk-card button { padding: 2px 6px; }
+
+.h3ts-chunk-asset-preview {
+  width: 60px;
+  height: 42px;
+  object-fit: contain;
+  background: #090c14;
+  border: 1px solid #45566b;
+  flex: 0 0 auto;
+}
