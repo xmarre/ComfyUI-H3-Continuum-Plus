@@ -843,6 +843,21 @@ export class TimelineEditor {
     };
     if (pairs.length === 1) {
       const [track, c] = pairs[0];
+      const active=el("input",{
+        type:"checkbox","aria-label":"Enable entire selected clip",
+      });
+      active.checked=!c.muted&&!track.muted;
+      active.disabled=!!track.locked||!!track.muted;
+      active.onchange=()=>this.edit(project=>{
+        const item=project.tracks.find(t=>t.id===track.id)
+          ?.clips.find(clip=>clip.id===c.id);
+        if(item)item.muted=!active.checked;
+      });
+      this.inspector.append(el("label",{},
+        active,
+        "Active for this clip's entire timeline span"+
+          (track.muted?" · track globally muted":"")+
+          (track.locked?" · track locked":"")));
       field(
         "Name",
         c.name || "",
