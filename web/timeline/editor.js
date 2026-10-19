@@ -22,6 +22,7 @@ import {
   placeAsset,
 } from "./core.js";
 import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js";
+import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
@@ -97,6 +98,8 @@ export class TimelineEditor {
       this.playhead = this.p.selection[0];
     this.previewMode = view.previewMode || "composed";
     this.chunkPage = view.chunkPage || 0;
+    this.layout = layoutView(view.layout);
+    this.layoutDrag = null;
     this.chunkInspectionEpoch = 0;
     this.chunkCompileTimer = null;
     this.compiledWindows = null;
@@ -132,11 +135,12 @@ export class TimelineEditor {
     });
     this.root.addEventListener("keydown", (e) => this.key(e));
     this.root.addEventListener("pointerdown", (e) => {
-      if (!e.target.closest("input,textarea,select,button")) this.root.focus();
+      if (!e.target.closest("input,textarea,select,button,[role=separator]")) this.root.focus();
     });
     document.body.append(this.root);
     this.root.showModal();
     this.build();
+    this.applyLayout();
     this.render();
     this.conveyorPoll = setInterval(() => refreshConveyorControls(this), 1250);
     this.scroller.scrollLeft = this.chunkFocus && view.chunkFocus == null
@@ -193,6 +197,111 @@ export class TimelineEditor {
     refreshConveyorControls(this, true);
     this.scheduleChunkCompile();
   }
+  // Resizers operate only on DOM view geometry. They never edit the H3
+  // project or trigger model input compilation.
+  layoutAvailableHeight() {
+    const sized=new Set([this.main,this.chunkBoard,this.scroller,
+      this.previewDivider,this.chunkDivider]);
+    const fixed=[...this.root.children].filter(el=>!sized.has(el))
+      .reduce((sum,el)=>sum+el.getBoundingClientRect().height,0);
+    const grips=(this.previewDivider?.offsetHeight||8)+
+      (this.chunkDivider?.offsetHeight||8);
+    return Math.max(0,this.root.clientHeight-fixed-grips);
+  }
+  applyLayout() {
+    if (!this.main || !this.chunkBoard || !this.scroller || this.closed) return;
+    const vertical=normalizeVertical(
+      this.layoutAvailableHeight(),this.layout.preview,this.layout.chunk);
+    const horizontal=normalizeHorizontal(
+      this.main.clientWidth||this.root.clientWidth,
+      this.layout.left,this.layout.right);
+    this.displayLayout={...vertical,...horizontal};
+    const style=this.root.style;
+    style.setProperty("--h3ts-preview-h",vertical.preview+"px");
+    style.setProperty("--h3ts-chunk-h",vertical.chunk+"px");
+    style.setProperty("--h3ts-left-w",horizontal.left+"px");
+    style.setProperty("--h3ts-right-w",horizontal.right+"px");
+    style.setProperty("--h3ts-card-min", (this.layout.card??DEFAULTS.card)+"px");
+    style.setProperty("--h3ts-ref-size", (this.layout.thumb??DEFAULTS.thumb)+"px");
+    style.setProperty("--h3ts-track-h", (this.layout.track??DEFAULTS.track)+"px");
+    for(const [name,node] of Object.entries(this.splitters||{})){
+      const key={preview:"preview",chunk:"chunk",
+        left:"left",right:"right"}[name];
+      node.setAttribute("aria-valuenow",String(Math.round(this.displayLayout[key])));
+    }
+    this.scheduleDraw?.();
+  }
+  updateLayout(name,value,{persist=true}={}) {
+    this.layout=setLayoutDimension(this.layout,name,value);
+    this.applyLayout();
+    if(persist)this.persistView();
+  }
+  splitter(axis,name,label) {
+    const separator=el("div",{
+      class:"h3ts-splitter h3ts-splitter-"+axis,
+      role:"separator",tabindex:"0",
+      "aria-label":label,
+      "aria-orientation":axis==="horizontal"?"horizontal":"vertical",
+      "aria-valuemin":"0","aria-valuemax":"2400",
+    });
+    const adjust=(delta)=>{
+      const baseline=this.displayLayout?.[name]??this.layout[name]??0;
+      const value=name==="right" ? baseline-delta : baseline+delta;
+      this.updateLayout(name,value);
+    };
+    separator.addEventListener("keydown",e=>{
+      const delta=axis==="horizontal"
+        ? (e.key==="ArrowDown"?24:e.key==="ArrowUp"?-24:null)
+        : (e.key==="ArrowRight"?24:e.key==="ArrowLeft"?-24:null);
+      if(delta!=null){e.preventDefault();adjust(delta);}
+      if(e.key==="Home"||e.key==="End"){
+        e.preventDefault();
+        const isMax=e.key==="End";
+        const bounds={
+          preview:[LIMITS.preview,10000],chunk:[LIMITS.chunks,10000],
+          left:[LIMITS.sidebar,600],right:[LIMITS.sidebar,600],
+        }[name];
+        this.updateLayout(name,isMax?bounds[1]:bounds[0]);
+      }
+    });
+    separator.addEventListener("dblclick",()=>{
+      const next={...this.layout};
+      delete next[name];
+      this.layout=next;this.applyLayout();this.persistView();
+    });
+    separator.addEventListener("pointerdown",e=>{
+      if(e.button!==0 || this.layoutDrag)return;
+      e.preventDefault();e.stopPropagation();
+      const startCoord=axis==="horizontal"?e.clientY:e.clientX;
+      const initial=this.displayLayout?.[name]??0;
+      this.layoutDrag={name};
+      separator.classList.add("h3ts-dragging");
+      separator.setPointerCapture?.(e.pointerId);
+      const move=event=>{
+        if(!this.layoutDrag||this.layoutDrag.name!==name)return;
+        const offset=(axis==="horizontal"?event.clientY:event.clientX)-startCoord;
+        const target=initial+(name==="right"?-offset:offset);
+        this.updateLayout(name,target,{persist:false});
+      };
+      const finish=()=>{
+        separator.removeEventListener("pointermove",move);
+        separator.removeEventListener("pointerup",finish);
+        separator.removeEventListener("pointercancel",finish);
+        separator.classList.remove("h3ts-dragging");
+        if(this.layoutDrag?.name===name){
+          this.layoutDrag=null;
+          // Record the actual clamped dimension, not an unreachable desired
+          // size, so reopening with the same dialog geometry is stable.
+          this.layout[name]=this.displayLayout?.[name]??this.layout[name];
+          this.persistView();
+        }
+      };
+      separator.addEventListener("pointermove",move);
+      separator.addEventListener("pointerup",finish);
+      separator.addEventListener("pointercancel",finish);
+    });
+    return separator;
+  }
   persistView() {
     this.node.properties.h3_timeline_view = {
       playhead: this.playhead,
@@ -204,6 +313,7 @@ export class TimelineEditor {
       chunkFocus: this.chunkFocus,
       chunkPage: this.chunkPage,
       exportResolution: this.exportResolutionChoice,
+      layout: {...this.layout},
     };
   }
   persistWidget() {
