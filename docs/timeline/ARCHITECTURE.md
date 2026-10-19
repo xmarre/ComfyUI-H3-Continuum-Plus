@@ -178,6 +178,9 @@ vertical splitters allocate from the total remaining dialog height and
 enforce a minimal visible timeline; resize observers recompute layout after
 modal/viewport changes. The preview uses `object-fit: contain` so resizing
 does not distort source aspect ratio or lower decoded frame resolution.
+The Studio entry, chunk-input UI module and resizing stylesheet all have
+v10 cache-busting URLs; mixing an old stylesheet with new view sizing
+calculations is not a supported deployment state.
 
 ## Chunk-authoring and sampler precedence contract
 
