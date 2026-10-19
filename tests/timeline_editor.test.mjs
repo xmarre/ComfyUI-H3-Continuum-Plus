@@ -18,6 +18,7 @@ import {
   sourceAt,
   exportTarget,
   routeClipToGuidance,
+  visibleClipGeometry,
 } from "../web/timeline/core.js";
 const project = () => ({
   duration_frames: 504,
@@ -1024,4 +1025,22 @@ test("rapid scrubbing requests only the final thumbnail", async () => {
   assert.equal(viewSaves,3);
   await new Promise((resolve)=>setTimeout(resolve,120));
   assert.equal(previewCalls,1);
+});
+
+test("a multi-hour clip exposes only visible pixels and real trim edges", () => {
+  const fullWidth = 700_000;
+  const middle = visibleClipGeometry(180, fullWidth, 290_000, 291_600);
+  assert.equal(middle.left, 289_988);
+  assert.equal(middle.width, 1_624);
+  assert.equal(middle.offset, 289_808);
+  assert.equal(middle.showStartTrim, false);
+  assert.equal(middle.showEndTrim, false);
+  const start = visibleClipGeometry(180, fullWidth, 100, 2_000);
+  assert.equal(start.left, 180);
+  assert.equal(start.showStartTrim, true);
+  assert.equal(start.showEndTrim, false);
+  const end = visibleClipGeometry(180, fullWidth, fullWidth - 1_000, fullWidth + 1_000);
+  assert.equal(end.showStartTrim, false);
+  assert.equal(end.showEndTrim, true);
+  assert.equal(visibleClipGeometry(180, 100, 700_000, 700_800), null);
 });
