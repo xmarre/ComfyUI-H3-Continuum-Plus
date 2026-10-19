@@ -378,7 +378,7 @@ export class TimelineEditor {
     const role = el(
       "select",
       { "aria-label": "New track kind" },
-      ...ROLES.filter((r) => r !== "generated").map((r) =>
+      ...ROLES.filter((r) => !["generated","image_reference"].includes(r)).map((r) =>
         el("option", { value: r, text: LABELS[r] }),
       ),
     );
@@ -536,9 +536,10 @@ export class TimelineEditor {
     renderChunkWorkspace(this);
     this.scheduleChunkCompile();
     this.inputRoute.textContent =
-      "H3 INPUT CONTRACT · Chunk Inputs below defines per-chunk prompts, image " +
-      "references, video guidance and routed audio cuts. Connected sampler " +
-      "settings and persistent sockets are shown separately." +
+      "H3 INPUT CONTRACT · Chunk cards select Image Conveyor references through "+
+      "the existing sampler IMAGE connections. Chunk prompts, video guidance, "+
+      "and audio cuts are edited alongside them. Model/sampler connections "+
+      "and overrides remain inspectable." +
       (this.p.operation === "recreate"
         ? " Recreate also derives guidance from retained footage when no explicit video guide exists."
         : " Add explicit video guidance to chunks that should condition H3.") +
@@ -551,9 +552,9 @@ export class TimelineEditor {
   }
   renderAssets() {
     this.assets.replaceChildren(
-      el("h3", { text: "Media & references" }),
+      el("h3", { text: "Timeline media" }),
       el("p", {
-        text: "Drag media onto a track. Image sets apply per sampling invocation.",
+        text: "Drag video/audio onto tracks. Per-chunk reference images come from Image Conveyor's connected outputs; choose them in each chunk card.",
       }),
     );
     for (const a of this.p.assets) {
