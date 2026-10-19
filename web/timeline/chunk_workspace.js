@@ -72,6 +72,15 @@ export function setConveyorSlotEnabled(project, index, slot, enabled, connected 
   project.conveyor_reference_slots ||= {};
   project.conveyor_reference_slots[String(index)] = [...selection].sort((a,b)=>a-b);
 }
+export function setChunkConveyorSlots(project,index,slots,available) {
+  chunkWindow(project,index);
+  const allowed=new Set(available);
+  if(!Array.isArray(slots)||slots.some(slot=>
+    !Number.isInteger(slot)||!allowed.has(slot)))
+    throw new Error("Select only available Conveyor reference sockets");
+  project.conveyor_reference_slots ||= {};
+  project.conveyor_reference_slots[String(index)]=[...new Set(slots)].sort((a,b)=>a-b);
+}
 export function inheritConveyorSlots(project, index) {
   chunkWindow(project, index);
   delete project.conveyor_reference_slots?.[String(index)];
