@@ -5,10 +5,12 @@ import {
   selectedChunkPage, chunkWindow, overlappingChunkClips,
   setChunkPrompt, addChunkMedia, updateChunkSource, removeChunkClip,
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
+  setChunkClipEnabled,
 } from "../web/timeline/chunk_workspace.js";
 import { samplerInputDescription, referenceSocketSources, activeReferenceSources } from "../web/timeline/chunk_ui.js";
 import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState, conveyorShelfAvailable } from "../web/timeline/conveyor_source.js";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom } from "../web/timeline/navigation.js";
 
 import {
   changeTiming,
@@ -1697,4 +1699,74 @@ test("eight shared upstream shelf candidates yield four unique active per-chunk 
   assert.deepEqual(more.map(x=>x.slot),[1,2,3,4,5]);
   assert.deepEqual(selectedConveyorSlots(project,0),[1,3,4]);
   assert.equal(selectedConveyorSlots(project,1),null);
+});
+
+test("two-hour movie stays horizontally navigable when selected render range is 14 seconds",()=>{
+  const duration=2*3600*24,selection=[14952,15288],viewport=1450;
+  const zoom=fitRangeZoom(...selection,viewport);
+  const fullWidth=movieTimelineWidth(duration,zoom,viewport);
+  assert.ok(fullWidth>viewport*100,fullWidth);
+  const initial=scrollToFrame(selection[0],zoom,viewport,duration);
+  assert.ok(initial>0 && initial<fullWidth-viewport,initial);
+  const later=scrollToFrame(selection[0]+240,zoom,viewport,duration);
+  assert.ok(later>initial,"10-second pan must move");
+  const nearEnd=scrollToFrame(duration-1,zoom,viewport,duration);
+  assert.ok(nearEnd>later);
+  const fit=fitMovieZoom(duration,viewport);
+  assert.ok(fit<zoom);
+  assert.equal(movieTimelineWidth(duration,fit,viewport),viewport);
+  // Keyboard playhead seeking is not constrained to the selected render span.
+  const editor={p:{duration_frames:duration,selection},chunkFocus:true,
+    scroller:{clientWidth:viewport,scrollLeft:0},zoom,
+    stopPlayback(){},drawPlayhead(){},persistView(){},preview(){},
+    guard(){},seekTimer:null};
+  editor.playhead=0;
+  TimelineEditor.prototype.seek.call(editor,selection[0]-168);
+  assert.equal(editor.playhead,selection[0]-168);
+  clearTimeout(editor.seekTimer);
+});
+
+test("chunk media toggle preserves source PTS on both sides and changes only target chunk",()=>{
+  const p={chunk_frames:168,duration_frames:672,selection:[168,504],
+    tracks:[{id:"video",role:"retained",muted:false,locked:false,clips:[{
+      id:"v",start:0,end:672,source_in:"623",speed:"1",
+      asset_id:"a",padding:"hold",audio_role:"neither",
+    }]}]};
+  const original=p.tracks[0].clips[0];
+  const middleFrame=sourceAt(original,168),endingFrame=sourceAt(original,336);
+  const mutedId=setChunkClipEnabled(p,1,"video","v",false);
+  const clips=[...p.tracks[0].clips].sort((a,b)=>a.start-b.start);
+  assert.deepEqual(clips.map(c=>[c.start,c.end,!!c.muted]),
+    [[0,168,false],[168,336,true],[336,672,false]]);
+  assert.equal(clips[1].id,mutedId);
+  assert.equal(sourceAt(clips[1],168),middleFrame);
+  assert.equal(sourceAt(clips[1],336),endingFrame);
+  assert.equal(sourceAt(clips[2],336),endingFrame);
+  assert.equal(overlappingChunkClips(p,1,["retained"]).length,0);
+  assert.equal(overlappingChunkClips(p,1,["retained"],true).length,1);
+  assert.equal(overlappingChunkClips(p,0,["retained"]).length,1);
+  assert.equal(overlappingChunkClips(p,2,["retained"]).length,1);
+  setChunkClipEnabled(p,1,"video",mutedId,true);
+  assert.equal(overlappingChunkClips(p,1,["retained"]).length,1);
+  assert.equal(p.tracks[0].clips.length,3,"re-toggle must not resplit clips");
+});
+test("chunk-local audio/media toggles protect locked tracks and clip fades",()=>{
+  const media={id:"a",start:0,end:336,source_in:"0",speed:"1",
+    audio_role:"final",fade_in:0,fade_out:0};
+  const p={duration_frames:336,chunk_frames:168,
+    tracks:[{id:"sound",role:"audio",locked:false,muted:false,clips:[media]}]};
+  assert.throws(()=>setChunkClipEnabled(p,1,"sound","bad",false),/not present/);
+  p.tracks[0].locked=true;
+  assert.throws(()=>setChunkClipEnabled(p,1,"sound","a",false),/Unlock/);
+  p.tracks[0].locked=false;
+  p.tracks[0].muted=true;
+  assert.throws(()=>setChunkClipEnabled(p,1,"sound","a",true),/Unmute/);
+  p.tracks[0].muted=false;
+  media.fade_in=1;
+  assert.throws(()=>setChunkClipEnabled(p,1,"sound","a",false),/fades/);
+  assert.equal(p.tracks[0].clips.length,1);
+  media.fade_in=0;
+  setChunkClipEnabled(p,1,"sound","a",false);
+  assert.equal(overlappingChunkClips(p,1,["audio"]).length,0);
+  assert.equal(overlappingChunkClips(p,0,["audio"]).length,1);
 });
