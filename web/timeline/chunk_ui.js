@@ -327,7 +327,7 @@ function conveyorReferenceControls(editor, index, sources) {
               el("header",{},el("strong",{text:candidate.label}),
                 button("Close",()=>zoom.close())),
               el("img",{
-                src:candidate.thumbnail.replace(/([?&])size=\\d+/,"$1size=512"),
+                src:candidate.thumbnail.replace(/([?&])size=\d+/,"$1size=512"),
                 alt:candidate.label,
               }),
               el("p",{text:"Upstream Conveyor original. The intervening node"+
