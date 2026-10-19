@@ -136,6 +136,44 @@ Images are numbered **contiguously** for each physical H3 invocation in selected
 
 Changing logical chunk duration reflows masks together with chunk-authored inputs. Selection conflicts that would collapse separately configured mask entries into one chunk are rejected before modifying the project. Pre-existing file-based reference clips remain readable for backward compatibility, but the chunk authoring UI no longer offers imported-image reference assignment.
 
+## Navigate the complete source timeline
+
+The timeline's horizontal extent always represents the **entire movie**, even
+when the H3 render selection covers only a few chunks. The selected render
+range remains visibly highlighted and does not restrict scrubbing, seeking,
+scrolling or frame stepping. Use the horizontal scrollbar, trackpad horizontal
+gesture, or **Alt+mouse-wheel** to pan. **Fit selected chunks** zooms to the
+current render selection without clipping the rest of the movie; **Fit full
+movie** zooms out to its full duration. **Jump to selection** returns the
+playhead and viewport to the chosen generation range. These actions update
+view-only state and do not change render in/out, accepted takes or sampling.
+
+## Activate or deactivate media for an individual chunk
+
+Every chunk card separates **the chunk prompt**, **Image Conveyor references**,
+**adding video or audio** and **media already on the chunk**. The media area
+shows original footage, video guidance and audio clips, including inactive
+clips. Each media item has an **active** checkbox. Unchecking a video-guidance
+or audio item excludes it from the corresponding H3 conditioning/output
+according to its track role. Original-footage activation controls its timeline
+contribution; in Recreate, retained footage can also supply implicit guidance
+when no explicit video guide exists. Track-wide mute remains a separate global
+control. An item on a globally muted or locked track must be unmuted/unlocked
+there before its per-chunk activation can be edited.
+
+For a source clip spanning more than one chunk, a chunk-local toggle splits
+the clip at that chunk's output-frame boundaries while preserving its original
+source time, speed, and media settings in neighboring chunks. A clip with a
+time-based fade cannot be split transparently without changing the envelope;
+the editor refuses that operation with a precise diagnostic so the fade can
+be adjusted using the timeline editing controls. Undo restores the previous
+clip structure.
+
+The reference-image area has **All**, **None**, and **Reset** actions for the
+currently available Conveyor images. These apply only to that chunk. Reset
+returns to inheriting the globally enabled Conveyor references. Reference
+images remain connected IMAGE inputs rather than imported copies.
+
 ## Resizing the Timeline Studio workspace
 
 Timeline Studio is a resizable modal. Drag the **horizontal grip below the
