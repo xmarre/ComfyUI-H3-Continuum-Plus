@@ -31,6 +31,68 @@ function referenceOutput(node, index) {
     kind(node)==="ImageConveyor" && index>=6 && index<=13 ? index-5 : null;
   return {ordinal,name};
 }
+function connectedImageInputs(graph, node) {
+  return (node?.inputs || []).filter(input=>{
+    const link=linkAt(graph,input.link);
+    if (!link) return false;
+    const parent=nodeAt(graph,link.origin_id);
+    const output=parent?.outputs?.[link.origin_slot];
+    const types=[input.type,link.type,output?.type].filter(Boolean);
+    // The origin/link IMAGE type wins over a wildcard consumer declaration.
+    if (types.some(isImageType)) return true;
+    if (types.some(type=>
+      /^(?:FLOAT|INT|INTEGER|BOOLEAN|BOOL|STRING|TEXT|CLIP|MODEL|VAE|LATENT|MASK|SIGMAS|SAMPLER)$/i.test(
+        String(type)))) return false;
+    return isImageName(input.name);
+  });
+}
+// When an intermediary really merges multiple images, no 1:1 source identity
+// exists. Preserve *every* definite reachable Conveyor shelf provenance for
+// display, without pretending its original pixels equal the processed tensor.
+export function collectReferenceProvenance(graph,sampler,slot) {
+  const input=sampler?.inputs?.find(i=>i.name==="reference_image_"+slot);
+  const first=linkAt(graph,input?.link);
+  if(!first) return {images:[],truncated:false};
+  const frontier=[{link:first,via:[],visited:[]}];
+  const found=new Map();
+  let steps=0;
+  while(frontier.length && steps++ < 96 && found.size<32) {
+    const {link,via,visited}=frontier.shift();
+    const node=nodeAt(graph,link.origin_id);
+    if(!node || visited.includes(node.id))continue;
+    if(CONVEYOR.has(kind(node))) {
+      const {ordinal}=referenceOutput(node,link.origin_slot);
+      if(ordinal!=null) {
+        const key=node.id+":"+ordinal;
+        if(!found.has(key))found.set(key,{
+          node,shelfNumber:ordinal,via,
+        });
+      }
+      continue;
+    }
+    // Follow every IMAGE-producing input when the output is multi-source.
+    // Never traverse unrelated scalar configuration inputs.
+    let incoming=connectedImageInputs(graph,node);
+    if(!incoming.length) {
+      const all=(node.inputs||[]).filter(i=>linkAt(graph,i.link));
+      // Wildcard reroutes with a single input are safe to traverse, but a
+      // multi-input untyped node is not enough evidence to name a source.
+      if(all.length===1) incoming=all;
+    }
+    for(const edge of incoming) {
+      const parent=linkAt(graph,edge.link);
+      if(parent)frontier.push({
+        link:parent,
+        via:[...via,nameFor(node)],
+        visited:[...visited,node.id],
+      });
+    }
+  }
+  return {images:[...found.values()].sort((a,b)=>
+    a.node.id-b.node.id || a.shelfNumber-b.shelfNumber),
+    truncated:frontier.length>0};
+}
+
 function candidates(graph, node) {
   const linked=(node.inputs || []).filter(input=>linkAt(graph,input.link));
   if (!linked.length) return [];
