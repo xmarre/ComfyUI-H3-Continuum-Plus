@@ -218,17 +218,47 @@ function conveyorReferenceControls(editor, index, sources) {
     toggle.addEventListener("change",()=>editor.edit((next)=>
       setConveyorSlotEnabled(next,index,source.slot,toggle.checked,
         connected.map((x)=>x.slot))));
-    const item=el("label",{class:"h3ts-conveyor-ref"},
+    const label=el("label",{class:"h3ts-conveyor-ref-label"},
       toggle,
       el("span",{text:"Ref "+source.slot+" · "+source.label+
         (expectedPicture ? " · expected <Picture "+expectedPicture+">" : "")}),
     );
-    if(source.thumbnail)
-      item.append(el("img",{loading:"lazy",alt:"Image Conveyor shelf reference",
-        src:source.thumbnail}));
+    const item=el("div",{class:"h3ts-conveyor-ref"},label);
+    if(source.thumbnail) {
+      const thumb=el("img",{
+        class:"h3ts-conveyor-thumb",
+        loading:"eager",
+        alt:"Image Conveyor reference "+source.slot,
+        title:(source.previewNote || "Conveyor source image")+" · click for larger preview",
+        src:source.thumbnail,
+      });
+      const status=el("small",{class:"h3ts-chunk-warning",text:""});
+      thumb.addEventListener("error",()=>{
+        thumb.hidden=true;
+        status.textContent="Thumbnail unavailable · use Conveyor Refresh";
+      });
+      thumb.addEventListener("click",()=>{
+        const overlay=el("dialog",{class:"h3ts-ref-lightbox",
+          "aria-label":"Reference image preview"},
+          el("header",{},el("strong",{text:source.label}),
+            button("Close",()=>overlay.close())),
+          el("img",{src:source.thumbnail.replace(/size=160/, "size=512"),
+            alt:source.label}),
+          el("p",{text:source.previewNote || "Source reference preview"}),
+        );
+        editor.root.append(overlay);
+        overlay.addEventListener("close",()=>overlay.remove(),{once:true});
+        overlay.showModal();
+      });
+      item.append(thumb,status);
+    } else if (source.conveyor && source.dynamic) {
+      item.append(el("small",{text:"Dynamic image · pixels resolved during queue"}));
+    } else if (!source.reason) {
+      item.append(el("small",{text:"No source thumbnail available"}));
+    }
     if(source.reason)
       item.append(el("small",{class:"h3ts-chunk-warning",
-        text:"Currently inactive: "+source.reason}));
+        text:source.unavailable ? "Inactive: "+source.reason : source.reason}));
     group.append(item);
   }
   group.append(button("Inherit connected references",()=>editor.edit((next)=>
