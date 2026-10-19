@@ -1180,3 +1180,19 @@ test("audio chunks inherit the displayed soundtrack's late source cut", () => {
   assert.equal(cut.audio_role,"guide");
   assert.equal(p.tracks[0].clips[0].audio_role,"final");
 });
+
+test("changing selected chunk duration does not move authored clips in other project regions", () => {
+  const p = {chunk_frames:168,duration_frames:2*3600*24,
+    selection:[14952,15288],tracks:[],assets:[]};
+  const farIndex=150;
+  const outside=setChunkPrompt(p,farIndex,"Existing later take prompt");
+  const original={start:outside.start,end:outside.end,text:outside.text,
+    index:outside.chunk_index};
+  setChunkPrompt(p,89,"Selected chunk prompt");
+  changeTiming(p,"chunk_seconds",8);
+  assert.deepEqual({
+    start:outside.start,end:outside.end,text:outside.text,
+    index:outside.chunk_index,
+  },original);
+  assert.deepEqual([p.selection[0],p.selection[1]],[14784,15168]);
+});
