@@ -486,3 +486,68 @@ def test_normal_queue_restores_selected_reroll_seed_contract():
         {**contract, "reroll_from_chunk": 0}, requested_nonce=0, effective_nonce=0
     )
     assert original["chunk_contract_hashes"] != baseline["chunk_contract_hashes"]
+
+
+def test_conveyor_connections_feed_only_selected_refs_per_chunk_and_preserve_order():
+    p = blank_project()
+    p["conveyor_reference_slots"] = {"0": [3], "1": [], "2": [1, 3]}
+    p = validate(p)
+    provider = TimelineInputs(p, compile_project(p)["jobs"][0], None)
+    # Socket 1 contains a V3.4 bundle of two references; socket 3 contains one.
+    provider.reference_slot_sizes = (2, 0, 1, 0, 0, 0, 0, 0)
+    provider.set_offset(0)
+    assert [provider.picture_offset_for(i) for i in range(3)] == [1, 0, 3]
+    refs = ReferenceAssets(
+        images=tuple(torch.full((1, 8, 8, 3), x) for x in (0.1, 0.2, 0.3)),
+        latents=(None, None, None),
+        image_hashes=("image-a", "image-b", "image-c"),
+        combined_hash=digest(["image-a", "image-b", "image-c"]),
+        size_mode="Match Output",
+    )
+    only_c = provider.select_persistent_references(refs, 0)
+    assert only_c.image_hashes == ("image-c",)
+    assert torch.equal(only_c.images[0], refs.images[2])
+    assert provider.select_persistent_references(refs, 1) is None
+    assert provider.select_persistent_references(refs, 2).image_hashes == (
+        "image-a", "image-b", "image-c"
+    )
+
+    # The same queued project without explicit selections inherits every
+    # connected Image Conveyor output, preserving all existing workflows.
+    legacy = blank_project()
+    legacy_provider = TimelineInputs(
+        legacy, compile_project(legacy)["jobs"][0], None
+    )
+    legacy_provider.reference_slot_sizes = provider.reference_slot_sizes
+    legacy_provider.set_offset(0)
+    assert legacy_provider.select_persistent_references(refs, 0) is refs
+    assert legacy_provider.picture_offset_for(0) == 3
+
+
+def test_conveyor_chunk_mask_changes_stale_take_hash_and_picture_alias_offsets():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import stale_take
+
+    p = blank_project()
+    img = "a" * 64
+    p["assets"] = [{"id": img, "alias": "Alice"}]
+    p["tracks"] = [{
+        "id": "ref", "role": "image_reference",
+        "clips": [{"id": "clip", "asset_id": img, "start": 0, "end": 336}],
+    }]
+    p["prompts"]["global"] = "@Alice"
+    p["conveyor_reference_slots"] = {"0": [3], "1": []}
+    p = validate(p)
+    provider = TimelineInputs(p, compile_project(p)["jobs"][0], None)
+    provider.reference_slot_sizes = (1, 0, 1, 0, 0, 0, 0, 0)
+    provider.set_offset(0)
+    assert provider.windows[0]["aliases"] == {"Alice": "<Picture 2>"}
+    assert provider.windows[1]["aliases"] == {"Alice": "<Picture 1>"}
+    record = {
+        "id": "c" * 32, "indices": [0, 1],
+        "input_hashes": provider.hashes,
+        "picture_offset": 2,
+        "reference_slot_sizes": list(provider.reference_slot_sizes),
+    }
+    assert not stale_take(p, record, [record])
+    p["conveyor_reference_slots"]["1"] = [1]
+    assert stale_take(p, record, [record])
