@@ -55,10 +55,14 @@ export function samplerInputDescription(editor) {
   const pinned = Array.from({length:8},(_,i)=>"reference_image_"+(i+1))
     .filter(linked);
   const persistent = [
-    ...pinned.map((x)=>"Reference "+x.slice(-1)),
+    ...pinned,
     ...["reference_video_1","driving_audio","first_frame","last_frame"]
       .filter(linked),
-  ];
+  ].map((name)=>name+" ← "+nodeInput(sampler,name).from);
+  const supplied = ["model","clip","video_vae","audio_vae","sampler","sigmas"]
+    .map((name)=>[name,nodeInput(sampler,name)])
+    .map(([name,input])=>name+": "+
+      (input.linked ? input.from : "not connected"));
   const overrides = [];
   const externalPrompt = linked("sequence_prompt") ||
     (typeof widget("sequence_prompt") === "string" &&
@@ -70,7 +74,7 @@ export function samplerInputDescription(editor) {
   if (linked("height")) overrides.push("height comes from a connected node");
   return {
     sampler,
-    persistent, overrides, promptOverridden: externalPrompt,
+    persistent, supplied, overrides, promptOverridden: externalPrompt,
     audioOverridden: linked("driving_audio"),
     settings: [
       ["Chunks",String(selectionChunks(editor.p))],
@@ -80,9 +84,16 @@ export function samplerInputDescription(editor) {
           ? name+": connected" : name+": "+(widget(name) ?? editor.p[name])).join(" · ")],
       ["Continuity",String(widget("continuity") ?? "sampler default")],
       ["Seed",String(widget("base_seed") ?? "sampler default")],
+      ["Continuation method",String(widget("continuation_method") ?? "sampler default")],
+      ["Audio continuity",String(widget("audio_continuity") ?? "sampler default")],
       ["Reference size",String(widget("reference_size") ?? "sampler default")],
       ["Video reference size",String(widget("video_reference_size") ?? "sampler default")],
       ["Run storage",String(widget("run_storage") ?? "sampler default")],
+      ["Run name",String(widget("run_name") ?? "") || "(automatic)"],
+      ["Prompt mode",String(widget("prompt_mode") ?? "Auto")],
+      ["Regenerate from",String(widget("regenerate_from") ?? "Auto")],
+      ["Reroll nonce",String(widget("reroll_nonce") ?? 0)],
+      ["Conditioning lookahead",String(widget("conditioning_lookahead") ?? "node default")],
     ],
   };
 }
@@ -184,8 +195,9 @@ export function renderChunkWorkspace(editor) {
   if (sampler.warning) settings.append(el("p",{text:sampler.warning}));
   else {
     settings.append(el("p",{text:sampler.settings.map(([k,v])=>k+": "+v).join("  |  ")}));
-    settings.append(el("p",{text:"Persistent node inputs: "+
-      (sampler.persistent.join(", ") || "none connected")}));
+    settings.append(el("p",{text:"Native model inputs: "+sampler.supplied.join(" · ")}));
+    settings.append(el("p",{text:"Persistent conditioning sockets: "+
+      (sampler.persistent.join(" · ") || "none connected")}));
     if (sampler.overrides.length) settings.append(
       el("p",{class:"h3ts-chunk-warning",text:"OVERRIDES: "+sampler.overrides.join(" · ")}));
   }
