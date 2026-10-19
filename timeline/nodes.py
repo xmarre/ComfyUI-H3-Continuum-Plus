@@ -63,12 +63,19 @@ def stale_take(
     if end_frame is not None and ranges:
         limit = sum(a < end_frame for a, b in ranges)
     scope = record.get("guide_scope")
+    from .model import reference_slots_for_chunk
+
+    sizes = record.get("reference_slot_sizes")
     for index, old in zip(record["indices"][:limit], record["input_hashes"][:limit]):
+        picture_offset = record.get("picture_offset", 0)
+        selected = reference_slots_for_chunk(p, index)
+        if sizes is not None and selected is not None:
+            picture_offset = sum(sizes[slot - 1] for slot in selected)
         window = compile_window(
             p,
             index,
             guide_scope=tuple(scope) if scope else None,
-            picture_offset=record.get("picture_offset", 0),
+            picture_offset=picture_offset,
         )
         if window["generation_hash"] != old:
             return True
@@ -378,6 +385,18 @@ class H3ContinuumTimelineSampler:
             for i in w[key]
         }:
             store.assets.verify(asset_id)
+        # Preserve physical socket boundaries. Image Conveyor provides one
+        # IMAGE (or None) per stable ref_image_1..8 output; V3.4 can also
+        # bundle several images in one compatible reference socket.
+        from ..reference import ReferenceImageBundle
+        slot_sizes = tuple(
+            len(value.images) if isinstance(value, ReferenceImageBundle)
+            else (1 if value is not None else 0)
+            for value in (
+                reference_images.get(f"reference_image_{i}")
+                for i in range(1, 9)
+            )
+        )
         references = prepare_reference_assets(
             **{
                 f"reference_image_{i}": reference_images.get(f"reference_image_{i}")
@@ -396,6 +415,7 @@ class H3ContinuumTimelineSampler:
             size_mode=video_reference_size,
         )
         provider = TimelineInputs(p, job, store)
+        provider.reference_slot_sizes = slot_sizes
         provider.reference_size = reference_size
         provider.video_reference_size = video_reference_size
         provider.picture_offset = references.count if references else 0
@@ -589,6 +609,7 @@ class H3ContinuumTimelineSampler:
             "input_hashes": provider.hashes,
             "guide_scope": job.get("guide_scope"),
             "picture_offset": provider.picture_offset,
+            "reference_slot_sizes": list(provider.reference_slot_sizes),
             "prompt_override": provider.project["prompts"]
             if sequence_prompt is not None
             else None,
