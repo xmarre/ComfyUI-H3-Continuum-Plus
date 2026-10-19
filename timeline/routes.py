@@ -356,7 +356,14 @@ def register_routes():
             store.assets.verify, asset_id, cancel=_request_cancel,
         )
         stamp = str(rational(request.query.get("pts", "0")))
-        key = asset_id + "-" + hashlib.sha256(stamp.encode("ascii")).hexdigest()
+        width = int(request.query.get("w", "240"))
+        height = int(request.query.get("h", "136"))
+        if not (16 <= width <= 2048 and 16 <= height <= 1152
+                and width * height <= 2048 * 1152):
+            raise ValueError("Invalid still-image size")
+        key = asset_id + "-" + hashlib.sha256(
+            f"{stamp}:{width}:{height}".encode("ascii")
+        ).hexdigest()
         root = store.root / "thumbnails"
         root.mkdir(exist_ok=True)
         output = root / (key + ".jpg")
@@ -368,7 +375,7 @@ def register_routes():
                 if not output.is_file():
                     pixels = await _media_cpu_cancellable(
                         request, video_frames,
-                        path, [stamp], 240, 136, padding="hold",
+                        path, [stamp], width, height, padding="hold",
                     )
                     # Serialize a tiny derived JPEG, not the source movie.
                     data = io.BytesIO()
