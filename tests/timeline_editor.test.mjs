@@ -2,6 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { TimelineEditor } from "../web/timeline/editor.js";
 import {
+  selectedChunkPage, chunkWindow, overlappingChunkClips,
+  setChunkPrompt, addChunkMedia, updateChunkSource, removeChunkClip,
+} from "../web/timeline/chunk_workspace.js";
+import { samplerInputDescription } from "../web/timeline/chunk_ui.js";
+
+import {
   changeTiming,
   migrateSamplerWorkflow,
   orderSampler,
@@ -1055,4 +1061,76 @@ test("main viewer requests display-density source pixels, not 240x136 filmstrip 
     viewerFrameDimensions({video:{width:320,height:180}},800,600,1),
     [320,180],
   );
+});
+
+test("late two-hour selection becomes two real 168-frame H3 chunks", () => {
+  const p={duration_frames:2*3600*24,chunk_frames:168,
+    selection:[14952,15288],tracks:[],assets:[]};
+  const visible=selectedChunkPage(p);
+  assert.equal(visible.total,2);
+  assert.deepEqual(visible.chunks.map((x)=>[x.index,x.start,x.end]),
+    [[89,14952,15120],[90,15120,15288]]);
+  assert.deepEqual(chunkWindow(p,89),[14952,15120]);
+  assert.deepEqual(selectedChunkPage({...p,selection:[14980,15140]}).chunks
+    .map((x)=>[x.selectedStart,x.selectedEnd]),
+    [[14980,15120],[15120,15140]]);
+});
+
+test("chunk prompt and source slices compile as exact independent native window inputs", () => {
+  const img="a".repeat(64),movie="b".repeat(64),audio="c".repeat(64);
+  const p={duration_frames:2*3600*24,chunk_frames:168,
+    selection:[14952,15288],assets:[
+      {id:img,name:"Reference",kind:"image",video:{start_time:"0"}},
+      {id:movie,name:"Movie",kind:"video",video:{width:1920,height:1080,start_time:"0"},audio:{}},
+      {id:audio,name:"Voice",kind:"audio",audio:{start_time:"0"}},
+    ],tracks:[{id:"retained",role:"retained",clips:[
+      {id:"original",asset_id:movie,start:14952,end:15288,
+        source_in:"623",speed:"1",padding:"hold",audio_role:"neither"},
+    ]}]};
+  const first=setChunkPrompt(p,89,"slow push-in"); 
+  const second=setChunkPrompt(p,90,"cut to wide shot");
+  assert.equal(first.override,true);
+  assert.deepEqual([first.start,first.end],[14952,15120]);
+  assert.deepEqual([second.start,second.end],[15120,15288]);
+  const ref=addChunkMedia(p,89,"image_reference",img);
+  const video=addChunkMedia(p,89,"video_guide",movie);
+  const sound=addChunkMedia(p,89,"audio",audio,"guide");
+  assert.deepEqual([ref.start,ref.end],[14952,15120]);
+  assert.deepEqual([video.start,video.end],[14952,15120]);
+  assert.equal(video.source_in,"623");
+  assert.equal(sound.audio_role,"guide");
+  assert.equal(overlappingChunkClips(p,90,["image_reference"]).length,0);
+  assert.equal(overlappingChunkClips(p,90,["video_guide"]).length,0);
+  updateChunkSource(p,sound.id,"23.5");
+  assert.equal(sound.source_in,"23.5");
+  assert.throws(()=>updateChunkSource(p,sound.id,"-1"),/Invalid source/);
+  assert.throws(()=>addChunkMedia(p,89,"image_reference",img),/already active/);
+  removeChunkClip(p,ref.id);
+  assert.equal(overlappingChunkClips(p,89,["image_reference"]).length,0);
+});
+
+test("connected native sampler precedence is visible independently of authored inputs", () => {
+  const studio={id:1,comfyClass:"H3ContinuumTimelineStudio"};
+  const sampler={id:2,comfyClass:"H3ContinuumTimelineSampler",
+    widgets:[{name:"base_seed",value:42},{name:"continuity",value:"Strong"},
+      {name:"reference_size",value:"Match Output"}],
+    inputs:[
+      {name:"timeline",link:1},{name:"sequence_prompt",link:2},
+      {name:"reference_image_1",link:3},{name:"driving_audio",link:4},
+      {name:"width",link:5},
+    ]};
+  const nodes={1:studio,2:sampler};
+  sampler.graph={links:{
+    1:{origin_id:1},2:{origin_id:3},3:{origin_id:4},
+    4:{origin_id:5},5:{origin_id:6}},
+    getNodeById(id){return nodes[id];}};
+  const editor={node:studio,p:{selection:[0,336],chunk_frames:168,
+    width:768,height:512},app:{graph:{_nodes:[studio,sampler]}}};
+  const result=samplerInputDescription(editor);
+  assert.equal(result.promptOverridden,true);
+  assert.equal(result.audioOverridden,true);
+  assert.ok(result.persistent.includes("Reference 1"));
+  assert.match(result.overrides.join(" "),/width comes from a connected node/);
+  assert.deepEqual(result.settings.slice(0,2),
+    [["Chunks","2"],["Chunk duration","7.000s (168f)"]]);
 });
