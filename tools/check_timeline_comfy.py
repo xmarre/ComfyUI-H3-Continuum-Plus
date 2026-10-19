@@ -229,6 +229,17 @@ def main():
                 )
                 > 100
             )
+            # Two filmstrip tracks referencing the same movie should reuse
+            # a published JPEG, without reopening/decoding the source.
+            thumb_dir = directory / "input" / "h3_timeline_studio" / "thumbnails"
+            first_thumbnail = next(thumb_dir.glob("*.jpg"))
+            first_stamp = first_thumbnail.stat().st_mtime_ns
+            again = request(
+                "/h3_continuum/timeline/thumbnail/" + asset["id"] + "?pts=1"
+            )
+            assert again == first_thumbnail.read_bytes()
+            assert first_thumbnail.stat().st_mtime_ns == first_stamp
+            assert len(list(thumb_dir.glob("*.jpg"))) == 1
             assert (
                 len(
                     request(
