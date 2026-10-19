@@ -389,19 +389,26 @@ class H3ContinuumTimelineSampler:
         # IMAGE (or None) per stable ref_image_1..8 output; V3.4 can also
         # bundle several images in one compatible reference socket.
         from ..reference import ReferenceImageBundle
+        from .model import reference_slots_needed
+
+        needed = reference_slots_needed(
+            p, (window["index"] for window in job["windows"])
+        )
+        # The original Conveyor outputs are ComfyUI inputs; only preprocess
+        # references used by at least one logical chunk of this native job.
+        # No image files or tensors are saved into the timeline project.
+        job_references = {
+            f"reference_image_{i}": reference_images.get(f"reference_image_{i}")
+            if i in needed else None
+            for i in range(1, 9)
+        }
         slot_sizes = tuple(
             len(value.images) if isinstance(value, ReferenceImageBundle)
             else (1 if value is not None else 0)
-            for value in (
-                reference_images.get(f"reference_image_{i}")
-                for i in range(1, 9)
-            )
+            for value in job_references.values()
         )
         references = prepare_reference_assets(
-            **{
-                f"reference_image_{i}": reference_images.get(f"reference_image_{i}")
-                for i in range(1, 9)
-            },
+            **job_references,
             output_width=p["width"],
             output_height=p["height"],
             size_mode=reference_size,
