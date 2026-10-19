@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Resolve Image Conveyor source images through an unambiguous chain of
+  IMAGE-processing nodes (e.g. Media Resolution), displaying live source
+  thumbnails and filenames on each chunk with provenance and zoom preview.
+  Distinguish original Conveyor thumbnails from processed IMAGE tensors and
+  identify dynamically queued/ambiguous sources without guessing.
+- Reflow the desktop chunk editor into readable full-width cards with a
+  shared scroll region, collapse secondary sampler diagnostics, and update
+  Conveyor shelf/toggle displays automatically while preserving prompt edits.
+  Reference checkbox edits no longer stop source playback or re-render video.
+- Show a temporary cached source still while the high-detail viewer frame
+  loads, with explicit failure diagnostics instead of a blank display.
+  Keep preview derivatives completely separate from sampling and export.
+- Bump Timeline Studio frontend/backend/Windows compatibility protocol to v8.
+
+
 - Use existing Image Conveyor `ref_image_1..8` → Timeline Sampler `reference_image_1..8` connections as the per-chunk reference source. Show shelf previews/filenames and independent chunk checkboxes, including explicit zero selected images and inherited all-connected defaults; no duplicate media import or reference file materialization.
 - Filter actual native reference IMAGE tensors by per-chunk socket selection in both normal H3 sampling and conditioning lookahead. Preserve contiguous Picture numbering for surviving inputs, V3.4 bundled socket groups, causal hashes, and stale-take validation. Preserve legacy file-based reference clips but remove the imported-image picker from new chunk cards.
 - Keep Conveyor reference masks aligned when chunk duration changes, rejecting ambiguous collisions before mutation.
