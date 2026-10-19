@@ -147,6 +147,24 @@ These tests verify structure and native conditioning contracts, not media
 playback frame accuracy, actual audio fade quality, or the display interaction
 on a particular ComfyUI/browser installation.
 
+## Horizontal movie navigation and active chunk media
+
+The timeline is a long horizontal scroller, independent from the selected
+render window. Ordinary mouse-wheel input over the track scroll area now pans
+horizontally without requiring Alt; native horizontal trackpad deltas and
+explicit pan/fit controls are supported. The scroll container retains native
+horizontal overflow, while Ctrl/Command-wheel is not intercepted. Navigation
+must not mutate the video PTS, generation selection or clip contents.
+
+Chunk cards prioritize active media rows with enabled checkboxes and collapse
+the add-media pickers. Disabling a long guide/audio/retained clip for one chunk
+uses the existing bounded split-and-mute operation, preserving other chunks'
+activity and source timestamps. Locks, global track mutes and cross-boundary
+fades remain safety restrictions, with explicit UI controls or errors.
+Regression tests of source-window navigation and per-chunk clip muting remain
+in the frontend suite. Browser pointer and wheel behavior still requires
+interaction testing in the installed Studio.
+
 ## User-resizable Timeline Studio layout
 
 The main viewer previously used `flex:1` while the chunk editor claimed
