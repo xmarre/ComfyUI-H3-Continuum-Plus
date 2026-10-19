@@ -3,7 +3,7 @@
 from pathlib import Path
 from urllib.parse import quote
 
-NATIVE_PATH_CONTRACT = "h3-timeline-conveyor-provenance-v11"
+NATIVE_PATH_CONTRACT = "h3-timeline-active-reference-chunks-v12"
 
 
 def native_runtime_manifest(extension_dirs, web_root):
