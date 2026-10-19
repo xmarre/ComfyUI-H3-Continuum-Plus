@@ -8,6 +8,7 @@ from ComfyUI_H3_Continuum_Join.timeline.model import (
     compile_window,
     sample_boundary,
     validate,
+    with_external_prompt_source,
 )
 
 A, B = "a" * 64, "b" * 64
@@ -269,3 +270,46 @@ def test_guide_audio_edit_outside_a_job_scope_keeps_its_takes_valid():
     assert stale_take(
         validate(later), legacy, [legacy]
     )  # unscoped records stay conservative
+
+
+def test_external_sequence_prompt_preserves_explicit_chunk_prompts_only():
+    import json
+
+    p = project()
+    p["prompts"]["script"] = "inherited project script"
+    p["tracks"].append({
+        "id": "chunk-editor-prompts", "role": "prompt", "clips": [
+            {
+                "id": "legacy", "start": 0, "end": 168,
+                "text": "old free-form region", "override": True,
+            },
+            {
+                "id": "authored-chunk-2", "start": 168, "end": 336,
+                "text": "precise second chunk", "override": True,
+                "chunk_prompt": True,
+            },
+        ],
+    })
+    p = validate(p)
+    source = {
+        "global": "", "mode": "List",
+        "script": json.dumps(["external one", "external two", "external three"]),
+    }
+    merged = with_external_prompt_source(p, source)
+    assert compile_window(merged, 0)["prompt"] == "external one"
+    assert compile_window(merged, 1)["prompt"] == "precise second chunk"
+    assert compile_window(merged, 2)["prompt"] == "external three"
+    assert p["prompts"]["script"] == "inherited project script"
+    assert len(p["tracks"][-1]["clips"]) == 2
+
+    # A take sampled with the combined prompt must not immediately become
+    # falsely stale when its inputs are rechecked against the saved project.
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import stale_take
+    record = {
+        "id": "c" * 32, "indices": [1],
+        "input_hashes": [compile_window(merged, 1)["generation_hash"]],
+        "prompt_override": source,
+    }
+    assert not stale_take(p, record, [record])
+    p["tracks"][-1]["clips"][1]["text"] = "new second chunk prompt"
+    assert stale_take(p, record, [record])
