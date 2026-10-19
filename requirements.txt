@@ -1,1 +1,3 @@
-# No extra pip dependencies. Uses PyTorch and safetensors bundled with ComfyUI.
+# PyTorch, numpy, safetensors and aiohttp are supplied by ComfyUI.
+# Timeline Studio uses the same PyAV minimum as current ComfyUI Core.
+av>=17.0.0
