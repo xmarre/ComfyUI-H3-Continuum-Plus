@@ -7,7 +7,7 @@ import {
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
 } from "../web/timeline/chunk_workspace.js";
 import { samplerInputDescription, referenceSocketSources } from "../web/timeline/chunk_ui.js";
-import { traceReferenceSocket, shelfImagePath } from "../web/timeline/conveyor_source.js";
+import { traceReferenceSocket, shelfImagePath, conveyorState } from "../web/timeline/conveyor_source.js";
 
 import {
   changeTiming,
@@ -1389,4 +1389,75 @@ test("main preview reuses decoded nearby filmstrip before starting another thumb
     "/thumb/2");
   assert.equal(TimelineEditor.prototype.cachedFilmstripStill.call(ctx,clip,14500),
     null);
+});
+
+test("Media Resolution wildcard IMAGE input resolves upstream Conveyor without fabricating other inputs",()=>{
+  const conveyor={id:8,comfyClass:"ImageConveyor",
+    widgets:[{name:"state_json",value:JSON.stringify({
+      output_mode:"persistent_refs",
+      reference_slots:[{
+        type:"input",annotated:"references/character.png [input]",
+        filename:"character.png",source_version:"v9",
+      }],
+    })}],
+    outputs:Array.from({length:14},(_,i)=>
+      ({type:i>=6?"IMAGE":"INT",name:i===6?"ref_image_1":"other"})),
+  };
+  const scalar={id:11,comfyClass:"Scalar",outputs:[{type:"FLOAT",name:"megapixels"}]};
+  const processor={id:10,title:"Media Resolution — Image Conveyor",
+    comfyClass:"SmartImageResize",
+    inputs:[
+      {name:"pixels",type:"*",link:101},
+      {name:"megapixels",type:"*",link:102},
+    ],outputs:[{type:"IMAGE",name:"image"}]};
+  const sampler={id:2,comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[{name:"timeline",link:1},{name:"reference_image_1",link:103}]};
+  const studio={id:1,comfyClass:"H3ContinuumTimelineStudio"};
+  const nodes=[conveyor,scalar,processor,sampler,studio];
+  const graph={_nodes:nodes,getNodeById(id){return nodes.find(n=>n.id===id)},
+    links:{
+      1:{origin_id:1,origin_slot:0},
+      101:{origin_id:8,origin_slot:6,type:"IMAGE"},
+      102:{origin_id:11,origin_slot:0,type:"FLOAT"},
+      103:{origin_id:10,origin_slot:0,type:"IMAGE"},
+    }};
+  sampler.graph=graph;
+  const trace=traceReferenceSocket(graph,sampler,1);
+  assert.equal(trace.conveyor,true);
+  assert.equal(trace.shelfNumber,1);
+  assert.deepEqual(trace.via,["Media Resolution — Image Conveyor"]);
+  const editor={node:studio,app:{graph},p:{chunk_frames:168,selection:[0,168]}};
+  const sources=referenceSocketSources(editor);
+  assert.match(sources[0].thumbnail,/references%2Fcharacter.png/);
+  assert.match(sources[0].label,/character.png/);
+  assert.match(sources[0].label,/Media Resolution/);
+  assert.equal(sources[0].reason,null);
+  // An unknown wildcard second IMAGE is genuinely ambiguous.
+  processor.inputs[1].type="*";
+  graph.links[102].type="IMAGE";
+  scalar.outputs[0].type="IMAGE";
+  assert.equal(traceReferenceSocket(graph,sampler,1).conveyor,false);
+});
+test("missing output labels, normalized shelf files and traversal failure are diagnosed",()=>{
+  const image={id:8,comfyClass:"ImageConveyor",
+    outputs:Array.from({length:14},(_,i)=>({type:i>=6?"IMAGE":"STRING"})),
+    widgets:[{name:"state_json",value:JSON.stringify({
+      output_mode:"persistent_refs",
+      reference_slots:[
+        {type:"input",subfolder:"refs",filename:"person.webp"},
+      ],
+    })}],
+  };
+  const sampler={inputs:[{name:"reference_image_1",link:51}]};
+  const graph={_nodes:[image],links:{51:{origin_id:8,origin_slot:6}},
+    getNodeById(id){return id===8?image:null}};
+  const trace=traceReferenceSocket(graph,sampler,1);
+  assert.equal(trace.shelfNumber,1);
+  assert.equal(shelfImagePath(conveyorState(image),1),"refs/person.webp");
+  assert.equal(shelfImagePath({output_mode:"persistent_refs",reference_slots:[
+    {type:"input",annotated:"C:/windows/secret.png [input]"},
+  ]},1),null);
+  assert.equal(shelfImagePath({output_mode:"persistent_refs",reference_slots:[
+    {type:"input",relative_path:"nested/../../secret.png"},
+  ]},1),null);
 });
