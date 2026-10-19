@@ -5,7 +5,7 @@
 **Chunk-first H3 preparation:** Timeline Studio now opens on the selected number of
 logical H3 generation chunks and their exact 24 fps duration, synchronized with
 the connected Continuum Timeline Sampler. Each chunk has a prompt textarea,
-registered image reference assignments, source-PTS-addressed video guidance
+per-chunk selections from the connected Image Conveyor reference shelf, source-PTS-addressed video guidance
 cuts, and separately routed audio guide/reference/final cuts. The panel identifies
 persistent node connections and values, plus any native input precedence.
 A long source movie can still be inspected in the optional full-film timeline.
