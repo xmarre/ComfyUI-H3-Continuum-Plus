@@ -19,6 +19,7 @@ import {
   exportTarget,
   routeClipToGuidance,
   visibleClipGeometry,
+  viewerFrameDimensions,
 } from "../web/timeline/core.js";
 const project = () => ({
   duration_frames: 504,
@@ -1043,4 +1044,15 @@ test("a multi-hour clip exposes only visible pixels and real trim edges", () => 
   assert.equal(end.showStartTrim, false);
   assert.equal(end.showEndTrim, true);
   assert.equal(visibleClipGeometry(180, 100, 700_000, 700_800), null);
+});
+
+test("main viewer requests display-density source pixels, not 240x136 filmstrip tiles", () => {
+  const source = {video:{width:1920,height:1080}};
+  assert.deepEqual(viewerFrameDimensions(source,740,420,1),[740,416]);
+  assert.deepEqual(viewerFrameDimensions(source,740,420,2),[1480,833]);
+  assert.deepEqual(viewerFrameDimensions(source,3000,2000,2),[1920,1080]);
+  assert.deepEqual(
+    viewerFrameDimensions({video:{width:320,height:180}},800,600,1),
+    [320,180],
+  );
 });
