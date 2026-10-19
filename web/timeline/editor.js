@@ -189,8 +189,8 @@ export class TimelineEditor {
     this.editVersion++;
     this.history.commit(fn);
     this.persistWidget();
-    refreshConveyorControls(this, true);
     this.compiledWindows=null;
+    refreshConveyorControls(this, true);
     this.scheduleChunkCompile();
   }
   persistView() {
@@ -1482,6 +1482,7 @@ export class TimelineEditor {
       time(this.playhead) +
       ` · chunk ${Math.floor(this.playhead / this.p.chunk_frames) + 1}`;
     if (!chosen) {
+      this.previewStillUrl=null;
       this.video.pause();
       this.video.hidden = true;
       this.image.hidden = true;
@@ -1491,7 +1492,14 @@ export class TimelineEditor {
       return;
     }
     const asset = this.p.assets.find((a) => a.id === chosen.asset_id);
-    if (!asset) return;
+    if (!asset) {
+      this.previewStillUrl=null;
+      this.previewPlaceholder.hidden=true;
+      this.image.hidden=true;
+      this.previewStatus.hidden=false;
+      this.previewStatus.textContent="Preview source is missing; relink the imported media";
+      return;
+    }
     this.previewClip = chosen;
     this.previewAsset = asset;
     const source = sourceAt(chosen, this.playhead),
