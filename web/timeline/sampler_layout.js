@@ -126,9 +126,12 @@ export function changeTiming(p, name, value) {
           if (!c.chunk_prompt && !c.chunk_workspace) continue;
           const oldIndex = Number.isInteger(c.chunk_index)
             ? c.chunk_index : Math.floor(c.start / oldSize);
-          const newIndex = oldIndex >= oldFirst && oldIndex < oldFirst + oldCount
-            ? newFirst + oldIndex - oldFirst
-            : Math.floor(c.start / nextSize);
+          // Only reflow the authored selection. Other project regions may
+          // contain accepted takes or deliberately timed source footage; moving
+          // their chunk-owned clips as a side effect would corrupt their PTS
+          // alignment and invalidate unrelated windows.
+          if (oldIndex < oldFirst || oldIndex >= oldFirst + oldCount) continue;
+          const newIndex = newFirst + oldIndex - oldFirst;
           c.chunk_index = newIndex;
           c.start = newIndex * nextSize;
           c.end = (newIndex + 1) * nextSize;
