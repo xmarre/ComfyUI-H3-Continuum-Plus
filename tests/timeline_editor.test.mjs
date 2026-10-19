@@ -1622,6 +1622,14 @@ test("Conveyor output toggles and shelf presence determine currently available r
   state.reference_slots[1]=null;
   assert.equal(conveyorShelfAvailable(node,state,2),false);
   assert.equal(conveyorShelfAvailable(node,{...state,output_mode:"queue_group"},1),false);
+  const runtime={...state};
+  delete runtime.reference_output_enabled;
+  const serialized={...state,
+    reference_output_enabled:[false,true,false,true,false,false,false,false]};
+  node.widgets=[{name:"state_json",value:JSON.stringify(serialized)}];
+  assert.equal(conveyorShelfAvailable(node,runtime,1),false);
+  assert.equal(conveyorShelfAvailable(node,runtime,2),false); // shelf is empty
+  assert.equal(conveyorShelfAvailable(node,runtime,4),true);
 });
 test("eight shared upstream shelf candidates yield four unique active per-chunk reference cards",()=>{
   const studio={id:1,comfyClass:"H3ContinuumTimelineStudio"};
