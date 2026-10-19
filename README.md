@@ -2,6 +2,25 @@
 
 ## Timeline Studio (draft integration)
 
+The chunk editor traces connected IMAGE paths back through unambiguous single-input
+image processors (including a Media Resolution node) to Image Conveyor. It shows
+the active Conveyor shelf's thumbnail, filename and original source provenance
+beside each chunk's reference checkbox. Thumbnails are **source previews**,
+not the output of any intermediate resizing/processing nodes; actual sampling
+continues to receive the existing connected processed IMAGE tensor.
+Shelf changes and output toggles refresh while Studio remains open. Reference
+checkbox edits preserve video playback and do not rebuild movie tracks.
+
+The chunk workspace uses the full desktop width, with one scrollable content
+region for its chunk cards and expandable advanced sampler diagnostics. Main
+viewer still images first expose a cached low-detail source preview while the
+high-detail image is decoded; failures are reported on-screen rather than
+leaving an unexplained black viewport. Neither preview derivative participates
+in H3 sampling or video export. The current native/editor compatibility
+contract is `h3-timeline-conveyor-preview-v8`.
+
+## Timeline Studio (draft integration)
+
 **Chunk-first H3 preparation:** Timeline Studio now opens on the selected number of
 logical H3 generation chunks and their exact 24 fps duration, synchronized with
 the connected Continuum Timeline Sampler. Each chunk has a prompt textarea,
