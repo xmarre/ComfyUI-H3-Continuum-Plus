@@ -144,7 +144,9 @@ reflow, graph-connected sampler precedence, and the native connected
 `with_external_prompt_source` transformation in physical sampling and
 stale-take verification. Existing unmarked/free-form prompt regions keep their
 previous external-source precedence. Source-in PTS and speed are unchanged
-by output chunk-length edits. An integration browser assertion verifies a
+by output chunk-length edits. Authored clips **outside** the selected render
+window are not moved as a side effect. Source PTS edits accept the backend's
+rational forms (e.g. `47/2`) and reject nonfinite values. An integration browser assertion verifies a
 visible chunk prompt is serialized into the actual Studio project widget.
 
 CI tests and packaged Windows Electron smoke tests establish structural
