@@ -184,6 +184,35 @@ The Timeline Sampler receives ComfyUI IMAGE tensors directly from its existing `
 
 The selected socket mask participates in chunk generation hashes. Saved take records include the physical socket image-group sizes, so stale-take verification reconstructs the original per-window Picture offsets rather than incorrectly assuming every socket was active. Image Conveyor's global output toggle remains authoritative upstream (disabled/empty inputs are always `None`); timeline checkboxes do not mutate another node's live shelf/preset. Per-chunk masks follow selected chunk ordering when duration changes; collisions fail before any clips are changed.
 
+## Full-source navigation versus H3 render selection
+
+The logical H3 render selection is independent of timeline viewport bounds.
+`web/timeline/navigation.js` computes full-project movie width and
+selection/full-movie fit operations. The timeline's coordinate origin remains
+global frame zero. Source time is not clipped at the render range; scrolling
+moves the viewport, never the clip data or the range sent to H3. The main
+timeline virtualizes video filmstrip tiles, audio waveforms and visible clip
+geometry at the current scroll position.
+
+## Chunk-local media activation
+
+`web/timeline/chunk_workspace.js` uses the native clip `muted` flag, which
+the model compiler already excludes in `active_clips`. An existing source clip
+that spans several logical H3 windows is isolated at the target chunk
+boundaries and then muted/unmuted. Both neighboring pieces preserve the
+original source mapping by adjusting `source_in`; no clip-level activation
+shadow state is introduced. Original footage, final/guide/reference audio and
+video-guidance clips obey their existing roles. Muted media remains visible
+to the editor for reactivation but remains excluded from compiled conditioning.
+
+Locked tracks prevent edits, track-wide mute takes precedence, and clips with
+nonzero fades cannot be transparently split across chunk boundaries because
+restarting a fade would change semantics. Such edits are rejected until the
+fade is explicitly handled in the timeline. All clip activation changes
+participate in normal undo/history, project serialization and causal hashes.
+The frontend input/desktop compatibility token is
+`h3-timeline-navigation-media-v13`.
+
 ## Resizable view-state contract
 
 `web/timeline/layout.js` owns bounded, pure sizing helpers for the upper
