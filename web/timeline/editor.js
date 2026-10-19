@@ -1054,11 +1054,15 @@ export class TimelineEditor {
           const x = this.frameX(c.start),
             w = ((c.end - c.start) * this.zoom) / 24;
           if (x + w < left || x > right) continue;
+          // Render only the visible portion of a potentially multi-hour clip.
+          const visibleLeft = Math.max(x, left - 12);
+          const visibleRight = Math.min(x + w, right + 12);
+          const offset = visibleLeft - x;
           const clip = el(
             "div",
             {
               class: `h3ts-clip ${t.role}${this.selected.includes(c.id) ? " selected" : ""}`,
-              style: `left:${x}px;width:${Math.max(4, w)}px`,
+              style: `left:${visibleLeft}px;width:${Math.max(4, visibleRight - visibleLeft)}px`,
               tabindex: "0",
               role: "button",
               "aria-label": `${c.name || c.text || t.role} ${time(c.start)} to ${time(c.end)}`,
@@ -1073,12 +1077,14 @@ export class TimelineEditor {
           );
           clip.onpointerdown = (e) => this.drag(e, t, c, clip);
           clip.oncontextmenu = (e) => this.context(e, t, c);
-          clip.append(
-            el("i", { class: "trim-left" }),
-            el("i", { class: "trim-right" }),
-          );
-          if (t.role === "audio") this.waveform(clip, c);
-          else if (c.asset_id && w > 80) this.filmstrip(clip, c, left, right);
+          const trimLeft = el("i", { class: "trim-left" });
+          const trimRight = el("i", { class: "trim-right" });
+          trimLeft.hidden = visibleLeft > x;
+          trimRight.hidden = visibleRight < x + w;
+          clip.append(trimLeft, trimRight);
+          if (t.role === "audio") this.waveform(clip, c, offset);
+          else if (c.asset_id && w > 80)
+            this.filmstrip(clip, c, left, right, offset);
           row.append(clip);
         }
       this.timeline.append(row);
@@ -1178,7 +1184,7 @@ export class TimelineEditor {
   }
   // Thumbnails and waveforms are requested on fixed grids so scrolling only
   // adds new tiles and every URL stays cacheable.
-  filmstrip(element, c, left, right) {
+  filmstrip(element, c, left, right, offset = 0) {
     const step = 2 ** Math.max(0, Math.ceil(Math.log2((80 * 24) / this.zoom)));
     const visibleStart = Math.max(
       c.start,
@@ -1190,7 +1196,7 @@ export class TimelineEditor {
     );
     for (let f = visibleStart; f < visibleEnd; f += step) {
       const tile = Math.max(f - (f % step), c.start);
-      const x = ((tile - c.start) * this.zoom) / 24;
+      const x = ((tile - c.start) * this.zoom) / 24 - offset;
       const src = BASE + "/thumbnail/" + c.asset_id + "?pts=" +
         sourceAt(c, tile).toFixed(6);
       const key = c.id + ":" + tile + ":" + step + ":" + src;
@@ -1226,7 +1232,7 @@ export class TimelineEditor {
     }
     return this.waveCache.get(key);
   }
-  waveform(element, c) {
+  waveform(element, c, offset = 0) {
     const speed = ratio(c.speed || 1);
     const pxPerSource = this.zoom / Math.abs(speed);
     const span =
@@ -1250,7 +1256,7 @@ export class TimelineEditor {
         end = start + span;
       // Timeline x of a source time inside this clip.
       const at = (t) => ((t - ratio(c.source_in || 0)) / speed) * this.zoom;
-      const x = Math.min(at(start), at(end));
+      const x = Math.min(at(start), at(end)) - offset;
       this.waveTile(c.asset_id, start, end)
         .then((data) => {
           if (!element.isConnected) return;
