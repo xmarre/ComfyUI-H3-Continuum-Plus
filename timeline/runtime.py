@@ -170,6 +170,42 @@ class TimelineInputs:
         )
         return source
 
+    def final_audio(self, start_frame, end_frame, sample_rate):
+        """Return original/authored final PCM only when it covers the job.
+
+        Partial audio lanes retain the historical generated-audio assembly;
+        silently replacing missing spans with zeros would erase speech. Direct
+        sampler Driving Audio has separate, higher-priority handling.
+        """
+        from .model import active_clips
+
+        if not start_frame < end_frame:
+            return None
+        available = sorted(
+            (max(start_frame, c["start"]), min(end_frame, c["end"]))
+            for track, c in active_clips(
+                self.project, start_frame, end_frame, {"retained", "audio"}
+            )
+            if c["audio_role"] in {"final", "both"}
+        )
+        covered = start_frame
+        for a, b in available:
+            if a > covered:
+                break
+            covered = max(covered, b)
+            if covered >= end_frame:
+                break
+        if covered < end_frame:
+            return None
+        pcm = mix_audio(
+            self.project, self.store.assets, start_frame, end_frame,
+            sample_rate, "final",
+        )
+        return {
+            "waveform": torch.from_numpy(pcm.copy())[None],
+            "sample_rate": sample_rate,
+        }
+
     def invocation_plan(self, original, index):
         """Native Timeline source for a window with timed prompt regions.
 

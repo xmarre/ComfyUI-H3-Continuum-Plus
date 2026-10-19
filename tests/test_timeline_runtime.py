@@ -551,3 +551,47 @@ def test_conveyor_chunk_mask_changes_stale_take_hash_and_picture_alias_offsets()
     assert not stale_take(p, record, [record])
     p["conveyor_reference_slots"]["1"] = [1]
     assert stale_take(p, record, [record])
+
+def test_embedded_movie_audio_is_guide_and_preserved_final(monkeypatch):
+    import numpy as np
+    import torch
+    from ComfyUI_H3_Continuum_Join.timeline.model import blank_project, compile_project
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    from ComfyUI_H3_Continuum_Join.timeline import runtime as routed
+
+    p=blank_project()
+    asset_id="d"*64
+    p.update(chunk_origin_frame=14955,chunk_frames=168,
+             duration_frames=22000,selection=[14955,15291])
+    p["assets"]=[{"id":asset_id,"kind":"video","audio":{"sample_rate":48000},
+                  "video":{"width":720,"height":480}}]
+    p["tracks"]=[{"id":"original","role":"retained","clips":[{
+        "id":"source","asset_id":asset_id,"start":0,"end":22000,
+        "source_in":"15","speed":"1","padding":"hold","audio_role":"both"}]}]
+    job=compile_project(p)["jobs"][0]
+    calls=[]
+    def fake_mix(project, store, start, stop, rate, route):
+        calls.append((start,stop,rate,route))
+        return np.ones((2,round((stop-start)*rate/24)),dtype=np.float32)
+    monkeypatch.setattr(routed,"mix_audio",fake_mix)
+    inp=TimelineInputs(p,job,object())
+    inp.store=type("Store",(),{"assets":object()})()
+    out=inp.final_audio(14955,15291,48000)
+    assert out["sample_rate"]==48000
+    assert out["waveform"].shape==(1,2,672000)
+    assert calls==[(14955,15291,48000,"final")]
+    assert all(w["guide"] for w in job["windows"])
+
+
+def test_partial_final_audio_never_erases_generated_tail(monkeypatch):
+    from ComfyUI_H3_Continuum_Join.timeline.model import blank_project, compile_project
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    p=blank_project()
+    p.update(duration_frames=672,selection=[0,336])
+    aid="c"*64
+    p["assets"]=[{"id":aid,"kind":"video","video":{},"audio":{}}]
+    p["tracks"]=[{"id":"original","role":"retained","clips":[{
+        "id":"source","asset_id":aid,"start":0,"end":168,
+        "audio_role":"final","source_in":"0","speed":"1"}]}]
+    inp=TimelineInputs(p,compile_project(p)["jobs"][0],object())
+    assert inp.final_audio(0,336,48000) is None

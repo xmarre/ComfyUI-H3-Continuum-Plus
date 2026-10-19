@@ -956,6 +956,34 @@ class H3ContinuumTimelineSampler:
             )
             assembly[_DRIVING_AUDIO_PLAN_KEY] = _copy_audio(selected_audio)
             report += "\nConnected Driving Audio overrides Studio guide lanes and supplies final audio for this job."
+        elif driving_audio is None:
+            # The source video's audio is authored on its retained clip.
+            # Sample the exact output presentation span (not the +34 frame
+            # encoder lookahead) and override H3-generated sound at assembly.
+            from ..v3.driving_nodes import _DRIVING_AUDIO_PLAN_KEY, _copy_audio
+
+            rate = int(p.get("audio_sample_rate") or next(
+                (a["audio"]["sample_rate"] for a in p["assets"]
+                 if a.get("audio") and a["audio"].get("sample_rate")),
+                48000,
+            ))
+            selected_audio = provider.final_audio(
+                record["output_range"][0], record["output_range"][1], rate
+            )
+            if selected_audio is not None:
+                selected_audio = _copy_audio(selected_audio)
+                assembly[_DRIVING_AUDIO_PLAN_KEY] = _copy_audio(selected_audio)
+                report += (
+                    "\nTimeline final audio: original/authored soundtrack "
+                    "preserved at exact movie source timestamps; generated "
+                    "H3 audio bypassed by the V3.4 assembler."
+                )
+            elif guide is not None:
+                report += (
+                    "\nTimeline audio: guide conditioning is present, but "
+                    "no complete authored final soundtrack covers this job; "
+                    "V3.4 assembler retains generated audio."
+                )
         if reference_video_1 is not None and any(w["video"] for w in job["windows"]):
             report += "\nScoped video guidance overrides persistent Video Reference in its active windows."
         return videos, audios, assembly, record, report, refine, selected_audio
