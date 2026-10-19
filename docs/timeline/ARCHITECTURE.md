@@ -165,6 +165,20 @@ The Timeline Sampler receives ComfyUI IMAGE tensors directly from its existing `
 
 The selected socket mask participates in chunk generation hashes. Saved take records include the physical socket image-group sizes, so stale-take verification reconstructs the original per-window Picture offsets rather than incorrectly assuming every socket was active. Image Conveyor's global output toggle remains authoritative upstream (disabled/empty inputs are always `None`); timeline checkboxes do not mutate another node's live shelf/preset. Per-chunk masks follow selected chunk ordering when duration changes; collisions fail before any clips are changed.
 
+## Resizable view-state contract
+
+`web/timeline/layout.js` owns bounded, pure sizing helpers for the upper
+source viewer, H3 chunk editor, remaining track canvas, media sidebar,
+inspector, chunk cards, reference thumbnails and track height. CSS variables
+on the root modal apply the computed sizes. Adjacent drag handles and
+range-input controls update only `node.properties.h3_timeline_view.layout`.
+They do not mutate `timeline_project` or `project_json`, call the native
+sampling compiler, change input hashes, or alter export resolution. The two
+vertical splitters allocate from the total remaining dialog height and
+enforce a minimal visible timeline; resize observers recompute layout after
+modal/viewport changes. The preview uses `object-fit: contain` so resizing
+does not distort source aspect ratio or lower decoded frame resolution.
+
 ## Chunk-authoring and sampler precedence contract
 
 The project data is the single executable owner of `chunk_frames`, `selection`, global/list/timeline text, and scoped conditioning tracks. New `web/timeline/chunk_workspace.js` operations author exact chunks of size `p.chunk_frames` on the global zero-based 24 fps frame lattice. They append normal `prompt`, `image_reference`, `video_guide`, or `audio` clips; additional `chunk_prompt`/`chunk_index` and `chunk_workspace` fields distinguish explicit per-chunk authoring from pre-existing free-form tracks. The backend compiler still owns `compile_window`; it does not infer the prompt from labels shown in the browser. `selection` remains `[in,out)` and multi-job scheduling continues in bounded 16-chunk native runs.
