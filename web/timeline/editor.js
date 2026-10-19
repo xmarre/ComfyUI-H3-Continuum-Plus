@@ -21,6 +21,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription } from "./chunk_ui.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
   "retained",
@@ -90,13 +91,18 @@ export class TimelineEditor {
     this.clipboard = [];
     this.playhead = view.playhead || 0;
     this.previewMode = view.previewMode || "composed";
+    this.chunkFocus = view.chunkFocus ?? true;
+    this.chunkPage = view.chunkPage || 0;
+    this.chunkInspectionEpoch = 0;
+    this.chunkCompileTimer = null;
+    this.compiledWindows = null;
     this.exportResolutionChoice = view.exportResolution || "source";
     this.zoom =
       view.zoom ||
-      Math.min(
-        160,
-        Math.max(0.2, ((innerWidth - 700) * 24) / this.p.duration_frames),
-      );
+      Math.min(160, Math.max(30,
+        (innerWidth - 600) * 24 /
+        (this.chunkFocus ? Math.max(24, this.p.selection[1]-this.p.selection[0])
+          : Math.max(24, this.p.duration_frames))));
     this.abort = new AbortController();
     this.queuedIds = new Set(view.queuedPrompts || []);
     this.proxy = false;
@@ -179,6 +185,8 @@ export class TimelineEditor {
       queuedPrompts: [...this.queuedIds],
       scroll: this.scroller?.scrollLeft || 0,
       previewMode: this.previewMode,
+      chunkFocus: this.chunkFocus,
+      chunkPage: this.chunkPage,
       exportResolution: this.exportResolutionChoice,
     };
   }
@@ -414,6 +422,8 @@ export class TimelineEditor {
     );
     this.inputRoute = el("p", { class: "h3ts-input-route" });
     this.root.append(this.inputRoute);
+    this.chunkBoard = el("section", {class:"h3ts-chunk-workspace"});
+    this.root.append(this.chunkBoard);
     this.scroller = el("div", { class: "h3ts-scroll" });
     this.timeline = el("div", { class: "h3ts-timeline" });
     this.scroller.append(this.timeline);
@@ -488,6 +498,9 @@ export class TimelineEditor {
   render() {
     this.renderAssets();
     this.renderInspector();
+    this.compiledWindows = null;
+    renderChunkWorkspace(this);
+    this.scheduleChunkCompile();
     this.inputRoute.textContent = this.p.operation === "recreate"
       ? "H3 input: Recreate guides from retained source clips automatically unless explicit video guidance overrides them. Queue selection sends the timeline project to Continuum Timeline Sampler; exporting only saves a file."
       : "H3 input: Select retained footage and click Guide H3 with selected clip, then Queue selection. The sampler reads registered video guidance directly; exporting only saves a file.";
@@ -876,14 +889,17 @@ export class TimelineEditor {
       }
     }
   }
+  focusOrigin() {
+    return this.chunkFocus === false ? 0 :
+      Math.floor(this.p.selection[0] / this.p.chunk_frames) * this.p.chunk_frames;
+  }
   frameX(f) {
-    return 180 + (f * this.zoom) / 24;
+    return 180 + ((f - this.focusOrigin()) * this.zoom) / 24;
   }
   fromX(clientX) {
-    return Math.round(
+    return Math.round(this.focusOrigin() +
       ((clientX - this.timeline.getBoundingClientRect().left - 180) * 24) /
-        this.zoom,
-    );
+        this.zoom);
   }
   points() {
     return [
@@ -909,9 +925,13 @@ export class TimelineEditor {
     if (!this.timeline) return;
     const left = this.scroller.scrollLeft,
       right = left + this.scroller.clientWidth;
+    const origin = this.focusOrigin();
+    const focusEnd = this.chunkFocus === false ? this.p.duration_frames :
+      Math.min(this.p.duration_frames,
+        Math.ceil(this.p.selection[1] / this.p.chunk_frames) * this.p.chunk_frames);
     const width = Math.max(
       this.scroller.clientWidth,
-      180 + (this.p.duration_frames * this.zoom) / 24 + 30,
+      180 + ((focusEnd - origin) * this.zoom) / 24 + 30,
     );
     this.timeline.style.width = width + "px";
     this.timeline.replaceChildren();
@@ -922,9 +942,9 @@ export class TimelineEditor {
     for (
       let f = Math.max(
         0,
-        Math.floor(((left - 180) * 24) / this.zoom / stride) * stride,
+        Math.floor((origin + ((left - 180) * 24) / this.zoom) / stride) * stride,
       );
-      f <= this.p.duration_frames && this.frameX(f) < right + 100;
+      f <= focusEnd && this.frameX(f) < right + 100;
       f += stride
     ) {
       ruler.append(
@@ -938,10 +958,10 @@ export class TimelineEditor {
     for (
       let f = Math.max(
         0,
-        Math.floor(((left - 180) * 24) / this.zoom / this.p.chunk_frames) *
+        Math.floor((origin + ((left - 180) * 24) / this.zoom) / this.p.chunk_frames) *
           this.p.chunk_frames,
       );
-      f <= this.p.duration_frames && this.frameX(f) < right + 100;
+      f <= focusEnd && this.frameX(f) < right + 100;
       f += this.p.chunk_frames
     )
       this.timeline.append(
@@ -1188,11 +1208,11 @@ export class TimelineEditor {
     const step = 2 ** Math.max(0, Math.ceil(Math.log2((80 * 24) / this.zoom)));
     const visibleStart = Math.max(
       c.start,
-      Math.floor(((left - 180) * 24) / this.zoom / step) * step,
+      Math.floor((this.focusOrigin() + ((left - 180) * 24) / this.zoom) / step) * step,
     );
     const visibleEnd = Math.min(
       c.end,
-      Math.ceil(((right - 180) * 24) / this.zoom),
+      Math.ceil(this.focusOrigin() + ((right - 180) * 24) / this.zoom),
     );
     for (let f = visibleStart; f < visibleEnd; f += step) {
       const tile = Math.max(f - (f % step), c.start);
@@ -1239,12 +1259,12 @@ export class TimelineEditor {
       2 ** Math.min(5, Math.max(-3, Math.round(Math.log2(512 / pxPerSource))));
     const left = Math.max(
       c.start,
-      Math.floor(((this.scroller.scrollLeft - 180) * 24) / this.zoom),
+      Math.floor(this.focusOrigin() + ((this.scroller.scrollLeft - 180) * 24) / this.zoom),
     );
     const right = Math.min(
       c.end,
       Math.ceil(
-        ((this.scroller.scrollLeft + this.scroller.clientWidth - 180) * 24) /
+        this.focusOrigin() + ((this.scroller.scrollLeft + this.scroller.clientWidth - 180) * 24) /
           this.zoom,
       ),
     );
@@ -1584,6 +1604,27 @@ export class TimelineEditor {
       "H3 guidance linked to the original asset at its authored source PTS. " +
       "Render range set to this clip. Queue selection to generate; no export needed."
     );
+  }
+  scheduleChunkCompile() {
+    clearTimeout(this.chunkCompileTimer);
+    const epoch = ++this.chunkInspectionEpoch;
+    this.chunkCompileTimer = setTimeout(async () => {
+      if (this.closed || epoch !== this.chunkInspectionEpoch) return;
+      try {
+        const plan = await request(this.api, "/compile", {
+          method: "POST", body: JSON.stringify(this.p),
+          signal: this.abort.signal,
+        });
+        if (this.closed || epoch !== this.chunkInspectionEpoch) return;
+        this.compiledWindows = new Map(plan.jobs.flatMap((job)=>
+          job.windows.map((w)=>[w.index,w])));
+        updateChunkCompiledLines(this);
+      } catch (error) {
+        if (this.closed || epoch !== this.chunkInspectionEpoch) return;
+        for (const node of this.chunkBoard.querySelectorAll("[data-compiled-chunk]"))
+          node.textContent = "Cannot compile chunk inputs: " + error.message;
+      }
+    },120);
   }
   async inspectInputs() {
     const plan = await request(this.api, "/compile", {
@@ -2004,6 +2045,8 @@ export class TimelineEditor {
     this.exportPending = false;
     clearTimeout(this.exportTimer);
     clearTimeout(this.seekTimer);
+    clearTimeout(this.chunkCompileTimer);
+    this.chunkInspectionEpoch++;
     this.filmTileCache?.clear();
     try { this.abort.abort(); } catch { /* no pending requests */ }
     try { this.resize?.disconnect(); } catch {}
