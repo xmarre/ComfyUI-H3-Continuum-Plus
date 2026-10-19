@@ -33,6 +33,7 @@ export function viewerFrameDimensions(asset, viewportWidth, viewportHeight, dpr 
   ];
 }
 
+/** Only draw the visible surface of arbitrarily long clips. */
 export function visibleClipGeometry(x, width, viewportLeft, viewportRight, margin = 12) {
   const left = Math.max(x, viewportLeft - margin);
   const right = Math.min(x + width, viewportRight + margin);
