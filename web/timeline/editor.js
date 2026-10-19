@@ -144,8 +144,11 @@ export class TimelineEditor {
     this.conveyorPoll = setInterval(() => refreshConveyorControls(this), 1250);
     // A focused edit range changes initial zoom/location, never the source
     // movie's scrollable extent. Saved scroll position takes precedence.
-    this.scroller.scrollLeft = Number.isFinite(view.scroll)
-      ? view.scroll : scrollToFrame(this.p.selection[0],this.zoom,
+    const legacyFocusedStart = this.chunkFocus &&
+      (view.scroll ?? 0) === 0 && this.p.selection[0] > 0;
+    this.scroller.scrollLeft = Number.isFinite(view.scroll) &&
+      !legacyFocusedStart ? view.scroll :
+      scrollToFrame(this.p.selection[0],this.zoom,
         this.scroller.clientWidth,this.p.duration_frames);
     this.scheduleDraw();
     this.root.focus();
@@ -587,6 +590,13 @@ export class TimelineEditor {
       this.scheduleDraw();
       this.persistView();
     });
+    // Trackpads scroll the movie natively. Alt+vertical-wheel provides a
+    // horizontal pan on mice that have no separate horizontal wheel.
+    this.scroller.addEventListener("wheel",(event)=>{
+      if(!event.altKey||event.ctrlKey||event.metaKey)return;
+      event.preventDefault();
+      this.scroller.scrollLeft+=event.deltaY;
+    },{passive:false});
     this.root.addEventListener("dragover", (e) => e.preventDefault());
     this.root.addEventListener("drop", (e) => {
       if (e.dataTransfer.files.length) {
