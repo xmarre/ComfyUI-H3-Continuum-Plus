@@ -229,7 +229,8 @@ export class TimelineEditor {
         left:"left",right:"right"}[name];
       node.setAttribute("aria-valuenow",String(Math.round(this.displayLayout[key])));
     }
-    this.scheduleDraw?.();
+    // The dedicated scroller ResizeObserver already coalesces visible
+    // timeline redraws. Do not rebuild filmstrip DOM on every drag pixel.
   }
   updateLayout(name,value,{persist=true}={}) {
     this.layout=setLayoutDimension(this.layout,name,value);
@@ -241,6 +242,7 @@ export class TimelineEditor {
       class:"h3ts-splitter h3ts-splitter-"+axis,
       role:"separator",tabindex:"0",
       "aria-label":label,
+      title:label+" · drag or use arrow keys · double-click to reset",
       "aria-orientation":axis==="horizontal"?"horizontal":"vertical",
       "aria-valuemin":"0","aria-valuemax":"2400",
     });
@@ -646,6 +648,12 @@ export class TimelineEditor {
     this.resize.observe(this.scroller);
     this.layoutObserver=new ResizeObserver(() => this.applyLayout());
     this.layoutObserver.observe(this.root);
+    // Wrapping toolbars/footer can change fixed-height chrome while dialog
+    // width/height stays constant; remeasure available pane height then.
+    for (const child of this.root.children)
+      if (![this.main,this.chunkBoard,this.scroller,
+            this.previewDivider,this.chunkDivider].includes(child))
+        this.layoutObserver.observe(child);
   }
   render() {
     if (this.chunkFocus !== false &&
