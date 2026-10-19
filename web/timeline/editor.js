@@ -22,6 +22,7 @@ import {
   placeAsset,
 } from "./core.js";
 import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription } from "./chunk_ui.js";
+import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
   "retained",
@@ -1623,8 +1624,17 @@ export class TimelineEditor {
     this.chunkCompileTimer = setTimeout(async () => {
       if (this.closed || epoch !== this.chunkInspectionEpoch) return;
       try {
+        // For a multi-hour selected job, inspect only the visible chunk page.
+        // This endpoint is for authored input summaries, not the physical
+        // per-job audio encoder contract or final queue identity.
+        const page = selectedChunkPage(this.p, this.chunkPage || 0, 8);
+        const previewProject = page.total > 16 ? {
+          ...this.p,
+          selection: [page.chunks[0].start, page.chunks.at(-1).end],
+          accepted_windows: [],
+        } : this.p;
         const plan = await request(this.api, "/compile", {
-          method: "POST", body: JSON.stringify(this.p),
+          method: "POST", body: JSON.stringify(previewProject),
           signal: this.abort.signal,
         });
         if (this.closed || epoch !== this.chunkInspectionEpoch) return;
