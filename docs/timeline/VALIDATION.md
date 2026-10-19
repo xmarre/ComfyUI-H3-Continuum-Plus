@@ -125,8 +125,7 @@ physical native playback still require runtime qualification.
 ## User-resizable Timeline Studio layout
 
 The main viewer previously used `flex:1` while the chunk editor claimed
-`42vh` and the track canvas `20vh`. At the installed user's viewport,
-the media preview collapsed to a very short strip. The layout now measures
+`42vh` and the track canvas `20vh`. This allocation can collapse the media preview on otherwise usable viewports. The layout now measures
 the dialog's remaining usable height and sizes the upper preview, chunk
 editor and track canvas explicitly with accessible draggable separators.
 The sidebars have width grips, and card/thumb/track sizing is user-controlled.
@@ -136,9 +135,9 @@ enlarged dialog sizes; browser acceptance tests exercise drag, keyboard
 resizing and persistent view-only state without changing the serialized
 sampling project.
 
-The exact ComfyUI frontend runtime and user's screen dimensions are still
-installation-specific. Automated geometry constraints do not by themselves
-prove image playback performance or GPU generation behavior.
+Viewport geometry, font metrics and browser chrome differ across installations.
+Automated geometry constraints do not by themselves establish smooth video
+playback or GPU generation behavior.
 
 ## Wildcard Media Resolution / Image Conveyor shelf tracing
 
