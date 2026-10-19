@@ -534,16 +534,23 @@ def encode_physical_prompt_conditioning(
     _validate_physical_timeline_video_assets(descriptor, timeline_video_assets)
     include_first_actual = bool(include_first and assets.first_image is not None)
     include_last_actual = bool(include_last and assets.last_image is not None)
+    encoder_presentation=descriptor.presentation_contract
+    if "timeline_studio" in encoder_presentation:
+        # Physical/source provenance stays in the descriptor and conditioning
+        # manifest. It does not change identical Qwen encoder inputs by itself.
+        encoder_presentation={k:v for k,v in encoder_presentation.items() if k!="timeline_studio"}
     if not candidate:
         # Preserve PR #20's legacy conditioning-cache identity exactly.
         key: Any = (legacy_text, include_first_actual, include_last_actual)
+        if "timeline_studio" in descriptor.presentation_contract:
+            key += (presentation_digest(encoder_presentation),)
     else:
         key = (
             compiled.compiler_version,
             compiled.text,
             include_first_actual,
             include_last_actual,
-            presentation_digest(descriptor.presentation_contract),
+            presentation_digest(encoder_presentation),
         )
         if compiled.encoder_history:
             key += (compiled.encoder_history,)
