@@ -174,7 +174,15 @@ export function conveyorShelfAvailable(node, state, slot) {
       state?.output_mode!=="persistent_refs" ||
       !state?.reference_slots?.[slot-1]) return false;
   const live=node?.properties?.image_conveyor_reference_enabled;
-  const serialized=state?.reference_output_enabled;
+  let serialized=state?.reference_output_enabled;
+  if (!Array.isArray(live) && !Array.isArray(serialized)) {
+    // __bil.state is a live shelf model and may omit the backend-visible
+    // output toggle snapshot held in the hidden state_json widget.
+    try {
+      serialized=JSON.parse(node?.widgets?.find(w=>
+        w.name==="state_json")?.value||"{}").reference_output_enabled;
+    } catch {}
+  }
   const active=Array.isArray(live) ? live : serialized;
   return !Array.isArray(active) || active[slot-1]!==false;
 }
