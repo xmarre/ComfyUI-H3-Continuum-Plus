@@ -95,6 +95,10 @@ app.registerExtension({
           )
             refreshProjectWidgets(node, true);
       };
+      this.__timelineInputsChanged = () => {
+        const editor = editors.get(this);
+        if (editor && !editor.closed) editor.refreshSamplerInputs();
+      };
       this.__timelineEditProject = (mutate) => {
         const editor = editors.get(this);
         if (editor) editor.edit(mutate);
