@@ -135,8 +135,7 @@ metadata; the source image is explicitly labeled as pre-processor.
 The input workspace now uses its available width with full-size two-column
 reference previews and one shared chunk scroll region, plus collapsible
 sampler details. A source-preview overlay distinguishes loading from missing
-footage and decoding errors. A cached small still is temporary until the
-independent high-detail display still resolves. Regression coverage checks
+footage and decoding errors. A nearby loaded filmstrip frame is reused as a temporary preview where available, avoiding a second low-resolution FFmpeg seek; otherwise a thumbnail is requested. The high-detail display frame is separately resolved at the exact source PTS. Regression coverage checks
 Image Conveyor through Media Resolution, ambiguous upstream multi-image
 branches, versioned thumbnail URLs, safe path rejection and reference updates
 without restarting playback. Real long-source seek throughput, browser UI
