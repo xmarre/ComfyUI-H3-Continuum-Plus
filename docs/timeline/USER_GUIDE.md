@@ -32,6 +32,32 @@ The editor's **Export pixels** control defaults to **Original source resolution*
 
 **H3 sampling canvas** explicitly produces the lower/different timeline project width/height instead. Source resolution requires an unambiguous selected visual clip, or overlapping video clips with the same native geometry. For mixed-size material highlight the intended visual clip or choose the sampling canvas; the server never silently substitutes the lower-resolution canvas when Original source resolution is requested. H.264 requires even dimensions; use FFV1 for odd-sized native frames. The independent optional **Continuum Timeline Export** node keeps Timeline canvas as the default for existing workflows, with a Source resolution selector when desired.
 
+## Reference thumbnails, intermediate processors and viewer behavior
+
+Connected references may pass through a one-to-one IMAGE processor such as
+a Media Resolution node before reaching the Continuum Timeline Sampler. Studio
+traces those connections back to Image Conveyor without bypassing or changing
+their processing. The displayed thumbnail represents the Conveyor shelf's
+**original image**, not the resized/processed tensor; each row identifies
+intermediate processing nodes. Click a thumbnail to inspect a larger original
+preview. Ambiguous multi-image processing branches are not guessed: Studio
+labels them as connected IMAGE sources without claiming a particular Conveyor
+shelf image. Dynamic Conveyor queue-group references cannot show a stable
+image until execution.
+
+Reference shelf/preset and global output-toggle changes update the source
+thumbnails while Studio is open; the refresh control remains available.
+Chunk checkbox changes update saved sampler inputs without restarting source
+movie playback. The compact Connected Sampler row expands to show all
+persistent model and sampler settings. Chunk cards share a scroll area rather
+than each requiring a separate scrolling region.
+
+When source-frame seeking takes time, the viewer temporarily shows the cached
+source thumbnail and explicitly displays its loading status until the separate
+high-detail still arrives. A failed decoder request is reported with a
+suggested proxy-mode retry. Temporary viewer thumbnails are never used for
+sampling or final clip export.
+
 ## Image Conveyor reference selection per chunk
 
 **Reference images are supplied by existing Image Conveyor connections.** Connect the Conveyor's `ref_image_1` through `ref_image_8` outputs to the Continuum Timeline Sampler's `reference_image_1` through `reference_image_8` IMAGE inputs. Every chunk card lists its connected sockets, the current Conveyor shelf filename/thumbnail where available, and an enable/disable checkbox. **Do not import images again to populate chunk reference slots.** The timeline stores only an explicit set of selected *socket numbers* for each logical chunk. Unselected sockets are omitted from that chunk's actual physical reference-conditioning tensors, including lookahead; other chunks keep their own selections.
