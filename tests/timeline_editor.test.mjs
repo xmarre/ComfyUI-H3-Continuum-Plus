@@ -1103,6 +1103,9 @@ test("chunk prompt and source slices compile as exact independent native window 
   assert.equal(overlappingChunkClips(p,90,["video_guide"]).length,0);
   updateChunkSource(p,sound.id,"23.5");
   assert.equal(sound.source_in,"23.5");
+  updateChunkSource(p,sound.id,"47/2");
+  assert.equal(sound.source_in,"47/2");
+  assert.throws(()=>updateChunkSource(p,sound.id,"2/0"),/Invalid source/);
   assert.throws(()=>updateChunkSource(p,sound.id,"-1"),/Invalid source/);
   assert.throws(()=>addChunkMedia(p,89,"image_reference",img),/already active/);
   removeChunkClip(p,ref.id);
