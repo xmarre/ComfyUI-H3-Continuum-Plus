@@ -139,6 +139,26 @@ Viewport geometry, font metrics and browser chrome differ across installations.
 Automated geometry constraints do not by themselves establish smooth video
 playback or GPU generation behavior.
 
+## Multi-IMAGE source provenance
+
+A processor with more than one IMAGE input cannot be mapped reliably to one
+upstream original without an implementation-specific output-to-input contract.
+Previously the inspector dropped all thumbnails with an "ambiguous IMAGE
+inputs" error. The current fallback walks every identifiable upstream IMAGE
+edge, bounded by hop/work limits, and collects unique physically reachable
+Image Conveyor shelf outputs. It explicitly labels these as original inputs,
+not reconstructed or actually decoded processor output. Different sampler
+sockets retain separate upstream inventories; no reference masks or tensors
+are changed.
+
+Regression tests exercise an intermediary with two IMAGE input connections
+and an unrelated FLOAT control, both original Conveyor shelf filenames and
+thumbnail URLs, removal of one input, an unconnected Conveyor elsewhere
+in the workflow, and the conservative limitation of ambiguous provenance.
+The UI remains transparent about what static graph inspection cannot prove.
+Real images and the user's installed custom processor are site-validation
+requirements.
+
 ## Wildcard Media Resolution / Image Conveyor shelf tracing
 
 The reference editor previously stopped upstream tracing when an intermediate
