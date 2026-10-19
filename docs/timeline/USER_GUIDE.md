@@ -89,6 +89,33 @@ Images are numbered **contiguously** for each physical H3 invocation in selected
 
 Changing logical chunk duration reflows masks together with chunk-authored inputs. Selection conflicts that would collapse separately configured mask entries into one chunk are rejected before modifying the project. Pre-existing file-based reference clips remain readable for backward compatibility, but the chunk authoring UI no longer offers imported-image reference assignment.
 
+## Resizing the Timeline Studio workspace
+
+Timeline Studio is a resizable modal. Drag the **horizontal grip below the
+source preview** to make the video/image viewer taller or shorter; drag the
+**grip above the track timeline** to allocate height between the H3 chunk
+editor and the track canvas. The timeline retains a minimum usable height,
+and the editor automatically reallocates remaining space within the current
+window. Drag the **vertical grips** between the media library and preview, or
+between the preview and inspector, to resize the two sidebars. The center
+viewer stays usable even when both sidebars grow.
+
+The H3 chunk heading provides live size controls for **chunk-card width**,
+**reference-image thumbnail size**, and **track height**. Prompt textareas
+already have their own vertical resize grips. The dialog itself can be
+resized using its lower-right corner. **Reset panel sizes** restores the
+responsive default layout. Splitter handles are keyboard accessible:
+focus a grip and use the arrow keys; double-click a grip to reset its
+dimension. Resizing the browser or modal constrains sizes automatically
+without discarding the preferred values.
+
+Layout values are stored in the Timeline Studio node's
+`h3_timeline_view.layout` properties, not in `project_json`. They persist
+with the ComfyUI workflow without modifying the selected H3 chunks,
+source image tensors, prompt text, sampling inputs or final export
+dimensions. The top preview is independently sized and will no longer be
+shrunk automatically merely because the chunk editor is expanded.
+
 ## Chunk-first generation authoring
 
 Timeline Studio opens in **Chunk-focused timeline** mode. The horizontal H3 input cards represent only the selected logical generation chunks, not the full duration of a source movie. Every card displays its absolute output frame/time window and lets you author a **per-chunk prompt**, select/deselect connected **Image Conveyor reference images**, add **video guidance cuts**, or add **audio cuts** explicitly routed as `guide`, `reference`, `final` or `both`. Eight chunks are shown per page to avoid constructing a large DOM for a multi-hour project. The original full-film editing view remains accessible by disabling **Chunk-focused timeline**. The chunk count and seconds controls are bidirectional with the connected Continuum Timeline Sampler's `chunks` and `chunk_seconds` widgets; all generation windows remain on the 24 fps frame grid.
