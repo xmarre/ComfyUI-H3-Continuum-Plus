@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Show definite Image Conveyor upstream shelf thumbnails in an inspectable
+  horizontal gallery when an intermediate processor has multiple IMAGE
+  inputs. Keep ambiguous processed-output identity explicit rather than
+  replacing all previews with an error or guessing a single source.
+- Deduplicate source thumbnails per original Conveyor socket and exclude
+  scalar/mask/latent controls, graph cycles and unrelated Conveyor nodes from
+  traversal. Reference selection and actual H3 IMAGE conditioning remain
+  unchanged.
+- Update Timeline Studio's frontend/backend/desktop handshake and cached
+  browser assets to v11.
+
+
 - Restore an independently resizable source media viewer and add accessible
   drag handles between the viewer, chunk-input editor and track timeline.
   The timeline remains visible while each pane changes size. The two
