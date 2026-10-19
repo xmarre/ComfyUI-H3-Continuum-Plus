@@ -585,7 +585,25 @@ class H3ContinuumTimelineSampler:
                     )
                     and job["range"][0] >= max(int(b * 24) for _, b in intervals)
                 ):
-                    origin_frame = job["range"][0]
+                    # A later render selection of the same scene must not
+                    # restart its script from [0s]. Reuse the earliest take's
+                    # source-specific origin across independent queue batches.
+                    prior_origin = next(
+                        (
+                            override["origin_frame"]
+                            for record in all_takes
+                            for override in [record.get("prompt_override")]
+                            if isinstance(override, dict)
+                            and override.get("script") == source["original_text"]
+                            and override.get("mode") == external["mode"]
+                            and type(override.get("origin_frame")) is int
+                        ),
+                        None,
+                    )
+                    origin_frame = (
+                        prior_origin if prior_origin is not None
+                        else job["range"][0]
+                    )
             external_project = with_external_prompt_source(
                 p, {
                     "global": "",

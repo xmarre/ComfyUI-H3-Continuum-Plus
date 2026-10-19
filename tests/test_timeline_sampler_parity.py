@@ -464,3 +464,28 @@ def test_absolute_movie_prompt_timestamps_are_preserved(runtime):
     assert "project second" in prompts[1] and "project first" not in prompts[1]
     assert result[3]["prompt_override"]["origin_frame"] == 0
 
+
+def test_scene_clock_survives_later_render_selection(runtime):
+    args, _, _, _, _ = runtime
+    project = args["timeline"]["project"]
+    first = 89 * 120
+    project.update(duration_frames=first + 600, selection=[first, first + 240])
+    text = (
+        "[0-5s]\nfirst line\n[5-10s]\nsecond line\n"
+        "[10-15s]\nthird line\n[15-20s]\nfourth line"
+    )
+    args.update(timeline=compile_project(project), sequence_prompt=text,
+                prompt_mode="List", run_storage="Off")
+    initial = nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert initial[3]["prompt_override"]["origin_frame"] == first
+
+    project["selection"] = [first + 240, first + 480]
+    args["timeline"] = compile_project(project)
+    continued = nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert continued[3]["prompt_override"]["origin_frame"] == first
+    session = session_io.load_session(prefix=continued[3]["session_prefix"], slot=1)
+    prompts = [chunk["prompt"] for chunk in session["chunks"]]
+    assert len(prompts) == 2
+    assert "third line" in prompts[0] and "first line" not in prompts[0]
+    assert "fourth line" in prompts[1] and "second line" not in prompts[1]
+
