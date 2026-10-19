@@ -512,9 +512,15 @@ export class TimelineEditor {
     this.compiledWindows = null;
     renderChunkWorkspace(this);
     this.scheduleChunkCompile();
-    this.inputRoute.textContent = this.p.operation === "recreate"
-      ? "H3 input: Recreate guides from retained source clips automatically unless explicit video guidance overrides them. Queue selection sends the timeline project to Continuum Timeline Sampler; exporting only saves a file."
-      : "H3 input: Select retained footage and click Guide H3 with selected clip, then Queue selection. The sampler reads registered video guidance directly; exporting only saves a file.";
+    this.inputRoute.textContent =
+      "H3 INPUT CONTRACT · Chunk Inputs below defines per-chunk prompts, image " +
+      "references, video guidance and routed audio cuts. Connected sampler " +
+      "settings and persistent sockets are shown separately." +
+      (this.p.operation === "recreate"
+        ? " Recreate also derives guidance from retained footage when no explicit video guide exists."
+        : " Add explicit video guidance to chunks that should condition H3.") +
+      " Queue selection passes this project to the Continuum Timeline Sampler; " +
+      "Export only writes a separate delivery file.";
     this.drawTimeline();
     this.rangeA.value = this.p.selection[0];
     this.rangeB.value = this.p.selection[1];
