@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Improve multi-hour-source timeline responsiveness: persist bounded/cancellable thumbnail JPEG derivatives and coalesce duplicate source-frame requests, retain image elements across filmstrip redraws, and debounce rapid still-frame scrubbing without changing playback/export resolution. Report direct-source versus composed playback strategy.
+- Preserve DoRA State Manager's fail-closed persistent prompt guard on Timeline queue submissions and explain `Save connected` recovery. Show confirmed submissions on interrupted multi-job batches, without silently writing unrelated preset state.
+- Bump the native Python/frontend/desktop contract for these UI and preview changes.
+
+
 - Default editor clip exports to explicitly resolved **native source pixel dimensions**, separate from the H3 sampling canvas; retain an explicit canvas-size option and the existing Export output-node default. Refuse ambiguous source geometry instead of silently downscaling. Bound RGB export batches and report output pixel dimensions; lossless FFV1 preserves 8-bit compositor pixels, not higher-bit-depth source streams.
 - Make original footage's H3 path explicit with a repeat-safe **Guide H3 with selected clip** action and a visible explanation that native video guidance is compiled from the timeline project directly, while export produces a standalone output file. Version the native desktop/frontend/backend compatibility contract.
 
