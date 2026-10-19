@@ -176,6 +176,26 @@ currently available Conveyor images. These apply only to that chunk. Reset
 returns to inheriting the globally enabled Conveyor references. Reference
 images remain connected IMAGE inputs rather than imported copies.
 
+## Timeline navigation and chunk media switches
+
+The lower track timeline navigates the full source duration. Scroll the mouse
+wheel over the timeline to pan left or right; horizontal trackpad gestures work
+directly. The toolbar also offers **← Pan**, **Pan →**, **Fit selection** and
+**Fit movie**. Pan changes the visible range, not the selected H3 generation
+interval, clip positions or source PTS. Zoom changes only view magnification.
+Ctrl/Command-wheel remains available for the browser's native zoom action.
+
+For each H3 chunk, the **Media in this chunk · enable / disable** section
+lists footage, H3 video guidance and audio (including globally muted clips).
+Each media entry has an enabled checkbox plus its role and clip identity.
+Toggling a spanning clip isolates that chunk's interval and preserves the
+neighboring chunks; clips with overlapping fades require an explicit trim
+decision instead of silently changing their gain shape. A locked or globally
+muted track explains why the checkbox is unavailable and provides an
+**Unlock track** or **Unmute track** control. Those global actions affect the
+whole track, so use them deliberately. **Add video or audio to this chunk**
+is collapsed until needed to keep the active inputs readable.
+
 ## Resizing the Timeline Studio workspace
 
 Timeline Studio is a resizable modal. Drag the **horizontal grip below the
