@@ -68,9 +68,14 @@ export function referenceSocketSources(editor) {
       (disabled || !ref);
     const dynamic=source.conveyor && !persistent;
     const filename=ref?.filename || path?.split("/").at(-1);
+    // Request enough pixels for the resized thumbnail (and high-DPI
+    // displays) while respecting Image Conveyor's 64–512 px server limit.
+    const pixelRatio=typeof devicePixelRatio==="number" ? devicePixelRatio : 1;
+    const pixels=Math.max(160,Math.min(512,
+      Math.ceil((editor.layout?.thumb || 100)*pixelRatio)));
     const thumbnailPath=path ? "/image-conveyor/thumbnail?"+
       new URLSearchParams({
-        relative_path:path,size:"160",
+        relative_path:path,size:String(pixels),
         ...((ref?.source_version || ref?.mtime_ns)
           ? {v:String(ref.source_version || ref.mtime_ns)} : {}),
       }).toString() : null;
@@ -249,7 +254,7 @@ function conveyorReferenceControls(editor, index, sources) {
           "aria-label":"Reference image preview"},
           el("header",{},el("strong",{text:source.label}),
             button("Close",()=>overlay.close())),
-          el("img",{src:source.thumbnail.replace(/size=160/, "size=512"),
+          el("img",{src:source.thumbnail.replace(/([?&])size=\\d+/, "$1size=512"),
             alt:source.label}),
           el("p",{text:source.previewNote || "Source reference preview"}),
         );
@@ -392,7 +397,10 @@ export function renderChunkWorkspace(editor) {
       editor.updateLayout(name,Number(slider.value),{persist:false});
       output.textContent=editor.layout[name]+"px";
     });
-    slider.addEventListener("change",()=>editor.persistView());
+    slider.addEventListener("change",()=>{
+      editor.persistView();
+      if(name==="thumb")refreshConveyorControls(editor,true);
+    });
     heading.append(el("label",{class:"h3ts-chunk-layout-control"},
       el("span",{text:title.split(" ")[0]+
         (name==="thumb"?" thumbs":name==="card"?" width":" height")}),
