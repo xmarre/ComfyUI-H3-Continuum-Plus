@@ -11,6 +11,7 @@
   Spanning clips isolate the selected logical chunk without moving source
   timestamps or unintentionally disabling adjacent chunks. Refuse unsafe
   implicit splits of clips with nonzero fades.
+- Expose full-duration clip activation in the selected-clip Inspector, distinguished from chunk-local media toggles.
 - Clarify chunk-editor sections, media activation state, and connected
   source-vs-guidance roles. Add per-chunk Conveyor reference All/None/Reset
   actions and keep chunk headers visible during workspace scrolling.
