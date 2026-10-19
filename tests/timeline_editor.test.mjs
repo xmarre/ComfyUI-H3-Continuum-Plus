@@ -1367,3 +1367,26 @@ test("reference checkbox edits persist without stopping video or rebuilding movi
   assert.deepEqual(p.conveyor_reference_slots,{"0":[1,3]});
   assert.deepEqual(observed,["persist","compile"]);
 });
+
+test("main preview reuses decoded nearby filmstrip before starting another thumbnail seek", () => {
+  const clip={id:"source-a"};
+  const entries=new Map([
+    ["source-a:14904:48:/thumb/1",{
+      complete:true,naturalWidth:240,src:"/thumb/1",
+    }],
+    ["source-a:14952:48:/thumb/2",{
+      complete:true,naturalWidth:240,src:"/thumb/2",
+    }],
+    ["source-b:14952:48:/thumb/wrong",{
+      complete:true,naturalWidth:240,src:"/thumb/wrong",
+    }],
+    ["source-a:14976:48:/thumb/pending",{
+      complete:false,naturalWidth:0,src:"/thumb/pending",
+    }],
+  ]);
+  const ctx={filmTileCache:entries};
+  assert.equal(TimelineEditor.prototype.cachedFilmstripStill.call(ctx,clip,14954),
+    "/thumb/2");
+  assert.equal(TimelineEditor.prototype.cachedFilmstripStill.call(ctx,clip,14500),
+    null);
+});
