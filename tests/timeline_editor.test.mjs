@@ -1133,6 +1133,7 @@ test("connected native sampler precedence is visible independently of authored i
   assert.equal(result.promptOverridden,true);
   assert.equal(result.audioOverridden,true);
   assert.ok(result.persistent.some((x)=>x.includes("reference_image_1")));
+  assert.equal(result.persistentPictureSockets,1);
   assert.match(result.overrides.join(" "),/width comes from a connected node/);
   assert.deepEqual(result.settings.slice(0,2),
     [["Chunks","2"],["Chunk duration","7.000s (168f)"]]);
