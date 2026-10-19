@@ -449,3 +449,117 @@
   height: 100%;
   object-fit: contain;
 }
+
+/* Chunk-first composition workspace. Each card is a real logical H3 window,
+   with exact output frames rather than inferred film/source timestamps. */
+.h3ts-chunk-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  max-height: 36vh;
+  min-height: 190px;
+  background: #171e29;
+  border-top: 1px solid #4d5b70;
+  border-bottom: 1px solid #4d5b70;
+  overflow: hidden;
+}
+.h3ts-chunk-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 12px;
+  flex-wrap: wrap;
+  background: #222c3a;
+  font-size: 11px;
+}
+.h3ts-chunk-heading strong { color: #b8ebe0; letter-spacing: .04em; }
+.h3ts-chunk-control {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  color: #bdc8d9;
+}
+.h3ts-chunk-heading .h3ts-chunk-control { display: inline-flex; align-items: center; }
+.h3ts-chunk-heading input[type="number"] { width: 80px; }
+.h3ts-chunk-heading input[type="checkbox"] { width: 16px; height: 16px; }
+.h3ts-chunk-settings {
+  padding: 5px 12px;
+  flex: 0 0 auto;
+  max-height: 92px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.h3ts-chunk-settings p {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.h3ts-chunk-settings .h3ts-chunk-warning { color: #ffd38f; }
+.h3ts-chunk-pager {
+  display: flex;
+  align-items: center;
+  padding: 3px 12px;
+  gap: 10px;
+  font-size: 11px;
+  background: #202938;
+}
+.h3ts-chunk-cards {
+  display: flex;
+  overflow: auto;
+  min-height: 115px;
+  gap: 8px;
+  padding: 7px 10px;
+  flex: 1;
+}
+.h3ts-chunk-card {
+  flex: 0 0 350px;
+  min-width: 275px;
+  max-width: min(78vw, 450px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #63738e;
+  border-radius: 7px;
+  background: #222c39;
+}
+.h3ts-chunk-card h4 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 6px;
+  color: #e9eef8;
+}
+.h3ts-chunk-card h4 small { font-weight: normal; color: #bfcedc; }
+.h3ts-chunk-card textarea {
+  display: block;
+  min-height: 65px;
+  width: 100%;
+  resize: vertical;
+}
+.h3ts-chunk-compiled {
+  padding: 5px;
+  margin: 6px 0;
+  border-left: 2px solid #83c7b8;
+  color: #bfdfd5;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 75px;
+  overflow: auto;
+}
+.h3ts-chunk-add { display: flex; align-items: center; gap: 3px; }
+.h3ts-chunk-add select:first-child { flex: 1; min-width: 0; }
+.h3ts-chunk-add select:not(:first-child) { flex: 0 1 90px; }
+.h3ts-chunk-card .h3ts-chunk-control { margin-top: 5px; }
+.h3ts-chunk-assigned {
+  margin-top: 5px;
+  border-top: 1px solid #39485c;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.h3ts-chunk-assigned .h3ts-chunk-control { flex: 1 1 80px; }
+.h3ts-chunk-assigned input { width: 80px; }
+.h3ts-chunk-card button { padding: 2px 6px; }
