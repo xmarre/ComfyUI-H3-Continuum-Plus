@@ -149,6 +149,86 @@ export function routeClipToGuidance(p, ids) {
   return copy;
 }
 
+// A merge is valid only when original source timing and all authored controls
+// remain identical. No hidden interpolation across gaps or muted sections.
+export function mergeAdjacentClips(p, ids) {
+  const chosen = new Set(ids);
+  let merged=0;
+  const canonical = c=>JSON.stringify(Object.entries(c)
+    .filter(([k])=>!["id","start","end","source_in"].includes(k))
+    .sort(([a],[b])=>a.localeCompare(b)));
+  for(const track of p.tracks) {
+    if(track.locked) continue;
+    const ordered=[...track.clips].sort((a,b)=>a.start-b.start||a.end-b.end);
+    for(let i=0;i+1<ordered.length;) {
+      const a=ordered[i], b=ordered[i+1];
+      const valid=(chosen.has(a.id)||chosen.has(b.id)) &&
+        a.end===b.start && a.asset_id===b.asset_id &&
+        !a.chunk_prompt && !b.chunk_prompt &&
+        !a.chunk_workspace && !b.chunk_workspace &&
+        ratio(a.speed??1)===ratio(b.speed??1) &&
+        Math.abs(sourceAt(a,b.start)-ratio(b.source_in??0))<1e-7 &&
+        ![a,b].some(c=>ratio(c.fade_in??0)!==0||ratio(c.fade_out??0)!==0) &&
+        canonical(a)===canonical(b);
+      if(!valid){i++;continue;}
+      a.end=b.end;
+      track.clips=track.clips.filter(c=>c.id!==b.id);
+      chosen.add(a.id);
+      ordered.splice(i+1,1);
+      merged++;
+    }
+  }
+  if(!merged)throw Error("No matching adjacent split pieces: source time or clip settings differ");
+  return merged;
+}
+
+// Virtual scene chunks intersect existing uncut footage/audio during sampling.
+export function setSceneStart(p, frame, count) {
+  frame=Math.round(frame);count=Math.round(count);
+  if(!Number.isSafeInteger(frame)||frame<0||frame>=p.duration_frames)
+    throw Error("Scene start must be inside the movie");
+  if(!Number.isSafeInteger(count)||count<1||count>65536)
+    throw Error("Scene chunk count must be 1–65536");
+  const end=frame+count*p.chunk_frames;
+  if(!Number.isSafeInteger(end)||end>p.duration_frames)
+    throw Error("Scene exceeds movie duration; reduce chunks or move the start earlier");
+  p.chunk_origin_frame=frame;
+  p.selection=[frame,end];
+  for(const track of p.tracks)
+    track.clips=track.clips.filter(c=>!c.chunk_prompt&&!c.chunk_workspace);
+  p.tracks=p.tracks.filter(t=>t.clips.length||!t.chunk_workspace);
+  delete p.conveyor_reference_slots;
+  // The take files remain available; old indices cannot be re-used safely.
+  delete p.accepted;
+  delete p.accepted_windows;
+  return p.selection;
+}
+
+// Non-destructive to the original file and stored take payloads; removes edits
+// and acceptance in the current timeline project only.
+export function restoreOriginalMovie(p, assetId=null) {
+  const options=p.assets.filter(a=>a.video);
+  const asset=assetId?options.find(a=>a.id===assetId):
+    options.length===1?options[0]:null;
+  if(!asset)throw Error("Select one original movie to reset");
+  const duration=Math.round(ratio(asset.duration)*24);
+  if(!Number.isSafeInteger(duration)||duration<1)
+    throw Error("Invalid original movie duration");
+  p.duration_frames=duration;
+  p.chunk_origin_frame=0;
+  p.tracks=[];
+  const track=makeTrack("retained","Original movie");
+  p.tracks.push(track);
+  const clip=placeAsset(p,asset,track,0,duration);
+  p.selection=[0,Math.min(duration,3*p.chunk_frames)];
+  p.markers=[];
+  delete p.accepted;
+  delete p.accepted_windows;
+  delete p.conveyor_reference_slots;
+  delete p.queued_batch_id;
+  return clip;
+}
+
 export function split(p, ids, frame) {
   for (const [track, c] of selectedClips(p, ids)) {
     if (frame <= c.start || frame >= c.end) continue;
@@ -364,7 +444,10 @@ export function placeAsset(p, asset, track, frame, duration) {
     speed: "1",
     // Audio streams commonly end a few milliseconds before their video.
     padding: track.role === "audio" ? "silence" : "error",
-    audio_role: track.role === "audio" ? "final" : "neither",
+    // A video's original soundtrack follows its own clip and source PTS:
+    // cutting or moving the video cannot desynchronize its audio.
+    audio_role: track.role === "audio" ? "final" :
+      track.role === "retained" && asset.video && asset.audio ? "both" : "neither",
     alias: asset.alias || "",
     name: asset.name,
   };

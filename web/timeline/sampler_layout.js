@@ -106,13 +106,14 @@ export function studioProject(studio) {
 }
 export function selectionChunks(p) {
   return (
-    Math.ceil(p.selection[1] / p.chunk_frames) -
-    Math.floor(p.selection[0] / p.chunk_frames)
+    Math.ceil((p.selection[1]-(p.chunk_origin_frame||0)) / p.chunk_frames) -
+    Math.floor((p.selection[0]-(p.chunk_origin_frame||0)) / p.chunk_frames)
   );
 }
 export function changeTiming(p, name, value) {
   const oldSize = p.chunk_frames;
-  const oldFirst = Math.floor(p.selection[0] / oldSize);
+  const origin=p.chunk_origin_frame||0;
+  const oldFirst = Math.floor((p.selection[0]-origin) / oldSize);
   const oldCount = selectionChunks(p);
   const count = name === "chunks" ? Math.max(1, Math.round(value)) : oldCount;
   if (name === "chunk_seconds") {
@@ -120,7 +121,7 @@ export function changeTiming(p, name, value) {
     if (nextSize !== oldSize) {
       // The first visible authored chunk remains near the same movie time;
       // exact H3 chunk boundaries are globally anchored to output frame 0.
-      const newFirst = Math.floor(p.selection[0] / nextSize);
+      const newFirst = Math.floor((p.selection[0]-origin) / nextSize);
       // Preflight collision detection before mutating any clip or selection,
       // so a rejected edit leaves History's project unchanged.
       const previousSelections=p.conveyor_reference_slots;
@@ -131,7 +132,7 @@ export function changeTiming(p, name, value) {
           const oldIndex=Number(key);
           const newIndex=oldIndex>=oldFirst && oldIndex<oldFirst+oldCount
             ? newFirst+oldIndex-oldFirst
-            : Math.floor(oldIndex*oldSize/nextSize);
+            : Math.max(0,Math.floor(oldIndex*oldSize/nextSize));
           if (String(newIndex) in migrated)
             throw new Error(
               "Changing chunk duration merges two independently configured "+
@@ -144,7 +145,7 @@ export function changeTiming(p, name, value) {
         for (const c of t.clips || []) {
           if (!c.chunk_prompt && !c.chunk_workspace) continue;
           const oldIndex = Number.isInteger(c.chunk_index)
-            ? c.chunk_index : Math.floor(c.start / oldSize);
+            ? c.chunk_index : Math.floor((c.start-origin) / oldSize);
           // Only reflow the authored selection. Other project regions may
           // contain accepted takes or deliberately timed source footage; moving
           // their chunk-owned clips as a side effect would corrupt their PTS
@@ -152,18 +153,18 @@ export function changeTiming(p, name, value) {
           if (oldIndex < oldFirst || oldIndex >= oldFirst + oldCount) continue;
           const newIndex = newFirst + oldIndex - oldFirst;
           c.chunk_index = newIndex;
-          c.start = newIndex * nextSize;
-          c.end = (newIndex + 1) * nextSize;
+          c.start = origin + newIndex * nextSize;
+          c.end = origin + (newIndex + 1) * nextSize;
           // Preserve authored source_in and speed: only output placement and
           // the source-out inferred from its new duration change.
         }
       if (migrated) p.conveyor_reference_slots=migrated;
       p.chunk_frames = nextSize;
-      p.selection[0] = newFirst * nextSize;
+      p.selection[0] = origin + newFirst * nextSize;
     }
   }
   p.selection[1] =
-    (Math.floor(p.selection[0] / p.chunk_frames) + count) * p.chunk_frames;
+    origin+(Math.floor((p.selection[0]-origin) / p.chunk_frames) + count) * p.chunk_frames;
   let last = Math.max(p.duration_frames, p.selection[1]);
   for (const t of p.tracks || [])
     for (const c of t.clips || []) last = Math.max(last, c.end);

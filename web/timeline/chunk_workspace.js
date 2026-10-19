@@ -4,13 +4,14 @@ import { makeTrack, placeAsset, sourceAt, uid, ratio } from "./core.js";
 
 export function chunkWindow(project, index) {
   if (!Number.isSafeInteger(index) || index < 0) throw new Error("Invalid chunk");
-  const start = index * project.chunk_frames;
+  const start = (project.chunk_origin_frame || 0) + index * project.chunk_frames;
   if (start >= project.duration_frames) throw new Error("Chunk outside project");
   return [start, Math.min(project.duration_frames, start + project.chunk_frames)];
 }
 export function selectedChunkPage(project, page = 0, pageSize = 8) {
-  const start = Math.floor(project.selection[0] / project.chunk_frames);
-  const stop = Math.ceil(project.selection[1] / project.chunk_frames);
+  const origin=project.chunk_origin_frame||0;
+  const start = Math.floor((project.selection[0]-origin) / project.chunk_frames);
+  const stop = Math.ceil((project.selection[1]-origin) / project.chunk_frames);
   const total = stop - start;
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
   const current = Math.min(Math.max(0, page | 0), lastPage);
