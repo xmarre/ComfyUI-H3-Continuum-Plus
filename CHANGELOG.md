@@ -11,8 +11,8 @@
   shared scroll region, collapse secondary sampler diagnostics, and update
   Conveyor shelf/toggle displays automatically while preserving prompt edits.
   Reference checkbox edits no longer stop source playback or re-render video.
-- Show a temporary cached source still while the high-detail viewer frame
-  loads, with explicit failure diagnostics instead of a blank display.
+- Reuse nearby cached filmstrip stills while the high-detail viewer frame
+  loads, avoiding duplicate low-res FFmpeg seeks, with explicit failure diagnostics instead of a blank display.
   Keep preview derivatives completely separate from sampling and export.
 - Bump Timeline Studio frontend/backend/Windows compatibility protocol to v8.
 
