@@ -157,6 +157,25 @@ The timeline's visible filmstrip no longer recreates image elements for the same
 
 Continuum Timeline Studio submits immutable snapshot jobs through the normal `api.queuePrompt` integration, including DoRA State Manager's persistent-library write barrier and unsaved managed Text Box protection. It never invokes a raw backend submission to bypass this external owner. Rejection diagnostics report confirmed job count; State Manager owns the explicit `Save connected` action. Queue failure after a network response loss can be ambiguous and is not misreported as proof of nonexecution.
 
+## Effective reference availability in the Timeline UI
+
+`conveyorShelfAvailable(node, state, slot)` derives a reference's
+availability from the Conveyor's persistent shelf, current per-output
+`image_conveyor_reference_enabled` properties and backend-visible
+`reference_output_enabled` snapshot. Disabled outputs and empty shelf slots
+must be omitted from the per-chunk editor. Inherited selection remains
+implicit in the project and permits subsequently re-enabled global outputs.
+An explicitly edited chunk stores only selected physical socket ordinals.
+
+The read-only inspector may discover all eight Conveyor ancestors beneath a
+multi-input Media Resolution node. `activeReferenceSources` selects at most
+**one** shelf thumbnail with the corresponding socket ordinal, instead of
+duplicating all upstream candidates in every socket card; it also removes
+globally inactive references. An opaque multi-input processor can modify or
+remap images, so ordinal-matched thumbnails are described as source imagery,
+not certified post-processing tensor snapshots. Backend tensor filtering,
+lookahead, and causal take hashes remain unchanged.
+
 ## Image Conveyor socket reference contract
 
 `conveyor_reference_slots` is an optional per-project mapping from absolute logical chunk number to sorted, unique, **1-based** reference input socket numbers (1–8). Missing map entries inherit all connected persistent references (legacy semantics); an explicit empty list suppresses all persistent images in that chunk. The file-free mapping is validated and included in the compiled window's causal input hash only when explicit, preserving unchanged workflow hashes.
