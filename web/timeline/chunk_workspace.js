@@ -50,6 +50,33 @@ function lane(project, role, name) {
   }
   return track;
 }
+// Per-chunk selection of persistent *node sockets*, not local asset files.
+// The absence of a mask preserves legacy "all connected" behavior.
+export function selectedConveyorSlots(project, index) {
+  chunkWindow(project, index);
+  return project.conveyor_reference_slots?.[String(index)] ?? null;
+}
+export function setConveyorSlotEnabled(project, index, slot, enabled, connected = []) {
+  chunkWindow(project, index);
+  if (!Number.isInteger(slot) || slot < 1 || slot > 8)
+    throw new Error("Invalid Conveyor reference socket");
+  if (!connected.includes(slot))
+    throw new Error("Connect this reference output to the Timeline Sampler first");
+  const explicit = selectedConveyorSlots(project, index);
+  const selection = new Set(explicit === null ? connected : explicit);
+  if (enabled) selection.add(slot);
+  else selection.delete(slot);
+  project.conveyor_reference_slots ||= {};
+  project.conveyor_reference_slots[String(index)] = [...selection].sort((a,b)=>a-b);
+}
+export function inheritConveyorSlots(project, index) {
+  chunkWindow(project, index);
+  delete project.conveyor_reference_slots?.[String(index)];
+  if (project.conveyor_reference_slots &&
+      !Object.keys(project.conveyor_reference_slots).length)
+    delete project.conveyor_reference_slots;
+}
+
 export function setChunkPrompt(project, index, text) {
   const [start, end] = chunkWindow(project, index);
   const track = lane(project, "prompt", "Chunk prompts");
