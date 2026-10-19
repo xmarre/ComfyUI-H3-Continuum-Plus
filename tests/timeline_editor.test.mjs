@@ -8,6 +8,7 @@ import {
 } from "../web/timeline/chunk_workspace.js";
 import { samplerInputDescription, referenceSocketSources } from "../web/timeline/chunk_ui.js";
 import { traceReferenceSocket, shelfImagePath, conveyorState } from "../web/timeline/conveyor_source.js";
+import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
 
 import {
   changeTiming,
@@ -1463,4 +1464,47 @@ test("missing output labels, normalized shelf files and traversal failure are di
   assert.equal(shelfImagePath({output_mode:"persistent_refs",reference_slots:[
     {type:"input",relative_path:"nested/../../secret.png"},
   ]},1),null);
+});
+
+test("preview/chunk/timeline splitter bounds preserve usable space",()=>{
+  const initial=normalizeVertical(700,null,null);
+  assert.ok(initial.preview>250,JSON.stringify(initial));
+  assert.ok(initial.chunk>=LIMITS.chunks);
+  assert.ok(initial.timeline>=LIMITS.timeline);
+  assert.equal(initial.preview+initial.chunk+initial.timeline,700);
+  const expanded=normalizeVertical(700,560,220);
+  assert.equal(expanded.preview+expanded.chunk+expanded.timeline,700);
+  assert.ok(expanded.timeline>=LIMITS.timeline);
+  assert.ok(expanded.chunk>=LIMITS.chunks);
+  assert.ok(expanded.preview>=LIMITS.preview);
+  const compact=normalizeVertical(220,600,500);
+  assert.equal(compact.preview+compact.chunk+compact.timeline,220);
+  assert.ok(compact.preview>0 && compact.chunk>0 && compact.timeline>0);
+  const restored=normalizeVertical(1100,560,220);
+  assert.ok(restored.preview>=560);
+  assert.ok(restored.timeline>=LIMITS.timeline);
+  const empty=normalizeVertical(0,null,null);
+  assert.deepEqual(empty,{preview:0,chunk:0,timeline:0});
+});
+
+test("resizing sidebars cannot remove the preview and does not change model inputs",()=>{
+  const widths=normalizeHorizontal(1050,580,560);
+  assert.equal(widths.left+widths.right+widths.center,1038);
+  assert.ok(widths.center>=LIMITS.center);
+  assert.ok(widths.left>=LIMITS.sidebar);
+  assert.ok(widths.right>=LIMITS.sidebar);
+  const narrow=normalizeHorizontal(580,600,600);
+  assert.equal(narrow.left+narrow.right+narrow.center,568);
+  assert.ok(narrow.center>=LIMITS.center-1);
+  const valid=layoutView({
+    preview:410,chunk:270,left:205,right:250,card:485,
+    thumb:120,track:72,invalid:1337,
+  });
+  assert.equal(valid.preview,410);
+  assert.equal(valid.track,72);
+  assert.equal(valid.invalid,undefined);
+  assert.equal(setLayoutDimension(valid,"thumb",999).thumb,260);
+  assert.throws(()=>setLayoutDimension(valid,"no-such-panel",20),/Invalid/);
+  assert.throws(()=>setLayoutDimension(valid,"preview",NaN),/Invalid/);
+  assert.deepEqual(layoutView(null),{});
 });
