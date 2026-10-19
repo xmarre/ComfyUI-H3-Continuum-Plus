@@ -122,6 +122,37 @@ thumbnail/waveform/proxy requests are cancellable. These changes do not relax
 the generation/export audio phase contract. Long-source WSL performance and
 physical native playback still require runtime qualification.
 
+## Chunk-first sampler-input authoring regression (2026-10-19)
+
+The generation editor previously exposed global project prompts and a full
+source-film timeline while chunk count/duration existed only as transient
+sampler widgets. The new `chunk_workspace.js` authors exact chunk-boundary
+clips; `chunk_ui.js` shows explicit per-chunk prompt/image/video/audio slots,
+source PTS, the project compiler's per-window summary and native sampler
+persistent socket/parameter values. Global output 24 fps timing remains owned
+by the same `chunk_frames` and `selection` as native generation. A focused
+viewport prevents an imported two-hour source from obscuring the selected
+two-/three-chunk preparation workspace. Eight input cards are rendered per
+page; large selections use a bounded page preview instead of recompiling
+thousands of logical windows on every edit.
+
+Regression coverage checks absolute selection at 14952–15288 output frames,
+source PTS inheritance from late retained footage/soundtrack, image/video/
+audio role routing, exact chunk-aligned prompt clips, undoable sampler timing
+reflow, graph-connected sampler precedence, and the native connected
+`sequence_prompt` fallback/explicit chunk override. The latter uses one
+`with_external_prompt_source` transformation in physical sampling and
+stale-take verification. Existing unmarked/free-form prompt regions keep their
+previous external-source precedence. Source-in PTS and speed are unchanged
+by output chunk-length edits. An integration browser assertion verifies a
+visible chunk prompt is serialized into the actual Studio project widget.
+
+CI tests and packaged Windows Electron smoke tests establish structural
+compatibility. They do not establish real physical Windows Explorer input
+quality, real-time 2-hour movie editing throughput, or MiniMax H3 GPU output
+quality. Native sampler widgets, persistent audio/reference inputs and
+non-Timeline V3.4 workflows remain intact.
+
 ## Long-source UI and State Manager queue regression (2026-10-19)
 
 The screenshot's main still previously magnified the **240×136 filmstrip JPEG**, introducing visible softness independent of H3 sampling or final-export quality. The viewer now requests a separately cached display-resolution still, and 90-quality non-subsampled JPEG is used for that path. Filmstrips stay small. The 2-hour clip surface is projected into the visible viewport instead of creating an enormous clip DOM box, preserving true trim-edge visibility and source timing. JS regressions assert clip bounds, viewer pixel density and seek coalescing; HTTP acceptance checks reuse of a cached JPEG and separate 960×540 still sizes. **Actual long-MKV speed improvement remains unmeasured** on the user's Windows/WSL installation.
