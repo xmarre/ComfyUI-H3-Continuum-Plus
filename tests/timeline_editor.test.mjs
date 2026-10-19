@@ -963,3 +963,65 @@ test("native export rejects backend that lies about original source pixels", asy
   assert.equal(cancelled,1);
   assert.equal(editor.exportPending,false);
 });
+
+test("Timeline queue preserves State Manager unsaved-text protection without false success", async () => {
+  const managerError = new Error("connected positive/default Text Box contains unsaved text");
+  managerError.code = "DSM_UNSAVED_MANAGED_TEXT";
+  let prompts = 0;
+  const studio = {id:1, widgets:[]};
+  const sampler = {
+    id:2, comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[{name:"timeline",link:11}],widgets:[],
+  };
+  const editor = {
+    p:{duration_frames:504,chunk_frames:168,selection:[0,168]},
+    node:studio,queuedIds:new Set(),async save(){},
+    persistView(){},message(){},
+    app:{
+      graph:{_nodes:[studio,sampler],links:{11:{origin_id:1}},
+        setDirtyCanvas(){}},
+      async graphToPrompt(){return {
+        output:{"1":{inputs:{project_json:""}},"2":{inputs:{}}},
+        workflow:{nodes:[
+          {id:1,widgets_values:[""]},{id:2,widgets_values:[]},
+        ]},
+      };},
+    },
+    api:{
+      async fetchApi(){return {ok:true,json:async()=>({
+        jobs:[{start_chunk:0,requires_previous_job:false}],
+      })};},
+      async queuePrompt(){prompts++;throw managerError;},
+    },
+  };
+  await assert.rejects(
+    TimelineEditor.prototype.queue.call(editor),
+    (error) => {
+      assert.match(error.message,/0 of 1 job\(s\) confirmed/);
+      assert.match(error.message,/Save connected/);
+      assert.equal(error.cause,managerError);
+      return true;
+    },
+  );
+  assert.equal(prompts,1);
+  assert.equal(editor.queuedIds.size,0);
+});
+
+test("rapid scrubbing requests only the final thumbnail", async () => {
+  let previewCalls=0,drawCalls=0,viewSaves=0;
+  const editor={
+    p:{duration_frames:1000},closed:false,seekTimer:null,
+    stopPlayback(){},drawPlayhead(){drawCalls++;},
+    async preview(){previewCalls++;},
+    guard(fn){return fn();},
+    persistView(){viewSaves++;},
+  };
+  TimelineEditor.prototype.seek.call(editor,14);
+  TimelineEditor.prototype.seek.call(editor,15);
+  TimelineEditor.prototype.seek.call(editor,16);
+  assert.equal(editor.playhead,16);
+  assert.equal(drawCalls,3);
+  assert.equal(viewSaves,3);
+  await new Promise((resolve)=>setTimeout(resolve,120));
+  assert.equal(previewCalls,1);
+});
