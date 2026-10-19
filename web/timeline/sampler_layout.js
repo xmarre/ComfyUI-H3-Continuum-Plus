@@ -111,13 +111,38 @@ export function selectionChunks(p) {
   );
 }
 export function changeTiming(p, name, value) {
-  const count =
-    name === "chunks" ? Math.max(1, Math.round(value)) : selectionChunks(p);
-  if (name === "chunk_seconds")
-    p.chunk_frames = Math.max(96, Math.min(360, Math.round(value * 24)));
+  const oldSize = p.chunk_frames;
+  const oldFirst = Math.floor(p.selection[0] / oldSize);
+  const oldCount = selectionChunks(p);
+  const count = name === "chunks" ? Math.max(1, Math.round(value)) : oldCount;
+  if (name === "chunk_seconds") {
+    const nextSize = Math.max(96, Math.min(360, Math.round(value * 24)));
+    if (nextSize !== oldSize) {
+      // The first visible authored chunk remains near the same movie time;
+      // exact H3 chunk boundaries are globally anchored to output frame 0.
+      const newFirst = Math.floor(p.selection[0] / nextSize);
+      for (const t of p.tracks || [])
+        for (const c of t.clips || []) {
+          if (!c.chunk_prompt && !c.chunk_workspace) continue;
+          const oldIndex = Number.isInteger(c.chunk_index)
+            ? c.chunk_index : Math.floor(c.start / oldSize);
+          const newIndex = oldIndex >= oldFirst && oldIndex < oldFirst + oldCount
+            ? newFirst + oldIndex - oldFirst
+            : Math.floor(c.start / nextSize);
+          c.chunk_index = newIndex;
+          c.start = newIndex * nextSize;
+          c.end = (newIndex + 1) * nextSize;
+          // Preserve authored source_in and speed: only output placement and
+          // the source-out inferred from its new duration change.
+        }
+      p.chunk_frames = nextSize;
+      p.selection[0] = newFirst * nextSize;
+    }
+  }
   p.selection[1] =
     (Math.floor(p.selection[0] / p.chunk_frames) + count) * p.chunk_frames;
-  p.duration_frames = Math.max(p.duration_frames, p.selection[1]);
+  p.duration_frames = Math.max(p.duration_frames, p.selection[1],
+    ...p.tracks.flatMap((t) => t.clips.map((c) => c.end)));
 }
 
 export function refreshProjectWidgets(node, syncDimensions = false) {
