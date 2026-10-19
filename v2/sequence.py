@@ -903,7 +903,12 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             scoped_references, scoped_video_source, scoped_video_assets, scoped_voice_source, scoped_voice_assets = timeline_inputs.materialize(
                 sequence_index, video_vae=video_vae, audio_vae=driving_audio_vae, width=width, height=height)
             from ..timeline.runtime import merge_references
-            invocation_references = merge_references(reference_assets, scoped_references)
+            selected_persistent = timeline_inputs.select_persistent_references(
+                reference_assets, sequence_index
+            )
+            invocation_references = merge_references(
+                selected_persistent, scoped_references
+            )
             if scoped_video_source is not None:
                 invocation_video_source, invocation_video_assets = scoped_video_source, scoped_video_assets
             if scoped_voice_source is not None:
@@ -979,7 +984,10 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                     if timeline_inputs is not None:
                         next_scoped, _, _, _, _ = timeline_inputs.materialize(
                             sequence_index + 1, video_vae=video_vae, audio_vae=driving_audio_vae, width=width, height=height)
-                        next_references = merge_references(reference_assets, next_scoped)
+                        selected_next = timeline_inputs.select_persistent_references(
+                            reference_assets, sequence_index + 1
+                        )
+                        next_references = merge_references(selected_next, next_scoped)
                     next_descriptor = make_normal_descriptor(
                         geometry=next_geometry, retained_before=retained_frames + geometry.net_frames,
                         target_duration_frames=target_duration_frames, continuation_method=continuation_method,
