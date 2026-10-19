@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Route State Manager time-coded scene scripts to the correct Continuum Timeline Studio chunks even when a saved sampler widget still selects List; preserve late movie-absolute sections beyond the native bounded prompt preflight.
+- Anchor zero-based scene scripts at the selected movie scene, and reuse that source-specific anchor for subsequent render selections to prevent dialogue restarting or repeating.
+- Add bounded per-chunk prompt-source hashes and clock provenance to the Timeline sampler log without recording user-authored text.
+
 - Restore intuitive horizontal navigation: regular mouse wheel and native
   trackpad gestures pan the movie timeline, with explicit left/right pan,
   fit-selection and fit-full-movie toolbar controls.

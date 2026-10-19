@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import time
 import json
 import os
@@ -17,6 +18,7 @@ from .model import blank_project, compile_project, digest, with_external_prompt_
 from .runtime import TimelineInputs
 
 CATEGORY = "MiniMax H3/Continuum/Timeline Studio"
+LOG = logging.getLogger("h3_continuum_timeline")
 
 
 def project_store():
@@ -626,6 +628,13 @@ class H3ContinuumTimelineSampler:
                     external["managed_prompt_transport"]
                 )
             plan["notes"].extend(external.get("notes", []))
+            LOG.info(
+                "H3 Timeline Studio external-prompt routing requested=%r detected=%r "
+                "effective=%r source=%s scene_origin_frame=%d job_range=%s "
+                "chunk_text_sha256_prefixes=%s",
+                prompt_mode, detected_mode, external["mode"], source.get("kind"),
+                origin_frame, job["range"], [value[:16] for value in plan["hashes"]],
+            )
             if effective_mode != prompt_mode:
                 plan["notes"].append(
                     "Timeline Studio interpreted time-coded sections instead of legacy List mode"
