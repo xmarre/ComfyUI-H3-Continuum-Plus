@@ -141,8 +141,10 @@ export function changeTiming(p, name, value) {
   }
   p.selection[1] =
     (Math.floor(p.selection[0] / p.chunk_frames) + count) * p.chunk_frames;
-  p.duration_frames = Math.max(p.duration_frames, p.selection[1],
-    ...p.tracks.flatMap((t) => t.clips.map((c) => c.end)));
+  let last = Math.max(p.duration_frames, p.selection[1]);
+  for (const t of p.tracks || [])
+    for (const c of t.clips || []) last = Math.max(last, c.end);
+  p.duration_frames = last;
 }
 
 export function refreshProjectWidgets(node, syncDimensions = false) {
