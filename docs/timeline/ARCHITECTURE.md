@@ -157,6 +157,14 @@ The timeline's visible filmstrip no longer recreates image elements for the same
 
 Continuum Timeline Studio submits immutable snapshot jobs through the normal `api.queuePrompt` integration, including DoRA State Manager's persistent-library write barrier and unsaved managed Text Box protection. It never invokes a raw backend submission to bypass this external owner. Rejection diagnostics report confirmed job count; State Manager owns the explicit `Save connected` action. Queue failure after a network response loss can be ambiguous and is not misreported as proof of nonexecution.
 
+## Chunk-authoring and sampler precedence contract
+
+The project data is the single executable owner of `chunk_frames`, `selection`, global/list/timeline text, and scoped conditioning tracks. New `web/timeline/chunk_workspace.js` operations author exact chunks of size `p.chunk_frames` on the global zero-based 24 fps frame lattice. They append normal `prompt`, `image_reference`, `video_guide`, or `audio` clips; additional `chunk_prompt`/`chunk_index` and `chunk_workspace` fields distinguish explicit per-chunk authoring from pre-existing free-form tracks. The backend compiler still owns `compile_window`; it does not infer the prompt from labels shown in the browser. `selection` remains `[in,out)` and multi-job scheduling continues in bounded 16-chunk native runs.
+
+The editor's chunk cards and timing inputs mirror the sampler node's `chunks`/`chunk_seconds` project widgets. A connected sampler's reference-image sockets, audio/video persistent references, seed, continuity, resolution override and run storage are listed separately from timeline-authored inputs. An external `sequence_prompt` source replaces the inherited script as before; **only explicit new `chunk_prompt` clips** remain when the external source is applied. Sampling, run-storage input hashes and `stale_take` all use `with_external_prompt_source`, ensuring explicit edits affect the real H3 generation and invalidation semantics identically. Pre-existing unmarked prompt regions remain suppressed when an external source is connected, avoiding silent changes to old workflows.
+
+The default timeline viewport focuses on the selected H3 chunks and retains a toggle for global source-film editing. Only eight chunk cards are materialized per page. When changing `chunk_seconds`, `changeTiming` relocates authored chunk-owned clips in order inside the selected region to the closest new chunk-grid-aligned start. Their source-in PTS and speed are unchanged. Manual retained/source clips stay fixed on the absolute timeline. The editor displays the updated absolute output frame windows rather than presenting source timestamps as output frames.
+
 ## Explicit export range contract
 
 `Render [in,out)` is the editor's canonical selection. The editor sends
