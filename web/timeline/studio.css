@@ -613,3 +613,132 @@
   border-radius: 3px;
   background: #090d13;
 }
+
+/* Chunk authoring uses the available desktop width, with exactly one scroll
+   viewport for chunk content. A chunk must never be a narrow scroll-within-
+   scroll card while the rest of the workspace is empty. */
+.h3ts main {
+  min-height: 175px;
+}
+.h3ts-scroll {
+  height: 20vh;
+  min-height: 125px;
+  flex-shrink: 1;
+}
+.h3ts-chunk-workspace {
+  height: clamp(285px, 42vh, 560px);
+  max-height: 55vh;
+  min-height: 250px;
+  flex: 1 1 42vh;
+}
+.h3ts-chunk-settings {
+  display: block;
+  padding: 4px 12px;
+  max-height: none;
+  overflow: visible;
+}
+.h3ts-chunk-settings > summary {
+  cursor: pointer;
+  color: #c5d5e5;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.h3ts-chunk-settings-body {
+  max-height: 115px;
+  overflow: auto;
+  padding-top: 4px;
+}
+.h3ts-chunk-pager { flex-shrink: 0; }
+.h3ts-chunk-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
+  align-content: start;
+  align-items: start;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: hidden;
+  padding: 8px 12px;
+}
+.h3ts-chunk-card {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  flex: none;
+  overflow: visible;
+  padding: 10px;
+}
+.h3ts-conveyor-refs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 7px;
+}
+.h3ts-conveyor-refs > strong,
+.h3ts-conveyor-refs > small,
+.h3ts-conveyor-refs > p,
+.h3ts-conveyor-refs > button {
+  grid-column: 1 / -1;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref {
+  border: 1px solid #374659;
+  border-radius: 5px;
+  padding: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  align-items: start;
+  min-height: 116px;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref-label > span {
+  flex: 1;
+  min-width: 0;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-thumb {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  cursor: zoom-in;
+  border: 1px solid #546677;
+  border-radius: 4px;
+  background: #090d13;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref > small {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.h3ts-ref-lightbox {
+  background: #171e29;
+  color: #edf2ff;
+  border: 1px solid #596c86;
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 85vw;
+  max-height: 88vh;
+  overflow: auto;
+}
+.h3ts-ref-lightbox header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.h3ts-ref-lightbox img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 78vw;
+  max-height: 70vh;
+  margin: auto;
+  object-fit: contain;
+}
+@media (max-width: 1040px) {
+  .h3ts-conveyor-refs { grid-template-columns: 1fr; }
+  .h3ts-chunk-cards { grid-template-columns: 1fr; }
+}
