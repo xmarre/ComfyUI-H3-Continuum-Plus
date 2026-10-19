@@ -604,6 +604,9 @@ export class TimelineEditor {
     // Preserve native horizontal trackpad movement and explicit vertical
     // scrolling when Shift is held. Never capture browser zoom shortcuts.
     this.scroller.addEventListener("wheel",(event)=>{
+      // Shift+vertical-wheel explicitly scrolls stacked tracks when present.
+      if(event.shiftKey && !event.deltaX &&
+          this.scroller.scrollHeight>this.scroller.clientHeight)return;
       const pan=timelineWheelPan(event.deltaX,event.deltaY,event);
       if(!pan || this.scroller.scrollWidth<=this.scroller.clientWidth)return;
       event.preventDefault();
