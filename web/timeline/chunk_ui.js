@@ -98,7 +98,11 @@ export function referenceSocketSources(editor) {
 
 export function samplerInputDescription(editor) {
   const sampler = linkedSampler(editor);
-  if (!sampler) return {sampler:null,warning:"Connect exactly one Continuum Timeline Sampler to this Studio"};
+  if (!sampler) return {
+    sampler:null, project:editor.p,connectedReferenceSlots:[],
+    persistentPictureSockets:0,
+    warning:"Connect exactly one Continuum Timeline Sampler to this Studio",
+  };
   const widget = (name) => sampler.widgets?.find((w) => w.name === name)?.value;
   const linked = (name) => nodeInput(sampler, name).linked;
   const connectedReferenceSlots = Array.from({length:8},(_,i)=>i+1)
