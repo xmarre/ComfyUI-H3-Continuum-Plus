@@ -88,6 +88,17 @@ def reference_slots_for_chunk(project, index):
     return selections.get(str(index))
 
 
+def reference_slots_needed(project, indices):
+    """Union of requested socket numbers for this bounded sampling job."""
+    selected = set()
+    for index in indices:
+        slots = reference_slots_for_chunk(project, index)
+        if slots is None:
+            return set(range(1, 9))
+        selected.update(slots)
+    return selected
+
+
 def validate(project):
     p = copy.deepcopy(project)
     if not isinstance(p, dict) or p.get("schema") != SCHEMA:
