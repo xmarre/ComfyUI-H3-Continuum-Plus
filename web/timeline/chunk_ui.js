@@ -254,7 +254,7 @@ function conveyorReferenceControls(editor, index, sources) {
           "aria-label":"Reference image preview"},
           el("header",{},el("strong",{text:source.label}),
             button("Close",()=>overlay.close())),
-          el("img",{src:source.thumbnail.replace(/([?&])size=\\d+/, "$1size=512"),
+          el("img",{src:source.thumbnail.replace(/([?&])size=\d+/, "$1size=512"),
             alt:source.label}),
           el("p",{text:source.previewNote || "Source reference preview"}),
         );
