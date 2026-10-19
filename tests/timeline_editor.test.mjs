@@ -1163,3 +1163,20 @@ test("changing the connected sampler chunk duration reflows selected authored ch
   assert.equal(clip.source_in,"623");
   assert.equal(clip.chunk_index,newFirst);
 });
+
+test("audio chunks inherit the displayed soundtrack's late source cut", () => {
+  const id="f".repeat(64);
+  const p={duration_frames:2*3600*24,chunk_frames:168,
+    selection:[14952,15288],
+    assets:[{id,name:"Soundtrack",kind:"audio",audio:{start_time:"0"}}],
+    tracks:[{id:"sound",role:"audio",clips:[{
+      id:"existing-sound",asset_id:id,start:14952,end:15288,
+      source_in:"714",speed:"1",padding:"silence",audio_role:"final",
+    }]}]};
+  const cut=addChunkMedia(p,90,"audio",id,"guide");
+  assert.equal(cut.start,15120);
+  assert.equal(cut.end,15288);
+  assert.equal(cut.source_in,"721");
+  assert.equal(cut.audio_role,"guide");
+  assert.equal(p.tracks[0].clips[0].audio_role,"final");
+});
