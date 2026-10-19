@@ -1134,3 +1134,32 @@ test("connected native sampler precedence is visible independently of authored i
   assert.deepEqual(result.settings.slice(0,2),
     [["Chunks","2"],["Chunk duration","7.000s (168f)"]]);
 });
+
+test("changing the connected sampler chunk duration reflows selected authored chunk inputs", () => {
+  const assetId="a".repeat(64);
+  const p={
+    duration_frames:2*3600*24,chunk_frames:168,
+    selection:[14952,15288],
+    assets:[{id:assetId,kind:"video",video:{start_time:"0"}}],
+    tracks:[],
+  };
+  setChunkPrompt(p,89,"chunk A");
+  setChunkPrompt(p,90,"chunk B");
+  const clip=addChunkMedia(p,89,"video_guide",assetId);
+  updateChunkSource(p,clip.id,"623");
+  changeTiming(p,"chunk_seconds",8);
+  assert.equal(p.chunk_frames,192);
+  assert.deepEqual(p.selection,[14784,15168]);
+  const newFirst=Math.floor(p.selection[0]/192);
+  assert.deepEqual(selectedChunkPage(p).chunks.map((c)=>c.index),
+    [newFirst,newFirst+1]);
+  const prompts=p.tracks.filter((t)=>t.role==="prompt")
+    .flatMap((t)=>t.clips).sort((a,b)=>a.start-b.start);
+  assert.deepEqual(prompts.map((c)=>[c.start,c.end,c.text]),[
+    [14784,14976,"chunk A"],[14976,15168,"chunk B"],
+  ]);
+  assert.equal(clip.start,14784);
+  assert.equal(clip.end,14976);
+  assert.equal(clip.source_in,"623");
+  assert.equal(clip.chunk_index,newFirst);
+});
