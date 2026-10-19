@@ -191,13 +191,15 @@ export function samplerInputDescription(editor) {
   const sampler = linkedSampler(editor);
   if (!sampler) return {
     sampler:null, project:editor.p,connectedReferenceSlots:[],
-    persistentPictureSockets:0,
+    availableReferenceSlots:[],persistentPictureSockets:0,
     warning:"Connect exactly one Continuum Timeline Sampler to this Studio",
   };
   const widget = (name) => sampler.widgets?.find((w) => w.name === name)?.value;
   const linked = (name) => nodeInput(sampler, name).linked;
   const connectedReferenceSlots = Array.from({length:8},(_,i)=>i+1)
     .filter((slot)=>linked("reference_image_"+slot));
+  const availableReferenceSlots=activeReferenceSources(
+    referenceSocketSources(editor)).map(source=>source.slot);
   const pinned = connectedReferenceSlots.map((slot)=>"reference_image_"+slot);
   const persistent = [
     ...pinned,
@@ -220,7 +222,7 @@ export function samplerInputDescription(editor) {
   return {
     sampler,
     persistent, supplied, overrides, persistentPictureSockets: pinned.length,
-    connectedReferenceSlots, project: editor.p,
+    connectedReferenceSlots, availableReferenceSlots, project: editor.p,
     promptOverridden: externalPrompt,
     audioOverridden: linked("driving_audio"),
     settings: [
@@ -365,7 +367,7 @@ function compiledLine(node, window, inputs, ownPrompt = "", chunkIndex = window?
       return;
     }
     const selection=selectedConveyorSlots(inputs.project,chunkIndex);
-    const connected=inputs.connectedReferenceSlots || [];
+    const connected=inputs.availableReferenceSlots || [];
     const slots=selection===null ? connected :
       selection.filter((slot)=>connected.includes(slot));
     const clips=overlappingChunkClips(inputs.project,chunkIndex);
@@ -386,8 +388,8 @@ function compiledLine(node, window, inputs, ownPrompt = "", chunkIndex = window?
     : "Compiled prompt: "+(window.prompt || "(empty)");
   const selection = selectedConveyorSlots(inputs.project, window.index);
   const selectedSockets = selection === null
-    ? (inputs.connectedReferenceSlots || [])
-    : selection.filter((slot)=>(inputs.connectedReferenceSlots || []).includes(slot));
+    ? (inputs.availableReferenceSlots || [])
+    : selection.filter((slot)=>(inputs.availableReferenceSlots || []).includes(slot));
   const possibleImageTotal = selectedSockets.length + window.images.length;
   const imageBudgetWarning = possibleImageTotal > 8
     ? " · WARNING: selected persistent sockets plus scoped images may exceed H3's eight-picture limit"
@@ -494,8 +496,8 @@ export function renderChunkWorkspace(editor) {
   const settings=el("details",{class:"h3ts-chunk-settings"});
   settings.open=!!editor.samplerDetailsOpen;
   settings.append(el("summary",{text:sampler.warning ||
-    "Connected sampler · "+sampler.connectedReferenceSlots.length+
-    " image inputs · "+(p.chunk_frames/24).toFixed(3)+" s/chunk · "+
+    "Connected sampler · "+sampler.availableReferenceSlots.length+
+    " active reference images · "+(p.chunk_frames/24).toFixed(3)+" s/chunk · "+
     (sampler.settings?.find(([name])=>name==="Continuity")?.[1] || "continuity unknown")+
     " · expand for complete settings and overrides"}));
   const details=el("div",{class:"h3ts-chunk-settings-body"});
