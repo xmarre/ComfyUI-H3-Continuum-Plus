@@ -23,7 +23,7 @@ import {
 } from "./core.js";
 import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-navigation-media-v14";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
-import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom } from "./navigation.js";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan } from "./navigation.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
@@ -604,10 +604,7 @@ export class TimelineEditor {
     // Preserve native horizontal trackpad movement and explicit vertical
     // scrolling when Shift is held. Never capture browser zoom shortcuts.
     this.scroller.addEventListener("wheel",(event)=>{
-      if(event.ctrlKey||event.metaKey)return;
-      const pan=event.deltaX ||
-        (event.shiftKey ? event.deltaY :
-          (Math.abs(event.deltaY)>=Math.abs(event.deltaX) ? event.deltaY : 0));
+      const pan=timelineWheelPan(event.deltaX,event.deltaY,event);
       if(!pan || this.scroller.scrollWidth<=this.scroller.clientWidth)return;
       event.preventDefault();
       this.scroller.scrollLeft+=pan;
