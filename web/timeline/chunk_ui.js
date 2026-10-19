@@ -292,9 +292,12 @@ export function renderChunkWorkspace(editor) {
       if (!assetId && !files.length) return;
       e.preventDefault();e.stopPropagation();
       editor.guard(async ()=>{
-        const assets=assetId
-          ? [editor.p.assets.find((a)=>a.id===assetId)]
-          : await Promise.all(files.map((file)=>editor.resolveOriginal(file)));
+        // Native linking hashes the original. Keep large Explorer drops
+        // sequential so we do not saturate WSL disk I/O with movie hashes.
+        const assets=[];
+        if (assetId) assets.push(editor.p.assets.find((a)=>a.id===assetId));
+        else for (const file of files)
+          assets.push(await editor.resolveOriginal(file));
         for (const asset of assets) {
           if (!asset) throw new Error("Chunk drop referenced missing media");
           const role=asset.kind==="image" ? "image_reference"
