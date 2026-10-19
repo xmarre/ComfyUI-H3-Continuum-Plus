@@ -598,6 +598,14 @@ export function renderChunkWorkspace(editor) {
       row.append(el("span",{class:"h3ts-chunk-media-name",
         text:(asset?.alias || asset?.name || clip.text || "source")+
           " · "+(end-start)+"f"}));
+      if(track.muted)row.append(button("Unmute track",()=>
+        editor.edit(project=>{
+          project.tracks.find(t=>t.id===track.id).muted=false;
+        }),"Globally enables this media track in all chunks"));
+      if(track.locked)row.append(button("Unlock track",()=>
+        editor.edit(project=>{
+          project.tracks.find(t=>t.id===track.id).locked=false;
+        }),"Unlocks this entire timeline track for editing"));
       if (asset?.video && ["retained","image_reference","video_guide"].includes(track.role))
         row.prepend(el("img",{
           class:"h3ts-chunk-asset-preview",
