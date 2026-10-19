@@ -491,6 +491,43 @@ const { chromium } = require("playwright");
     await page.waitForFunction(() => window.__h3Cancelled?.length === 70);
     assert.equal(await page.evaluate(() => window.__h3Cancelled[0]), "owned-0");
     await page.waitForFunction(() => window.__h3Interrupted === 1);
+    // Long-duration clip surfaces must stay viewport-bounded even at an
+    // interior point several thousand source seconds from frame zero.
+    const geometry = await page.evaluate(async () => {
+      const app = window.comfyAPI.app.app;
+      const studio = app.graph._nodes.find(
+        (n) => n.comfyClass === "H3ContinuumTimelineStudio",
+      );
+      studio.__timelineEditProject((p) => {
+        p.duration_frames = 7200 * 24;
+        p.selection = [86400, 86568];
+        p.tracks = [{
+          id:"virtual",role:"prompt",name:"Long prompt",
+          clips:[{
+            id:"virtual-clip",start:0,end:p.duration_frames,
+            source_in:"0",speed:"1",padding:"error",
+            audio_role:"neither",text:"Spanning prompt",
+          }],
+        }];
+      });
+      const scroller = document.querySelector(".h3ts-scroll");
+      const zoom = studio.properties.h3_timeline_view.zoom;
+      scroller.scrollLeft = Math.round(3600 * zoom);
+      scroller.dispatchEvent(new Event("scroll"));
+      await new Promise((resolve) => requestAnimationFrame(
+        () => requestAnimationFrame(resolve),
+      ));
+      const clip = document.querySelector(".h3ts-clip");
+      return {
+        width: clip.getBoundingClientRect().width,
+        viewport: scroller.clientWidth,
+        trimLeft: clip.querySelector(".trim-left").hidden,
+        trimRight: clip.querySelector(".trim-right").hidden,
+      };
+    });
+    assert.ok(geometry.width <= geometry.viewport + 24, JSON.stringify(geometry));
+    assert.equal(geometry.trimLeft, true);
+    assert.equal(geometry.trimRight, true);
     const own = errors.filter((e) => /Timeline|timeline|h3ts/.test(e));
     assert.deepEqual(own, []);
     console.log(
