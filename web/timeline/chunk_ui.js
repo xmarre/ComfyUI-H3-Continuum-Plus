@@ -68,12 +68,16 @@ export function referenceSocketSources(editor) {
       (disabled || !ref);
     const dynamic=source.conveyor && !persistent;
     const filename=ref?.filename || path?.split("/").at(-1);
-    const src=path ? "/image-conveyor/thumbnail?"+
+    const thumbnailPath=path ? "/image-conveyor/thumbnail?"+
       new URLSearchParams({
         relative_path:path,size:"160",
         ...((ref?.source_version || ref?.mtime_ns)
           ? {v:String(ref.source_version || ref.mtime_ns)} : {}),
       }).toString() : null;
+    // ComfyUI may serve under a URL prefix; use the same API router as the
+    // Conveyor's own thumbnail widgets instead of a hardcoded origin root.
+    const src=thumbnailPath && typeof editor.api?.apiURL==="function"
+      ? editor.api.apiURL(thumbnailPath) : thumbnailPath;
     const direct=source.conveyor ? "Image Conveyor #"+node.id :
       (node?.title || node?.comfyClass || "Connected IMAGE");
     const via=source.via?.length ? " via "+source.via.join(" → ") : "";
@@ -88,7 +92,9 @@ export function referenceSocketSources(editor) {
       reason:disabled ? "Disabled in Image Conveyor" :
         inactive ? "Shelf empty" :
         source.unresolved || (source.conveyor && !shelfNumber
-          ? "Not a persistent reference output" : null),
+          ? "Not a reference-image output" :
+          source.conveyor && persistent && !path
+            ? "Shelf image has no resolvable input-file path" : null),
       thumbnail:src,
       previewNote:via ? "Conveyor source image; processed by "+source.via.join(" → ") :
         "Conveyor source image",
