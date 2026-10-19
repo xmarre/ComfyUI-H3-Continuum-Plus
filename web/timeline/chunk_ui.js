@@ -203,10 +203,10 @@ export function renderChunkWorkspace(editor) {
   }
   host.append(settings);
   const pager = el("div",{class:"h3ts-chunk-pager"},
-    button("Previous chunks",()=>{editor.chunkPage--;renderChunkWorkspace(editor);}),
+    button("Previous chunks",()=>{editor.chunkPage--;renderChunkWorkspace(editor);editor.scheduleChunkCompile();}),
     el("span",{text:"Page "+(page.page+1)+" / "+page.pages+
       " · select a chunk to seek or fill its input slots"}),
-    button("Next chunks",()=>{editor.chunkPage++;renderChunkWorkspace(editor);}));
+    button("Next chunks",()=>{editor.chunkPage++;renderChunkWorkspace(editor);editor.scheduleChunkCompile();}));
   pager.firstChild.disabled=page.page===0;
   pager.lastChild.disabled=page.page>=page.pages-1;
   host.append(pager);
