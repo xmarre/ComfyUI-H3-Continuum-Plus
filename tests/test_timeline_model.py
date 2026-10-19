@@ -339,3 +339,38 @@ def test_conveyor_reference_selection_is_chunk_causal_and_backward_compatible():
         test["conveyor_reference_slots"] = invalid
         with pytest.raises(ValueError, match="reference selection"):
             validate(test)
+
+
+def test_muted_chunk_media_removed_from_effective_native_conditioning():
+    """Clip activation applies to actual backend guidance and audio."""
+    p = project()
+    guide = p["tracks"][0]["clips"][0]
+    assert len(compile_window(p, 0)["video"]) == 1
+    assert len(compile_window(p, 1)["video"]) == 1
+
+    # Two edits of one spanning clip isolate one middle chunk without
+    # modifying the source PTS or conditional identity of other chunks.
+    p["tracks"][0]["clips"] = [
+        {**guide, "id": "before", "start": 0, "end": 168},
+        {**guide, "id": "off", "start": 168, "end": 336,
+         "source_in": "7", "muted": True},
+    ]
+    validate(p)
+    assert compile_window(p, 0)["video"][0]["source"] == ["0", "7"]
+    assert compile_window(p, 1)["video"] == []
+    p["tracks"][0]["clips"][1]["muted"] = False
+    assert compile_window(p, 1)["video"][0]["source"] == ["7", "14"]
+
+    p["tracks"].append({
+        "id": "sound",
+        "role": "audio",
+        "clips": [{
+            "id": "music", "asset_id": B, "start": 168, "end": 336,
+            "source_in": "100", "speed": "1", "audio_role": "final",
+            "padding": "silence", "muted": True,
+        }],
+    })
+    validate(p)
+    assert compile_window(p, 1)["final"] == []
+    p["tracks"][-1]["clips"][0]["muted"] = False
+    assert len(compile_window(p, 1)["final"]) == 1
