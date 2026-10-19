@@ -742,3 +742,22 @@
   .h3ts-conveyor-refs { grid-template-columns: 1fr; }
   .h3ts-chunk-cards { grid-template-columns: 1fr; }
 }
+
+/* Temporary still is visually distinct from the high-detail viewer image;
+   the full-detail request replaces it without switching export quality. */
+.h3ts-preview .h3ts-preview-placeholder { z-index: 0; }
+.h3ts-preview .h3ts-image { z-index: 1; }
+.h3ts-preview-state {
+  position: absolute;
+  z-index: 2;
+  bottom: 7px;
+  left: 10px;
+  right: 10px;
+  padding: 5px 9px;
+  font-size: 11px;
+  color: #edf2ff;
+  background: #171e29d9;
+  border: 1px solid #445a70;
+  border-radius: 4px;
+  pointer-events: none;
+}
