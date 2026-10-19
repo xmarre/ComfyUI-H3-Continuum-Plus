@@ -505,8 +505,20 @@ class H3ContinuumTimelineSampler:
                 "mode": external["mode"],
                 "script": external["source"]["original_text"],
             }
+            # A connected native prompt replaces legacy timeline scripts and
+            # free-form prompt regions, but deliberately retains *explicit*
+            # chunk-editor prompts. These are opt-in per-window overrides;
+            # older projects without chunk_prompt retain their old precedence.
             external_project["tracks"] = [
-                t for t in external_project["tracks"] if t["role"] != "prompt"
+                {
+                    **t,
+                    "clips": [c for c in t["clips"] if c.get("chunk_prompt")],
+                }
+                if t["role"] == "prompt"
+                else t
+                for t in external_project["tracks"]
+                if t["role"] != "prompt"
+                or any(c.get("chunk_prompt") for c in t["clips"])
             ]
             provider.project = external_project
             provider.set_offset(provider.offset)
