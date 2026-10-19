@@ -60,14 +60,17 @@ export function samplerInputDescription(editor) {
       .filter(linked),
   ];
   const overrides = [];
-  if (linked("sequence_prompt")) overrides.push("sequence_prompt supplies inherited prompts; authored chunk prompts override it inside their own spans");
+  const externalPrompt = linked("sequence_prompt") ||
+    (typeof widget("sequence_prompt") === "string" &&
+      !!widget("sequence_prompt").trim());
+  if (externalPrompt) overrides.push("sequence_prompt supplies inherited prompts; authored chunk prompts override it inside their own spans");
   if (linked("driving_audio")) overrides.push("driving_audio overrides timeline guide audio");
   if (linked("reference_video_1")) overrides.push("persistent video reference applies where no scoped guide");
   if (linked("width")) overrides.push("width comes from a connected node");
   if (linked("height")) overrides.push("height comes from a connected node");
   return {
     sampler,
-    persistent, overrides, promptOverridden: linked("sequence_prompt"),
+    persistent, overrides, promptOverridden: externalPrompt,
     audioOverridden: linked("driving_audio"),
     settings: [
       ["Chunks",String(selectionChunks(editor.p))],
@@ -113,9 +116,10 @@ function sectionForRole(editor, index, role, audioRoute) {
   const row = el("div",{class:"h3ts-chunk-add"});
   const choose = pickAsset(editor,role,(assetId)=>{
     let created;
-    editor.edit((p)=>{ created=addChunkMedia(p,index,role,assetId,
-      audioRoute?.value || "guide"); });
-    editor.selected=[created.id];
+    editor.edit((p)=>{
+      created=addChunkMedia(p,index,role,assetId,audioRoute?.value || "guide");
+      editor.selected=[created.id];
+    });
   });
   row.append(choose.select);
   if (audioRoute) row.append(audioRoute);
