@@ -71,9 +71,10 @@ export function referenceSocketSources(editor) {
     }
     const shelfNumber=shelfMatch ? Number(shelfMatch[1]) : null;
     const source=shelfNumber ? state.reference_slots?.[shelfNumber-1] : null;
-    const enabled=shelfNumber && node?.properties?.image_conveyor_reference_enabled?.[
-      shelfNumber-1] === false ? false : true;
     const activeMode=state.output_mode==="persistent_refs";
+    const enabled=activeMode && shelfNumber &&
+      node?.properties?.image_conveyor_reference_enabled?.[
+        shelfNumber-1] === false ? false : true;
     const inputPath=activeMode && source?.type==="input" &&
       typeof source.annotated==="string" &&
       source.annotated.endsWith(" [input]")
@@ -84,11 +85,14 @@ export function referenceSocketSources(editor) {
     return {
       slot, connected:!!link, conveyor:isConveyor, shelfNumber,
       nodeId:node?.id ?? null,
-      label:namePrefix+(shelfNumber ? " · Shelf "+shelfNumber : "")+
+      dynamic:isConveyor && !activeMode,
+      label:namePrefix+(shelfNumber ?
+        (activeMode ? " · Shelf "+shelfNumber
+          : " · queue-group image "+(shelfNumber+1)) : "")+
         (filename ? " · "+filename : "")+
         (!isConveyor && name ? " · "+name : ""),
-      unavailable:isConveyor && shelfNumber &&
-        (!enabled || (activeMode && !source)),
+      unavailable:isConveyor && shelfNumber && activeMode &&
+        (!enabled || !source),
       reason:!enabled ? "Disabled on Image Conveyor" :
         activeMode && !source ? "Shelf slot empty" : null,
       thumbnail: inputPath
@@ -209,8 +213,8 @@ function conveyorReferenceControls(editor, index, sources) {
   const allConveyor=connected.every((source)=>source.conveyor);
   for(const source of connected) {
     const checked=selected===null || selected.includes(source.slot);
-    const expectedPicture = allConveyor && checked && !source.unavailable
-      ? ++picture : null;
+    const expectedPicture = allConveyor && checked && !source.unavailable &&
+      !source.dynamic ? ++picture : null;
     const toggle=el("input",{
       type:"checkbox",
       "aria-label":"Chunk "+(index+1)+" reference input "+source.slot,
