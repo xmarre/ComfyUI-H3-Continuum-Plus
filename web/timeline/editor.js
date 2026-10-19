@@ -21,7 +21,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription } from "./chunk_ui.js";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
@@ -138,6 +138,7 @@ export class TimelineEditor {
     this.root.showModal();
     this.build();
     this.render();
+    this.conveyorPoll = setInterval(() => refreshConveyorControls(this), 1250);
     this.scroller.scrollLeft = this.chunkFocus && view.chunkFocus == null
       ? 0 : (view.scroll || 0);
     this.root.focus();
@@ -2080,6 +2081,7 @@ export class TimelineEditor {
     clearTimeout(this.exportTimer);
     clearTimeout(this.seekTimer);
     clearTimeout(this.chunkCompileTimer);
+    clearInterval(this.conveyorPoll);
     this.chunkInspectionEpoch++;
     this.filmTileCache?.clear();
     try { this.abort.abort(); } catch { /* no pending requests */ }
