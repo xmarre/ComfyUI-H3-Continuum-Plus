@@ -43,6 +43,9 @@ if __package__:
     _physical_sequence.physical_timeline_video_enabled = _physical_timeline_video_disabled
     _sequence.physical_timeline_video_enabled = _physical_timeline_video_disabled
 
+    from .timeline.routes import register_routes as _register_timeline_routes
+    _register_timeline_routes()
+
     try:
         run_temporal_self_test()
     except Exception as exc:
