@@ -1032,3 +1032,20 @@
 .h3ts-chunk-heading button {
   white-space: nowrap;
 }
+
+/* Primary chunk actions remain visible and labelled; the add-media workflow
+   is secondary and doesn't push existing clips off the card. */
+.h3ts-chunk-add-details {
+  border: 1px solid #3c4c5d;
+  border-radius: 5px;
+  margin-top: 8px;
+  padding: 7px;
+}
+.h3ts-chunk-add-details > summary { cursor: pointer; font-weight: 600; }
+.h3ts-chunk-add-details > .h3ts-chunk-control { margin-top: 8px; }
+.h3ts-chunk-media-enable { font-weight: 600; cursor: pointer; }
+.h3ts-chunk-media-enable input:disabled { cursor: not-allowed; }
+.h3ts-scroll {
+  overflow-x: auto !important;
+  overscroll-behavior-x: contain;
+}
