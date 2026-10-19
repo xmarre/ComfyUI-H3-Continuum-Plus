@@ -724,7 +724,11 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     try: conditioning_mode=detect_conditioning_mode(first_frame=first_frame,last_frame=last_frame,reference_assets=reference_assets)
     except ValueError as exc: raise SequenceRuntimeError(str(exc)) from exc
     reference_warning=""
-    if reference_assets is not None:
+    masked_timeline_references = bool(
+        timeline_inputs is not None and
+        timeline_inputs.project.get("conveyor_reference_slots")
+    )
+    if reference_assets is not None and not masked_timeline_references:
         from ..reference import validate_reference_prompts
         reference_warning=validate_reference_prompts(prompts,reference_assets.count)
     from ..reference_audio import (
@@ -824,7 +828,10 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         else:
             reuse_notes.insert(0,"FL2VA terminal merge: not eligible for this request; retained one physical sample per logical chunk.")
     if reference_assets is not None:
-        reuse_notes.insert(0,f"Reference conditioning: {reference_assets.count} image(s), size={reference_assets.size_mode}; persistent across all chunks.")
+        reuse_notes.insert(0,
+            f"Reference conditioning: {reference_assets.count} image(s), size={reference_assets.size_mode}; "
+            + ("selected separately for each timeline chunk." if masked_timeline_references
+               else "persistent across all chunks."))
         if reference_warning: reuse_notes.append(reference_warning)
     if reference_audio_source is not None:
         reuse_notes.insert(0,"Reference Audio 1 conditioning: persistent across all chunks.")
@@ -914,6 +921,16 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             if scoped_voice_source is not None:
                 invocation_voice_source, invocation_voice_assets = scoped_voice_source, scoped_voice_assets
             del scoped_references, scoped_video_source, scoped_video_assets, scoped_voice_source, scoped_voice_assets
+        if masked_timeline_references:
+            from ..reference import validate_reference_prompts
+            warning = validate_reference_prompts(
+                [prompt], invocation_references.count if invocation_references else 0
+            )
+            if warning:
+                LOG.warning(
+                    "H3 Timeline chunk %d selected-reference prompt warning: %s",
+                    sequence_index + 1, warning,
+                )
         descriptor=make_normal_descriptor(
             geometry=geometry,retained_before=retained_frames,target_duration_frames=target_duration_frames,
             continuation_method=continuation_method,initial_state_external=initial_state is not None and not entries,
