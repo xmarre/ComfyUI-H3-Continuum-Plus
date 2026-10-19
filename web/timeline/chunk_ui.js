@@ -7,6 +7,7 @@ import {
 } from "./chunk_workspace.js";
 import { changeTiming, selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
+import { traceReferenceSocket, conveyorState, shelfImagePath } from "./conveyor_source.js";
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -49,55 +50,49 @@ export function linkedSampler(editor) {
   return samplers.length === 1 ? samplers[0] : null;
 }
 export function referenceSocketSources(editor) {
-  const sampler = linkedSampler(editor);
+  const sampler=linkedSampler(editor);
   if (!sampler) return [];
-  const graph = sampler.graph || editor.app?.graph;
+  const graph=sampler.graph || editor.app?.graph;
   return Array.from({length:8},(_,i)=>{
     const slot=i+1;
-    const input=sampler.inputs?.find((v)=>v.name==="reference_image_"+slot);
-    const link=graph?.links?.[input?.link];
-    const node=link && (graph.getNodeById?.(link.origin_id) ||
-      graph._nodes?.find((n)=>n.id===link.origin_id));
-    const output=node?.outputs?.[link?.origin_slot];
-    const isConveyor=["ImageConveyor","SequentialBatchImageLoader"]
-      .includes(String(node?.comfyClass || node?.type || ""));
-    const name=String(output?.name || output?.label || "");
-    const shelfMatch=isConveyor && /^ref_image_([1-8])$/.exec(name);
-    let state=node?.__bil?.state;
-    if (!state || typeof state!=="object") {
-      try {
-        state=JSON.parse(node?.widgets?.find((w)=>w.name==="state_json")?.value || "{}");
-      } catch { state={}; }
-    }
-    const shelfNumber=shelfMatch ? Number(shelfMatch[1]) : null;
-    const source=shelfNumber ? state.reference_slots?.[shelfNumber-1] : null;
-    const activeMode=state.output_mode==="persistent_refs";
-    const enabled=activeMode && shelfNumber &&
-      node?.properties?.image_conveyor_reference_enabled?.[
-        shelfNumber-1] === false ? false : true;
-    const inputPath=activeMode && source?.type==="input" &&
-      typeof source.annotated==="string" &&
-      source.annotated.endsWith(" [input]")
-      ? source.annotated.slice(0,-8) : null;
-    const filename=source?.filename || (inputPath?.split("/").at(-1));
-    const namePrefix=isConveyor ? ("Image Conveyor #"+node.id) :
+    const source=traceReferenceSocket(graph,sampler,slot);
+    const node=source.node;
+    const state=source.conveyor ? conveyorState(node) : {};
+    const shelfNumber=source.shelfNumber;
+    const ref=shelfNumber ? state.reference_slots?.[shelfNumber-1] : null;
+    const path=shelfImagePath(state,shelfNumber);
+    const persistent=state.output_mode==="persistent_refs";
+    const disabled=source.conveyor && persistent && shelfNumber &&
+      node?.properties?.image_conveyor_reference_enabled?.[shelfNumber-1] === false;
+    const inactive=source.conveyor && persistent && shelfNumber &&
+      (disabled || !ref);
+    const dynamic=source.conveyor && !persistent;
+    const filename=ref?.filename || path?.split("/").at(-1);
+    const src=path ? "/image-conveyor/thumbnail?"+
+      new URLSearchParams({
+        relative_path:path,size:"160",
+        ...((ref?.source_version || ref?.mtime_ns)
+          ? {v:String(ref.source_version || ref.mtime_ns)} : {}),
+      }).toString() : null;
+    const direct=source.conveyor ? "Image Conveyor #"+node.id :
       (node?.title || node?.comfyClass || "Connected IMAGE");
+    const via=source.via?.length ? " via "+source.via.join(" → ") : "";
     return {
-      slot, connected:!!link, conveyor:isConveyor, shelfNumber,
-      nodeId:node?.id ?? null,
-      dynamic:isConveyor && !activeMode,
-      label:namePrefix+(shelfNumber ?
-        (activeMode ? " · Shelf "+shelfNumber
-          : " · queue-group image "+(shelfNumber+1)) : "")+
-        (filename ? " · "+filename : "")+
-        (!isConveyor && name ? " · "+name : ""),
-      unavailable:isConveyor && shelfNumber && activeMode &&
-        (!enabled || !source),
-      reason:!enabled ? "Disabled on Image Conveyor" :
-        activeMode && !source ? "Shelf slot empty" : null,
-      thumbnail: inputPath
-        ? "/image-conveyor/thumbnail?relative_path="+
-          encodeURIComponent(inputPath)+"&size=160" : null,
+      slot,connected:source.connected,conveyor:source.conveyor,
+      shelfNumber,nodeId:node?.id ?? null,dynamic:!!dynamic,
+      label:direct+
+        (shelfNumber ? (persistent ? " · Shelf "+shelfNumber :
+          " · queue-group image "+(shelfNumber+1)) : "")+
+        (filename ? " · "+filename : "")+via,
+      unavailable:!!inactive,
+      reason:disabled ? "Disabled in Image Conveyor" :
+        inactive ? "Shelf empty" :
+        source.unresolved || (source.conveyor && !shelfNumber
+          ? "Not a persistent reference output" : null),
+      thumbnail:src,
+      previewNote:via ? "Conveyor source image; processed by "+source.via.join(" → ") :
+        "Conveyor source image",
+      sourceVersion:ref?.source_version || ref?.mtime_ns || null,
     };
   });
 }
