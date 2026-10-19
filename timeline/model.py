@@ -78,6 +78,16 @@ def integer(value, name, minimum=0):
     return value
 
 
+def reference_slots_for_chunk(project, index):
+    """None inherits all connected reference sockets; [] selects none.
+
+    Slots are one-based stable sampler input identities, not image file IDs.
+    Empty/bypassed Conveyor outputs are omitted at runtime.
+    """
+    selections = project.get("conveyor_reference_slots", {})
+    return selections.get(str(index))
+
+
 def validate(project):
     p = copy.deepcopy(project)
     if not isinstance(p, dict) or p.get("schema") != SCHEMA:
@@ -103,6 +113,18 @@ def validate(project):
         ):
             raise ValueError("Assets require unique registered SHA256 identifiers")
         ids.add(a["id"])
+    slot_masks = p.get("conveyor_reference_slots", {})
+    if not isinstance(slot_masks, dict) or len(slot_masks) > 65536:
+        raise ValueError("Invalid chunk reference selections")
+    for key, slots in slot_masks.items():
+        if (not isinstance(key, str) or not key.isascii() or not key.isdecimal()
+                or str(int(key)) != key
+                or int(key) * p["chunk_frames"] >= duration):
+            raise ValueError("Chunk reference selection is outside the project")
+        if (not isinstance(slots, list) or len(slots) > 8
+                or any(type(slot) is not int or not 1 <= slot <= 8 for slot in slots)
+                or slots != sorted(set(slots))):
+            raise ValueError("Chunk reference selection must contain sorted unique socket numbers 1–8")
     seen = set()
     for t in p.setdefault("tracks", []):
         if t.get("id") in seen:
@@ -520,6 +542,11 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         "guide": guide,
         "voice": [audio_identity(i) for i in inputs if i["audio_role"] == "reference"],
     }
+    selected_slots = reference_slots_for_chunk(p, index)
+    if selected_slots is not None:
+        # This is causal input state: masks invalidate their chunk and suffix.
+        # The runtime applies this selection to connected IMAGE tensors.
+        semantic["conveyor_reference_slots"] = selected_slots
     return {
         "index": index,
         "range": [start, end],
