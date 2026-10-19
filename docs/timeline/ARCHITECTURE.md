@@ -149,6 +149,12 @@ bounded and uses the **full timeline canvas resolution**, never a hidden
 480-pixel longest-edge reduction.
 
 
+## Bounded source thumbnail cache and external queue persistence
+
+The timeline's visible filmstrip no longer recreates image elements for the same clip, source-PTS and tile grid after each viewport redraw. The thumbnail API resolves the source's immutable registered SHA, uses canonical rational PTS to form a deterministic disk-cache key, and coalesces concurrent cold requests per key. It atomically publishes derived JPEGs and prunes the cache at 512 MiB. The 240×136 filmstrip JPEG is only an inspection derivative, never fed into H3 sampling or final export. Thumbnail work stays behind the bounded background media workers. Rapid UI seek events coalesce within 80 ms while frame/playhead state updates synchronously.
+
+Continuum Timeline Studio submits immutable snapshot jobs through the normal `api.queuePrompt` integration, including DoRA State Manager's persistent-library write barrier and unsaved managed Text Box protection. It never invokes a raw backend submission to bypass this external owner. Rejection diagnostics report confirmed job count; State Manager owns the explicit `Save connected` action. Queue failure after a network response loss can be ambiguous and is not misreported as proof of nonexecution.
+
 ## Explicit export range contract
 
 `Render [in,out)` is the editor's canonical selection. The editor sends
