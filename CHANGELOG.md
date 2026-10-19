@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make Timeline Studio chunk-first: a selected-chunk workspace shows exactly the connected sampler's logical chunk count/duration, editable prompt text for each chunk, image references, video-guidance cuts, routed audio cuts and exact source PTS; retain full-film editing and native sampler settings. The editor displays project-compiled per-window inputs and calls out persistent node connections/overrides.
+- Honor only explicit new chunk-authored prompts over a connected native `sequence_prompt` inside their own chunk, preserving old free-form prompt precedence. Share the transformation with stale-take validation and keep native Run Storage contracts consistent. Realign chunk-owned tracks on duration edits while preserving source-in timestamps.
+- Add JS/backend tests for late-film chunk selection, exact 24 fps spans, prompts, media, sampler connections, relayout and external prompt precedence.
+
+
 - Fix low-resolution main-viewer stills: use high-detail cached JPEGs sized for the actual viewer instead of enlarging 240×136 filmstrip thumbnails; bound very long clip DOM surfaces to the viewport and retain trim-edge accuracy.
 - Improve multi-hour-source timeline responsiveness: persist bounded/cancellable thumbnail JPEG derivatives and coalesce duplicate source-frame requests, retain image elements across filmstrip redraws, and debounce rapid still-frame scrubbing without changing playback/export resolution. Report direct-source versus composed playback strategy.
 - Preserve DoRA State Manager's fail-closed persistent prompt guard on Timeline queue submissions and explain `Save connected` recovery. Show confirmed submissions on interrupted multi-job batches, without silently writing unrelated preset state.
