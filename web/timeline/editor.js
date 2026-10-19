@@ -89,12 +89,12 @@ export class TimelineEditor {
     this.serverRevision = this.p.revision || 0;
     this.selected = view.selected || [];
     this.clipboard = [];
+    this.chunkFocus = view.chunkFocus ?? true;
     this.playhead = view.playhead ?? this.p.selection[0];
     if (this.chunkFocus &&
         (this.playhead < this.p.selection[0] || this.playhead >= this.p.selection[1]))
       this.playhead = this.p.selection[0];
     this.previewMode = view.previewMode || "composed";
-    this.chunkFocus = view.chunkFocus ?? true;
     this.chunkPage = view.chunkPage || 0;
     this.chunkInspectionEpoch = 0;
     this.chunkCompileTimer = null;
