@@ -2,6 +2,18 @@
 
 ## Timeline Studio (draft integration)
 
+**Chunk-first H3 preparation:** Timeline Studio now opens on the selected number of
+logical H3 generation chunks and their exact 24 fps duration, synchronized with
+the connected Continuum Timeline Sampler. Each chunk has a prompt textarea,
+registered image reference assignments, source-PTS-addressed video guidance
+cuts, and separately routed audio guide/reference/final cuts. The panel identifies
+persistent node connections and values, plus any native input precedence.
+A long source movie can still be inspected in the optional full-film timeline.
+See [chunk-first authoring](docs/timeline/USER_GUIDE.md#chunk-first-generation-authoring)
+for scope, connected `sequence_prompt` behavior, and chunk re-timing semantics.
+
+
+
 Timeline filmstrips reuse immutable cached JPEG derivatives from long linked movies instead of repeating identical decoder seeks for each scroll/track redraw. Preview status distinguishes direct-source seeking from slower composition, without silently lowering output resolution. Timeline queues respect connected DoRA State Manager's persistent prompt write protection: if a selected preset is empty while a controlled Text Box has unsaved text, save it explicitly through State Manager's **Save connected** before queueing.
 
 
