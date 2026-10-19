@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix low-resolution main-viewer stills: use high-detail cached JPEGs sized for the actual viewer instead of enlarging 240×136 filmstrip thumbnails; bound very long clip DOM surfaces to the viewport and retain trim-edge accuracy.
 - Improve multi-hour-source timeline responsiveness: persist bounded/cancellable thumbnail JPEG derivatives and coalesce duplicate source-frame requests, retain image elements across filmstrip redraws, and debounce rapid still-frame scrubbing without changing playback/export resolution. Report direct-source versus composed playback strategy.
 - Preserve DoRA State Manager's fail-closed persistent prompt guard on Timeline queue submissions and explain `Save connected` recovery. Show confirmed submissions on interrupted multi-job batches, without silently writing unrelated preset state.
 - Bump the native Python/frontend/desktop contract for these UI and preview changes.
