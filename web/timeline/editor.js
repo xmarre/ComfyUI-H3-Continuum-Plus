@@ -1,6 +1,6 @@
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-navigation-media-v14";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-scene-audio-v15";
 import {
   History,
   clone,
@@ -24,7 +24,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-navigation-media-v14";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-scene-audio-v15";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan } from "./navigation.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
@@ -1909,8 +1909,12 @@ export class TimelineEditor {
       const sources=p.tracks.flatMap(t=>t.role==="retained" &&
         !t.muted ? t.clips.filter(c=>!c.muted&&c.start<=frame&&frame<c.end &&
         p.assets.some(a=>a.id===c.asset_id&&a.video)) : []);
+      if(sources.length>1)
+        throw Error("Multiple original movies cover this scene; mute or trim the others before choosing the source");
       if(sources.length===1) {
         const source=sources[0];
+        if(source.end<p.selection[1])
+          throw Error("The original video does not cover all requested chunks; choose fewer chunks");
         const asset=p.assets.find(a=>a.id===source.asset_id);
         if(asset?.audio && !p.tracks.some(t=>t.role==="audio" && !t.muted &&
           t.clips.some(c=>!c.muted && c.audio_role==="guide" &&

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Create scenes from one arbitrary original-film start frame and the selected H3 chunk count/duration; virtual chunk boundaries avoid cutting original footage or moving source audio.
+- Add source-continuous Merge adjacent for manual clip splits and Undo-capable Restore original movie without deleting registered media or stored takes.
+- Attach embedded movie audio to the original retained video clip as H3 guide and final soundtrack; route authored complete final PCM through the V3.4 assembler instead of H3-generated audio, preserving connected Driving Audio priority.
+- Advance frontend/backend/Windows native bridge handshake to v15.
+
 - Route State Manager time-coded scene scripts to the correct Continuum Timeline Studio chunks even when a saved sampler widget still selects List; preserve late movie-absolute sections beyond the native bounded prompt preflight.
 - Anchor zero-based scene scripts at the selected movie scene, and reuse that source-specific anchor for subsequent render selections to prevent dialogue restarting or repeating.
 - Add bounded per-chunk prompt-source hashes and clock provenance to the Timeline sampler log without recording user-authored text.

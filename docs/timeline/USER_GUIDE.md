@@ -223,6 +223,43 @@ source image tensors, prompt text, sampling inputs or final export
 dimensions. The top preview is independently sized and will no longer be
 shrunk automatically merely because the chunk editor is expanded.
 
+## Scene-first generation (no manual movie splitting)
+
+Import or place a video containing an audio stream. Its original soundtrack is
+carried on that **same retained video clip** as both native H3 audio guidance
+and final soundtrack. Moving, trimming or splitting the video therefore moves
+its audio at the same source PTS. Older projects with a separate original
+soundtrack track are supported: **Start scene** routes the retained video's
+embedded audio as H3 guidance while leaving the original final track in place
+to avoid doubling the audio. A connected sampler `driving_audio` input still
+takes priority over Timeline Studio guide lanes.
+
+Set **Selected chunks** and **Seconds / chunk**, seek to the desired scene
+start, then use **New scene at playhead** or enter **Scene start frame** and
+press **Start scene**. The chosen original movie frame becomes the beginning of
+chunk 1; every subsequent chunk follows automatically on the 24-fps output
+grid. For example, two 168-frame chunks starting at frame 14955 cover
+[14955,15123) and [15123,15291). These are *virtual boundaries*: the movie
+and its original soundtrack remain whole, and each H3 invocation obtains only
+the corresponding source video/audio interval from its original source PTS.
+A span extending beyond the movie is rejected.
+
+**Merge adjacent** in the toolbar or clip context menu (keyboard shortcut
+`J`) rejoins split clips only when their source trajectory, timing, audio
+routing and other clip settings remain identical. Gaps, fades and muted
+discontinuities are never silently merged. **Restore original movie** returns
+the timeline to a single uncut source movie with its embedded audio, removing
+the current cuts, chunk-specific inputs and accepted placements. It requires
+confirmation and supports Undo. It does not delete registered source files
+or saved take payloads. When several movies are registered, select the
+intended original clip first.
+
+If an authored original/final soundtrack covers the entire sampled job, the
+Timeline sampler supplies that PCM to the V3.4 assembler, which bypasses the
+generated audio. Partially covered final tracks do not erase uncovered output
+with silence. Native H3 Driving Audio conditions the visuals, but lip-sync
+accuracy remains model-dependent and requires GPU validation.
+
 ## Chunk-first generation authoring
 
 Timeline Studio opens in **Chunk-focused timeline** mode. The horizontal H3 input cards represent only the selected logical generation chunks, not the full duration of a source movie. Every card displays its absolute output frame/time window and lets you author a **per-chunk prompt**, select/deselect connected **Image Conveyor reference images**, add **video guidance cuts**, or add **audio cuts** explicitly routed as `guide`, `reference`, `final` or `both`. Eight chunks are shown per page to avoid constructing a large DOM for a multi-hour project. The original full-film editing view remains accessible by disabling **Chunk-focused timeline**. The chunk count and seconds controls are bidirectional with the connected Continuum Timeline Sampler's `chunks` and `chunk_seconds` widgets; all generation windows remain on the 24 fps frame grid.
@@ -233,7 +270,7 @@ Typing a chunk prompt creates an exact `prompt` track clip marked as a chunk-aut
 
 The **Connected sampler** panel reports the selected chunk count/duration, actual node seed, dimensions or externally linked width/height, reference sizing, continuity/run storage and persistent connection slots. It explicitly identifies when connected `driving_audio` takes precedence over authored guide-audio lanes, when a persistent video reference supplies unguided chunks, and when model inputs are supplied outside the timeline. In particular, *final audio* is not an H3 driving source unless also routed as `guide` or `both`. Image references are still subject to the existing model limit of eight combined persistent and scoped active pictures. The per-chunk compiled summary warns when connected persistent image sockets plus scoped references could exceed the limit; because connected sockets can resolve to empty values, the definitive count remains the sampler's runtime validation.
 
-Changing the **chunk duration** also reflows explicit Image Conveyor slot selections, rejecting collisions before applying edits. It re-quantizes the selected render window to the new global 24 fps chunk grid and follows authored chunk clips in order across that selected region. It preserves each media cut's source-in PTS and speed, updating its output duration. This may shift the selection's absolute start to the preceding exact H3 boundary; verify the displayed timecodes after changing duration. Ordinary manually authored timeline clips are not silently moved. This operation is undoable. The remaining native sampler fields stay on the existing V3.4 sampler node and retain their execution semantics.
+Changing the **chunk duration** also reflows explicit Image Conveyor slot selections, rejecting collisions before applying edits. It re-quantizes the selected render window to the scene-anchored 24 fps chunk grid and follows authored chunk clips in order across that selected region. It preserves each media cut's source-in PTS and speed, updating its output duration. This keeps the scene's start frame fixed while updating later virtual chunk boundaries; verify the displayed timecodes after changing duration. Ordinary manually authored timeline clips are not silently moved. This operation is undoable. The remaining native sampler fields stay on the existing V3.4 sampler node and retain their execution semantics.
 
 ## Original sampler controls
 
@@ -250,7 +287,7 @@ The Timeline sampler shares its native control definitions with **H3 Continuum S
 | Regenerate From / Variation Nonce | Sampler inputs; 0 means Auto. Explicit boundaries are one-based within the selected job. Studio rerolls request a new native nonce. With storage Off, the entire job is sampled even when a suffix seed boundary is supplied. |
 | Reference Size | Match Output or Max Identity, applied to persistent and scoped stills. Persistent pictures are numbered first; scoped `@aliases` follow them. The combined limit remains eight active pictures. |
 | Video Reference Size | Efficient, Balanced or Match Output, applied to both persistent video and scoped guidance. Scoped video replaces persistent Video Reference in the windows where it is active; persistent video is used elsewhere. |
-| Driving Audio | Connected audio is authoritative over Studio guide lanes. It is sliced on the absolute project clock, guides native sampling and is returned unchanged for the job's final audio through the assembler plan and appended `driving_audio` output. Authored Final/Both soundtrack clips retain their compositor precedence. |
+| Driving Audio | Connected audio overrides authored guide lanes and supplies final audio. Unconnected projects route the original movie's embedded soundtrack to H3 conditioning and, when the authored final soundtrack fully covers the job, preserve it through the V3.4 assembler instead of using H3-generated sound. |
 | Qwen Lookahead | Sampler switch using the native bounded CPU prefetch and descriptor checks. Eligible stable-geometry windows can pre-encode the next prompt and image references. Scoped video/voice windows and motion-dependent unknown geometry stay sequential. |
 | Report detail, developer diagnostics, sampling preview | Same Continuum application settings as V3.4; the corresponding API inputs reach native sampling. |
 | Exact Refine State | Connecting `refine_state` enables capture, as on V3.4. Every chunk is sampled again so states and masks match all latent outputs. Save + Auto Resume allocates a fresh native variation for that execution. |

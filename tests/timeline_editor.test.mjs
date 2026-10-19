@@ -1865,3 +1865,10 @@ test("scene reset preserves the authored project-script clock across re-anchorin
   setSceneStart(p,5400,2);
   assert.equal(p.prompts.origin_frame,5400);
 });
+
+test("scene count cannot extend a scene beyond the original movie",()=>{
+  const p={duration_frames:1000,chunk_frames:168,chunk_origin_frame:700,
+    selection:[700,868],assets:[],tracks:[]};
+  assert.throws(()=>changeTiming(p,"chunks",2),/exceed the original movie/);
+  assert.deepEqual(p.selection,[700,868]);
+});
