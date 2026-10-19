@@ -139,6 +139,26 @@ Viewport geometry, font metrics and browser chrome differ across installations.
 Automated geometry constraints do not by themselves establish smooth video
 playback or GPU generation behavior.
 
+## Active Conveyor shelf selection, duplicate elimination
+
+The previous ambiguous-processor fallback expanded all reachable Conveyor
+shelf items **for each** connected sampler reference socket. Consequently,
+eight wired sockets displayed eight thumbnail candidates apiece, even when
+only some Conveyor outputs were enabled. This does not represent the
+generation selection a user is expected to author.
+
+The revised chunk UI computes a single active source per physical socket
+using the same index as its Conveyor shelf ordinal and filters the results
+using live/serialized Conveyor output toggles and nonempty shelf contents.
+Regression tests model eight connected Media Resolution outputs sharing eight
+reachable Conveyor ancestors, with only the first four outputs active. They
+verify exactly four distinct thumbnails, four selectable slots, an independent
+chunk-specific disabled reference, automatic visibility of subsequently
+enabled outputs, and serialized toggle fallback when live shelf data omits
+output masks. This is a UI/selection fix, not a change to conditioning
+tensors or encoding. Actual post-processing image identity still depends on
+the intermediate node's runtime routing contract.
+
 ## Multi-IMAGE source provenance
 
 A processor with more than one IMAGE input cannot be mapped reliably to one
