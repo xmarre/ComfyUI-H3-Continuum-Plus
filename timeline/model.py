@@ -223,6 +223,30 @@ def selected_export_range(p, requested):
     return start, stop
 
 
+def with_external_prompt_source(project, prompts):
+    """Resolve externally connected text without dropping explicit chunk edits.
+
+    Legacy/free-form prompt tracks remain masked under native sequence_prompt
+    as before. Only new chunk-editor clips explicitly marked chunk_prompt are
+    retained; their override flag suppresses the inherited script inside that
+    chunk. The same transformation is used for sampling and stale-take checks.
+    """
+    p = copy.deepcopy(project)
+    p["prompts"] = copy.deepcopy(prompts)
+    p["tracks"] = [
+        {
+            **t,
+            "clips": [c for c in t["clips"] if c.get("chunk_prompt")],
+        }
+        if t["role"] == "prompt"
+        else t
+        for t in p["tracks"]
+        if t["role"] != "prompt"
+        or any(c.get("chunk_prompt") for c in t["clips"])
+    ]
+    return p
+
+
 def active_clips(p, start, end, roles=None):
     """Track order is bottom-to-top. Hidden affects display; muted affects output."""
     result = []
