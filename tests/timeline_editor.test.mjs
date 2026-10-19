@@ -7,7 +7,7 @@ import {
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
 } from "../web/timeline/chunk_workspace.js";
 import { samplerInputDescription, referenceSocketSources } from "../web/timeline/chunk_ui.js";
-import { traceReferenceSocket, shelfImagePath, conveyorState } from "../web/timeline/conveyor_source.js";
+import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState } from "../web/timeline/conveyor_source.js";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
 
 import {
@@ -1535,4 +1535,68 @@ test("resized Conveyor preview requests enough original pixels and zoom stays fu
   assert.match(referenceSocketSources(editor)[0].thumbnail,/size=512/);
   editor.layout.thumb=54;
   assert.match(referenceSocketSources(editor)[0].thumbnail,/size=160/);
+});
+
+test("multi-input Media Resolution displays all proven Conveyor source thumbnails without guessing an output",()=>{
+  const studio={id:1,comfyClass:"H3ContinuumTimelineStudio"};
+  const conveyor={id:8,comfyClass:"ImageConveyor",
+    widgets:[{name:"state_json",value:JSON.stringify({
+      output_mode:"persistent_refs",reference_slots:[
+        {type:"input",filename:"subject.png",annotated:"refs/subject.png [input]"},
+        {type:"input",filename:"style.png",annotated:"refs/style.png [input]"},
+      ],
+    })}],
+    outputs:Array.from({length:14},(_,i)=>({
+      type:i>=6?"IMAGE":"STRING",
+      name:i===6?"ref_image_1":i===7?"ref_image_2":"misc",
+    })),
+  };
+  const scalar={id:19,comfyClass:"FloatValue",outputs:[{name:"MP",type:"FLOAT"}]};
+  const resolution={
+    id:9,title:"Media Resolution — Image Conveyor",
+    comfyClass:"MediaResolutionMultiInput",
+    inputs:[
+      {name:"image_1",type:"IMAGE",link:21},
+      {name:"image_2",type:"IMAGE",link:22},
+      {name:"megapixels",type:"FLOAT",link:23},
+    ],
+    outputs:[{name:"result",type:"IMAGE"}],
+  };
+  const sampler={id:2,comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[{name:"timeline",link:1},{name:"reference_image_1",link:31}]};
+  const nodes=[studio,conveyor,resolution,sampler,scalar];
+  const graph={_nodes:nodes,links:{
+    1:{origin_id:1,origin_slot:0},
+    21:{origin_id:8,origin_slot:6,type:"IMAGE"},
+    22:{origin_id:8,origin_slot:7,type:"IMAGE"},
+    23:{origin_id:19,origin_slot:0,type:"FLOAT"},
+    31:{origin_id:9,origin_slot:0,type:"IMAGE"},
+  },getNodeById(id){return nodes.find(n=>n.id===id)}};
+  sampler.graph=graph;
+  assert.match(traceReferenceSocket(graph,sampler,1).unresolved,/Ambiguous IMAGE/);
+  const provenance=collectReferenceProvenance(graph,sampler,1);
+  assert.equal(provenance.truncated,false);
+  assert.deepEqual(provenance.images.map(x=>x.shelfNumber),[1,2]);
+  const editor={node:studio,app:{graph},
+    p:{chunk_frames:168,selection:[0,336]},layout:{thumb:140}};
+  const ref=referenceSocketSources(editor)[0];
+  assert.equal(ref.conveyor,false);
+  assert.equal(ref.candidatePreviews.length,2);
+  assert.match(ref.candidatePreviews[0].thumbnail,/refs%2Fsubject.png/);
+  assert.match(ref.candidatePreviews[1].thumbnail,/refs%2Fstyle.png/);
+  assert.equal(ref.candidatePreviews[0].nodeId,8);
+  assert.deepEqual(ref.candidatePreviews[0].via,["Media Resolution — Image Conveyor"]);
+  // Disconnected branches, scalar MP, and unrelated Conveyor shelves are not
+  // invented in the candidate list.
+  resolution.inputs.pop();
+  resolution.inputs.push({name:"reference_strength",type:"FLOAT",link:23});
+  assert.equal(collectReferenceProvenance(graph,sampler,1).images.length,2);
+  const lone=resolution.inputs.pop();
+  resolution.inputs.pop();
+  assert.deepEqual(collectReferenceProvenance(graph,sampler,1).images.map(x=>x.shelfNumber),[1]);
+  resolution.inputs.push({name:"image_2",type:"IMAGE",link:22},lone);
+  const other={id:12,comfyClass:"ImageConveyor",outputs:conveyor.outputs,
+    widgets:[{name:"state_json",value:conveyor.widgets[0].value}]};
+  graph._nodes.push(other);
+  assert.equal(collectReferenceProvenance(graph,sampler,1).images.length,2);
 });
