@@ -240,6 +240,16 @@ def main():
             assert again == first_thumbnail.read_bytes()
             assert first_thumbnail.stat().st_mtime_ns == first_stamp
             assert len(list(thumb_dir.glob("*.jpg"))) == 1
+            # The main viewer requests its own display-density still, leaving
+            # filmstrip thumbnails small and reusable.
+            import io
+            from PIL import Image
+            still = request(
+                "/h3_continuum/timeline/thumbnail/" + asset["id"] +
+                "?pts=1&w=960&h=540"
+            )
+            assert Image.open(io.BytesIO(still)).size == (960, 540)
+            assert len(list(thumb_dir.glob("*.jpg"))) == 2
             assert (
                 len(
                     request(
