@@ -101,8 +101,9 @@ export function samplerInputDescription(editor) {
   if (!sampler) return {sampler:null,warning:"Connect exactly one Continuum Timeline Sampler to this Studio"};
   const widget = (name) => sampler.widgets?.find((w) => w.name === name)?.value;
   const linked = (name) => nodeInput(sampler, name).linked;
-  const pinned = Array.from({length:8},(_,i)=>"reference_image_"+(i+1))
-    .filter(linked);
+  const connectedReferenceSlots = Array.from({length:8},(_,i)=>i+1)
+    .filter((slot)=>linked("reference_image_"+slot));
+  const pinned = connectedReferenceSlots.map((slot)=>"reference_image_"+slot);
   const persistent = [
     ...pinned,
     ...["reference_video_1","driving_audio","first_frame","last_frame"]
@@ -124,6 +125,7 @@ export function samplerInputDescription(editor) {
   return {
     sampler,
     persistent, supplied, overrides, persistentPictureSockets: pinned.length,
+    connectedReferenceSlots, project: editor.p,
     promptOverridden: externalPrompt,
     audioOverridden: linked("driving_audio"),
     settings: [
@@ -234,17 +236,21 @@ function compiledLine(node, window, inputs, ownPrompt = "") {
       ? "Chunk prompt overrides connected sequence_prompt: "+ownPrompt
       : "Connected sequence_prompt supplies this chunk's prompt (runtime source)")
     : "Compiled prompt: "+(window.prompt || "(empty)");
-  const possibleImageTotal =
-    (inputs.persistentPictureSockets || 0) + window.images.length;
+  const selection = selectedConveyorSlots(inputs.project, window.index);
+  const selectedSockets = selection === null
+    ? (inputs.connectedReferenceSlots || [])
+    : selection.filter((slot)=>(inputs.connectedReferenceSlots || []).includes(slot));
+  const possibleImageTotal = selectedSockets.length + window.images.length;
   const imageBudgetWarning = possibleImageTotal > 8
-    ? " · WARNING: "+window.images.length+" scoped images plus "+
-      inputs.persistentPictureSockets+" connected persistent picture sockets "+
-      "may exceed H3's eight-picture limit; check which connections resolve to nonempty images"
+    ? " · WARNING: selected persistent sockets plus scoped images may exceed H3's eight-picture limit"
     : "";
   const warning = (window.warnings?.length
     ? " · "+window.warnings.join(" · ") : "") + imageBudgetWarning;
   node.textContent = prompt +
-    " | images: "+window.images.length +
+    " | connected ref sockets selected: "+
+      (selectedSockets.join(", ") || "none")+
+    " (nonempty tensors resolved at sampling)"+
+    ", media-file references: "+window.images.length +
     ", video guides: "+window.video.length +
     ", guide audio: "+(inputs.audioOverridden ? "node driving_audio override" : window.guide.length)+
     ", audio refs: "+window.voice.length +
