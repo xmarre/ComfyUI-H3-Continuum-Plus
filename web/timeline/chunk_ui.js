@@ -7,7 +7,7 @@ import {
 } from "./chunk_workspace.js";
 import { changeTiming, selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
-import { traceReferenceSocket, conveyorState, shelfImagePath } from "./conveyor_source.js";
+import { traceReferenceSocket, collectReferenceProvenance, conveyorState, shelfImagePath } from "./conveyor_source.js";
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -49,6 +49,35 @@ export function linkedSampler(editor) {
   });
   return samplers.length === 1 ? samplers[0] : null;
 }
+function conveyorSourcePreviews(editor,graph,sampler,slot) {
+  const ancestry=collectReferenceProvenance(graph,sampler,slot);
+  const pixelRatio=typeof devicePixelRatio==="number" ? devicePixelRatio : 1;
+  const size=Math.max(160,Math.min(512,
+    Math.ceil((editor.layout?.thumb || 100)*pixelRatio)));
+  return {
+    candidates:ancestry.images.map(({node,shelfNumber,via})=>{
+      const state=conveyorState(node);
+      const ref=state.reference_slots?.[shelfNumber-1];
+      const path=shelfImagePath(state,shelfNumber);
+      const params=path ? new URLSearchParams({
+        relative_path:path,size:String(size),
+        ...((ref?.source_version||ref?.mtime_ns)
+          ? {v:String(ref.source_version||ref.mtime_ns)} : {}),
+      }).toString() : null;
+      const uri=params ? "/image-conveyor/thumbnail?"+params : null;
+      const thumbnail=uri && typeof editor.api?.apiURL==="function"
+        ? editor.api.apiURL(uri) : uri;
+      return {
+        shelfNumber,nodeId:node.id,thumbnail,
+        filename:ref?.filename||path?.split("/").at(-1)||null,
+        label:"Conveyor #"+node.id+" · Shelf "+shelfNumber,
+        via,
+        state:state.output_mode||"unknown",
+      };
+    }),
+    truncated:ancestry.truncated,
+  };
+}
 export function referenceSocketSources(editor) {
   const sampler=linkedSampler(editor);
   if (!sampler) return [];
@@ -56,6 +85,11 @@ export function referenceSocketSources(editor) {
   return Array.from({length:8},(_,i)=>{
     const slot=i+1;
     const source=traceReferenceSocket(graph,sampler,slot);
+    // A processor with multiple IMAGE inputs is not a one-to-one mapping.
+    // Still show definite upstream Conveyor images instead of an empty card.
+    const ancestry=source.connected && !source.conveyor
+      ? conveyorSourcePreviews(editor,graph,sampler,slot)
+      : {candidates:[],truncated:false};
     const node=source.node;
     const state=source.conveyor ? conveyorState(node) : {};
     const shelfNumber=source.shelfNumber;
@@ -104,6 +138,8 @@ export function referenceSocketSources(editor) {
       previewNote:via ? "Conveyor source image; processed by "+source.via.join(" → ") :
         "Conveyor source image",
       sourceVersion:ref?.source_version || ref?.mtime_ns || null,
+      candidatePreviews:ancestry.candidates,
+      ancestryTruncated:ancestry.truncated,
     };
   });
 }
