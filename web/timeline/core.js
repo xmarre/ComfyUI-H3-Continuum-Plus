@@ -16,7 +16,6 @@ export function sourceAt(clip, frame) {
     ((frame - clip.start) * ratio(clip.speed || 1)) / 24
   );
 }
-/** Only draw the visible surface of arbitrarily long clips. */
 /** A still in the main viewer should have at least the displayed pixel density.
  * Filmstrip derivatives remain 240x136; never enlarge that image for inspection.
  */
