@@ -28,6 +28,8 @@ _tasks = {}
 _media_slots = asyncio.Semaphore(2)
 # Low-latency playback must not queue behind thumbnail/waveform jobs.
 _preview_slots = asyncio.Semaphore(1)
+# Full viewer stills must not sit behind a backlog of 240px filmstrips.
+_still_slots = asyncio.Semaphore(1)
 # Parallel filmstrips can request the same source frame from several tracks.
 # Coalesce each cold thumbnail, then serve its immutable derived JPEG from disk.
 _thumbnail_locks = {}
@@ -79,7 +81,7 @@ async def _media_cpu(fn, *args, **kwargs):
             raise
 
 
-async def _media_cpu_cancellable(request, fn, *args, **kwargs):
+async def _media_cpu_cancellable(request, fn, *args, slots=None, **kwargs):
     """Bounded UI media work must stop after a seek, scroll or page close."""
     stopped = threading.Event()
 
@@ -87,7 +89,7 @@ async def _media_cpu_cancellable(request, fn, *args, **kwargs):
         if stopped.is_set():
             raise InterruptedError("Media request cancelled")
 
-    async with _media_slots:
+    async with (slots if slots is not None else _media_slots):
         task = asyncio.create_task(
             asyncio.to_thread(fn, *args, cancel=cancel, **kwargs)
         )
@@ -373,13 +375,14 @@ def register_routes():
         try:
             async with lock:
                 if not output.is_file():
+                    high_detail = width > 240 or height > 136
                     pixels = await _media_cpu_cancellable(
                         request, video_frames,
                         path, [stamp], width, height, padding="hold",
+                        slots=_still_slots if high_detail else _media_slots,
                     )
                     # Serialize a tiny derived JPEG, not the source movie.
                     data = io.BytesIO()
-                    high_detail = width > 240 or height > 136
                     Image.fromarray(pixels[0]).save(
                         data, format="JPEG",
                         **({"quality": 90, "subsampling": 0} if high_detail else {}),
