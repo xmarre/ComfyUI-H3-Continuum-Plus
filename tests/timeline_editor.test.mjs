@@ -1818,6 +1818,8 @@ test("new video has clip-owned guide and final audio without secondary track",()
   const movie={id:"asset",name:"movie",duration:"20",video:{start_time:"0"},audio:{start_time:"0"}};
   const c=placeAsset(p,movie,t,240,480);
   assert.equal(c.audio_role,"both");
+  assert.equal(c.audio_padding,"silence");
+  assert.equal(c.padding,"error");
   c.source_in="30";
   split(p,[c.id],480);
   const pieces=[...t.clips].sort((a,b)=>a.start-b.start);

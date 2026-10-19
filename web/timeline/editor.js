@@ -1923,6 +1923,7 @@ export class TimelineEditor {
             t.clips.some(c=>!c.muted&&c.asset_id===source.asset_id &&
               ["final","both"].includes(c.audio_role)));
           source.audio_role=legacyFinal ? "guide" : "both";
+          source.audio_padding="silence";
         }
         if(p.operation!=="recreate" && !p.tracks.some(t=>
           t.role==="video_guide"&&!t.muted&&t.clips.some(c=>!c.muted &&

@@ -452,6 +452,9 @@ export function placeAsset(p, asset, track, frame, duration) {
     // cutting or moving the video cannot desynchronize its audio.
     audio_role: track.role === "audio" ? "final" :
       track.role === "retained" && asset.video && asset.audio ? "both" : "neither",
+    // Audio may end milliseconds ahead of video. Only PCM is padded.
+    ...(track.role === "retained" && asset.video && asset.audio ?
+      { audio_padding: "silence" } : {}),
     alias: asset.alias || "",
     name: asset.name,
   };

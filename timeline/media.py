@@ -710,13 +710,13 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel,
             pcm = preview_audio_window(
                 assets.verify(c["asset_id"], cancel=cancel),
                 min(sa, sb), max(sa, sb), rate,
-                padding=c["padding"], cancel=cancel,
+                padding=c.get("audio_padding", c["padding"]), cancel=cancel,
             )
         else:
             pcm = audio_window(
                 assets.verify(c["asset_id"], cancel=cancel),
                 min(sa, sb), max(sa, sb), rate,
-                padding=c["padding"], cancel=cancel,
+                padding=c.get("audio_padding", c["padding"]), cancel=cancel,
                 cache=(export_cache if export_cache is not None
                        else getattr(assets, "pcm_cache", None)),
             )

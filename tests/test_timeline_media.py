@@ -860,3 +860,27 @@ def test_preview_is_not_silently_downscaled_to_480_pixels(movie, tmp_path):
     info = probe(rendered)
     assert info["video"]["width"] == 640
     assert info["video"]["height"] == 352
+
+def test_video_soundtrack_pcm_can_pad_silence_without_padding_video(monkeypatch):
+    import numpy as np
+    from types import SimpleNamespace
+    from ComfyUI_H3_Continuum_Join.timeline import media
+    from ComfyUI_H3_Continuum_Join.timeline.model import blank_project
+    p=blank_project()
+    asset="b"*64
+    p["assets"]=[{"id":asset,"kind":"video","video":{},"audio":{}}]
+    p["tracks"]=[{"role":"retained","id":"original","clips":[{
+        "id":"source","asset_id":asset,"start":0,"end":168,
+        "source_in":"0","speed":"1","padding":"error","audio_padding":"silence",
+        "audio_role":"both",
+    }]}]
+    padded=[]
+    def decode(*args,**kwargs):
+        padded.append(kwargs.get("padding"))
+        return np.zeros((2,7000),dtype=np.float32)
+    monkeypatch.setattr(media,"audio_window",decode)
+    store=SimpleNamespace(verify=lambda *a,**k:"mock.mkv",pcm_cache=None)
+    final=media.mix_audio(p,store,0,168,1000,"final")
+    guide=media.mix_audio(p,store,0,168,1000,"guide")
+    assert final.shape==guide.shape==(2,7000)
+    assert padded==["silence","silence"]

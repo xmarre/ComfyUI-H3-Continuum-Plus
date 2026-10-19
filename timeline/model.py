@@ -317,6 +317,8 @@ def clip_input(p, t, c, start, end):
         "source": [str(source_time(c, a)), str(source_time(c, b))],
         "speed": str(rational(c["speed"])),
         "padding": c["padding"],
+        **({"audio_padding": c["audio_padding"]}
+           if "audio_padding" in c else {}),
         "audio_role": c["audio_role"],
         "audio_fallback": bool(c.get("audio_fallback")),
         "gain": str(rational(c.get("gain", 1))),
