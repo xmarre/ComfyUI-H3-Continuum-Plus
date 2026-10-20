@@ -3,7 +3,7 @@
 from pathlib import Path
 from urllib.parse import quote
 
-NATIVE_PATH_CONTRACT = "h3-timeline-scene-audio-v15"
+NATIVE_PATH_CONTRACT = "h3-timeline-scene-recovery-v16"
 
 
 def native_runtime_manifest(extension_dirs, web_root):

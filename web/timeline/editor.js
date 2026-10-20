@@ -1,6 +1,6 @@
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-scene-audio-v15";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-scene-recovery-v16";
 import {
   History,
   clone,
@@ -26,7 +26,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-scene-audio-v15";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-scene-recovery-v16";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan } from "./navigation.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
@@ -1912,6 +1912,8 @@ export class TimelineEditor {
     });
     this.sceneDraft=null;
     this.chunkPage=0;
+    renderChunkWorkspace(this);
+    this.scheduleChunkCompile();
     this.jumpToFrame(frame);
     this.fitSelectedRange();
     this.message("New scene: "+time(frame)+" · "+total+" automatic H3 chunks. "+
@@ -1926,6 +1928,8 @@ export class TimelineEditor {
     this.edit(p=>{restoreOriginalMovie(p,assetId);this.selected=[];});
     this.sceneDraft=null;
     this.chunkPage=0;
+    renderChunkWorkspace(this);
+    this.scheduleChunkCompile();
     this.jumpToFrame(0);
     this.fitFullMovie();
     this.message("Uncut original video and synchronized soundtrack restored. "+
@@ -2048,8 +2052,8 @@ export class TimelineEditor {
             i === 0 && !resumes
               ? Math.max(
                   1,
-                  Math.floor(snapshot.selection[0] / snapshot.chunk_frames) -
-                    job.start_chunk +
+                  Math.floor((snapshot.selection[0] - (snapshot.chunk_origin_frame || 0)) /
+                    snapshot.chunk_frames) - job.start_chunk +
                     1,
                 )
               : 1;

@@ -237,19 +237,28 @@ routed by the original clip or a legacy soundtrack, only the missing audio
 role is added, preventing duplicate playback. A connected sampler `driving_audio` input still
 takes priority over Timeline Studio guide lanes.
 
-Set **Selected chunks** and **Seconds / chunk**, seek to the desired scene
-start, then use **New scene at playhead** or enter **Scene start frame** and
-press **Start scene**. The chosen original movie frame becomes the beginning of
-chunk 1; every subsequent chunk follows automatically on the 24-fps output
-grid. For example, two 168-frame chunks starting at frame 14955 cover
+Seek to the first desired source-film frame, enter **Chunks** and
+**Seconds per chunk**, and click **Create scene from playhead**. For exact
+numeric entry, expand **Specify exact source frame**. Scene creation
+reconstructs the registered uncut original video and its synchronized
+soundtrack before deriving all H3 chunks. Previous cuts, mute partitions,
+stale guide lanes, scene-local media overrides and accepted placements are
+cleared in one Undo-capable edit. The connected State Manager prompt,
+registered original source files and saved take payloads are preserved.
+If several different source films are present, select the intended original
+film first; the editor does not guess. For example, two 168-frame chunks starting at frame 14955 cover
 [14955,15123) and [15123,15291). These are *virtual boundaries*: the movie
 and its original soundtrack remain whole, and each H3 invocation obtains only
 the corresponding source video/audio interval from its original source PTS.
 A span extending beyond the movie is rejected.
 
-**Merge adjacent** in the toolbar or clip context menu (keyboard shortcut
-`J`) rejoins split clips only when their source trajectory, timing, audio
-routing and other clip settings remain identical. Gaps, fades and muted
+**Merge matching splits** is available under **Advanced timeline editing**,
+with **Merge adjacent** in the context menu and the `J` shortcut. It rejoins
+source-continuous clips only when their mute, fade, audio routing and all
+other settings agree. Pieces with different audio routing or modified source
+timestamps intentionally cannot be merged without changing behavior. Use
+**Create scene from playhead** or **Restore uncut original** for a clean
+source-film timeline instead. Gaps, fades and muted
 discontinuities are never silently merged. **Restore original movie** returns
 the timeline to a single uncut source movie with its embedded audio, removing
 the current cuts, chunk-specific inputs and accepted placements. It requires
