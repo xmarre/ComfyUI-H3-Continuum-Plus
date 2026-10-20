@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import logging
 import marshal
 import os
 import re
@@ -1175,6 +1176,25 @@ class RunStorageController:
         }
         self._write_manifest()
         self._write_project()
+        # Emit admission before the first expensive H3 model evaluation.
+        # Prior to this, the only reuse/disabled explanation was the success
+        # report, which was never returned on mid-run exceptions.
+        logging.getLogger("h3_continuum_join").warning(
+            "H3C Run Storage admission name=%s revision=%s safe=%s "
+            "validated_chunks=%d/%d nonce=%d decision=%s "
+            "exact_manifest=%s candidates=%d disabled_reasons=%r notes=%r",
+            self.run_name,
+            self.revision_id,
+            safe,
+            len(best_entries),
+            len(hashes),
+            self.effective_reroll_nonce,
+            self.nonce_decision,
+            exact is not None,
+            len(candidates),
+            self.disabled_reasons,
+            self.notes,
+        )
         if not best_entries:
             return None
         physical_entries = all(
