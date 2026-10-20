@@ -1080,3 +1080,44 @@
   align-items: center;
   gap: 5px;
 }
+
+/* The normal workflow exposes only source start, chunk count and duration.
+   Detailed edit tools remain available without monopolizing the viewer width. */
+.h3ts-advanced-toolbar {
+  background:#1b212d;
+  border-bottom:1px solid #394152;
+  padding:3px 8px;
+  font-size:11px;
+}
+.h3ts-advanced-toolbar > summary {cursor:pointer; color:#c5d3df; padding:3px 6px;}
+.h3ts-tools-secondary {display:flex;flex-wrap:wrap;gap:5px;padding:7px !important;}
+.h3ts-scene-primary {
+  background:#355b81 !important;
+  border:1px solid #84a8c5 !important;
+  padding:6px 11px !important;
+  font-weight:700;
+}
+.h3ts-scene-summary {
+  flex:1 1 100%;
+  color:#b9d5df;
+  font-variant-numeric:tabular-nums;
+}
+.h3ts-scene-manual {
+  padding:4px 8px;
+  border:1px solid #3b4c5d;
+  border-radius:5px;
+}
+.h3ts-scene-manual > summary {cursor:pointer;}
+.h3ts-scene-manual .h3ts-chunk-control {margin:6px 0;}
+.h3ts-chunk-media-details {
+  border:1px solid #384b5c;
+  border-radius:4px;
+  padding:5px 7px;
+  margin-top:7px;
+}
+.h3ts-chunk-media-details > summary {
+  color:#b9d9dd;
+  cursor:pointer;
+  font-size:11px;
+}
+.h3ts-chunk-media-details .h3ts-chunk-media {margin-top:8px;}

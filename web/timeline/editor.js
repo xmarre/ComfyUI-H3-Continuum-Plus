@@ -544,24 +544,6 @@ export class TimelineEditor {
       el(
         "nav",
         { class: "h3ts-tools" },
-        role,
-        button("+ Track", () =>
-          this.edit((p) =>
-            p.tracks.push(makeTrack(role.value, LABELS[role.value])),
-          ),
-        ),
-        button("Split", () =>
-          this.edit((p) => split(p, this.selected, this.playhead)),
-        ),
-        button("Merge adjacent", () => this.guard(() =>
-          this.edit((p) => mergeAdjacentClips(p, this.selected))),
-          "Rejoin only source-continuous adjacent pieces with identical settings"),
-        button("Duplicate", () => this.duplicate()),
-        button("Delete", () =>
-          this.edit((p) => remove(p, this.selected, this.ripple.checked)),
-        ),
-        el("label", {}, this.ripple, "Ripple"),
-        el("label", {}, this.snapping, "Snap"),
         button("Undo", () => this.undo()),
         button("Redo", () => this.redo()),
         button("← Pan", () => {
@@ -576,25 +558,36 @@ export class TimelineEditor {
           "Zoom to the selected H3 render window"),
         button("Fit movie", () => this.fitFullMovie(),
           "Zoom out to see the entire original movie"),
-        button("− Zoom", () => this.setZoom(this.zoom / 1.5)),
-        button("+ Zoom", () => this.setZoom(this.zoom * 1.5)),
-        button("Marker", () =>
-          this.edit((p) =>
-            p.markers.push({ id: uid(), frame: this.playhead, name: "Marker" }),
-          ),
-        ),
-        el("span", { text: "Render [in,out)" }),
-        this.rangeA,
-        this.rangeB,
-        button("Inspect inputs", () => this.guard(() => this.inspectInputs())),
-        button("Guide H3 with selected clip", () => this.guard(() => this.guideSelectedClip())),
-        button("Queue selection", () => this.guard(() => this.queue())),
-        button("Reroll selection", () => this.guard(() => this.queue(true))),
-        button("Cancel sampling", () =>
-          this.guard(() => this.cancelSampling()),
-        ),
+        button("Queue scene", () => this.guard(() => this.queue())),
+        button("Cancel sampling", () => this.guard(() => this.cancelSampling())),
       ),
     );
+    const advanced=el("details",{class:"h3ts-advanced-toolbar"});
+    const advancedControls=el("nav",{class:"h3ts-tools h3ts-tools-secondary"},
+      role,
+      button("+ Track",()=>this.edit(p=>
+        p.tracks.push(makeTrack(role.value,LABELS[role.value])))),
+      button("Split",()=>this.edit(p=>split(p,this.selected,this.playhead))),
+      button("Merge matching splits",()=>this.guard(()=>this.edit(p=>
+        mergeAdjacentClips(p,this.selected)))),
+      button("Duplicate",()=>this.duplicate()),
+      button("Delete",()=>this.edit(p=>
+        remove(p,this.selected,this.ripple.checked))),
+      el("label",{},this.ripple,"Ripple"),
+      el("label",{},this.snapping,"Snap"),
+      button("− Zoom",()=>this.setZoom(this.zoom/1.5)),
+      button("+ Zoom",()=>this.setZoom(this.zoom*1.5)),
+      button("Marker",()=>this.edit(p=>p.markers.push({
+        id:uid(),frame:this.playhead,name:"Marker"}))),
+      el("span",{text:"Manual render [in,out)"}),
+      this.rangeA,this.rangeB,
+      button("Inspect inputs",()=>this.guard(()=>this.inspectInputs())),
+      button("Guide H3 with selected clip",()=>this.guard(()=>
+        this.guideSelectedClip())),
+      button("Reroll selection",()=>this.guard(()=>this.queue(true)))
+    );
+    advanced.append(el("summary",{text:"Advanced timeline editing · splits, merges, tracks and manual ranges"}),advancedControls);
+    this.root.append(advanced);
     this.inputRoute = el("p", { class: "h3ts-input-route" });
     this.root.append(this.inputRoute);
     this.chunkBoard = el("section", {class:"h3ts-chunk-workspace"});
@@ -1891,9 +1884,13 @@ export class TimelineEditor {
       e.stopPropagation();
     }
   }
-  startScene(frame, count = null) {
+  startScene(frame, count = null, seconds = null) {
     const total = count ?? Math.max(1,Math.ceil(
       (this.p.selection[1]-this.p.selection[0])/this.p.chunk_frames));
+    const duration = seconds == null ? this.p.chunk_frames/24 : Number(seconds);
+    if(!Number.isFinite(duration)||duration<4||duration>15)
+      throw Error("H3 chunk duration must be between 4 and 15 seconds");
+    const chunkFrames=Math.round(duration*24);
     // Resolve the original from the selected source, pinned project original,
     // or unique registered film. Never derive a new scene from old cut pieces.
     const assetId = originalSceneAssetId(this.p,this.selected);
@@ -1909,9 +1906,11 @@ export class TimelineEditor {
          "this timeline. Registered assets and saved takes are not deleted."))
       return;
     this.edit(p=>{
+      p.chunk_frames=chunkFrames;
       createSceneFromOriginal(p,frame,total,assetId);
       this.selected=[];
     });
+    this.sceneDraft=null;
     this.chunkPage=0;
     this.jumpToFrame(frame);
     this.fitSelectedRange();
@@ -1919,16 +1918,18 @@ export class TimelineEditor {
       "Original movie and synchronized audio rebuilt; previous cuts cleared.");
   }
   restoreMovie() {
-    const clips=selectedClips(this.p,this.selected)
-      .filter(([track])=>track.role==="retained");
-    const assetId=clips.length===1 ? clips[0][1].asset_id : null;
+    const assetId=originalSceneAssetId(this.p,this.selected);
     if(!globalThis.confirm?.(
       "Restore original movie? This resets timeline clips, cuts, overrides " +
       "and accepted placements. Registered assets and saved take files stay " +
       "available. Undo restores the previous editor state."))return;
     this.edit(p=>{restoreOriginalMovie(p,assetId);this.selected=[];});
+    this.sceneDraft=null;
+    this.chunkPage=0;
     this.jumpToFrame(0);
-    this.message("Original movie restored with synchronized source audio.");
+    this.fitFullMovie();
+    this.message("Uncut original video and synchronized soundtrack restored. "+
+      "All timeline edits cleared; Undo restores the previous state.");
   }
   guideSelectedClip() {
     this.edit((p) => routeClipToGuidance(p, this.selected));

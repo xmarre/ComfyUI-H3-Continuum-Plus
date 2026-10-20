@@ -1964,8 +1964,8 @@ test("scene reset rejects out of bounds without changing any edit",()=>{
   const snapshot=JSON.stringify(p);
   assert.throws(()=>createSceneFromOriginal(p,2800,2,movie.id),/exceeds/);
   assert.equal(JSON.stringify(p),snapshot);
-  createSceneFromOriginal(p,2800,1,movie.id);
-  assert.deepEqual(p.selection,[2800,2968]);
+  createSceneFromOriginal(p,2700,1,movie.id);
+  assert.deepEqual(p.selection,[2700,2868]);
   assert.equal(p.tracks.length,2);
 });
 
@@ -1979,4 +1979,21 @@ test("recreate mode relies on source guidance and attaches original audio once",
   assert.equal(source.audio_role,"both");
   assert.equal(p.tracks.filter(t=>t.role==="video_guide").length,0);
   assert.deepEqual(p.selection,[100,436]);
+});
+
+test("new scene accepts exact draft duration independently of old selection cuts",()=>{
+  const id="a".repeat(64),movie={id,duration:"1300",kind:"video",video:{},audio:{}};
+  const p={assets:[movie],tracks:[],duration_frames:31200,
+    chunk_frames:168,selection:[17393,17532],operation:"generate"};
+  const editor={p,playhead:17393,selected:[],chunkPage:3,
+    edit(fn){fn(this.p);},jumpToFrame(f){this.playhead=f;},
+    fitSelectedRange(){},message(){}};
+  TimelineEditor.prototype.startScene.call(editor,17393,2,8);
+  assert.equal(p.chunk_frames,192);
+  assert.deepEqual(p.selection,[17393,17777]);
+  assert.equal(p.tracks.length,2);
+  assert.equal(p.tracks.find(t=>t.role==="retained").clips[0].audio_role,"both");
+  const before=JSON.stringify(p);
+  assert.throws(()=>TimelineEditor.prototype.startScene.call(editor,17393,2,3.5),/between 4 and 15/);
+  assert.equal(JSON.stringify(p),before);
 });

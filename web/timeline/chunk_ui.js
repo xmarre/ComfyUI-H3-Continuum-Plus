@@ -6,7 +6,7 @@ import {
   selectedConveyorSlots, setConveyorSlotEnabled, setChunkConveyorSlots,
   inheritConveyorSlots,
 } from "./chunk_workspace.js";
-import { changeTiming, selectionChunks } from "./sampler_layout.js";
+import { selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
 import { traceReferenceSocket, collectReferenceProvenance, conveyorState, shelfImagePath, conveyorShelfAvailable } from "./conveyor_source.js";
 
@@ -436,34 +436,47 @@ export function renderChunkWorkspace(editor) {
   const referenceSources = referenceSocketSources(editor);
   editor.conveyorSignature=JSON.stringify(referenceSources);
   host.replaceChildren();
-  const heading = el("div",{class:"h3ts-chunk-heading"},
-    el("strong",{text:"CHUNK INPUTS · THE ACTUAL H3 TIMELINE"}),
-    el("span",{text:page.total+" selected chunks · "+
-      (p.chunk_frames/24).toFixed(3)+"s per chunk · virtual windows · 24 fps"}),
-  );
-  const count = el("input",{type:"number",min:"1",max:"65536",value:selectionChunks(p),
-    "aria-label":"Selected H3 chunk count"});
-  count.addEventListener("change",()=>editor.edit((next)=>
-    changeTiming(next,"chunks",Number(count.value))));
-  const seconds = el("input",{type:"number",min:"4",max:"15",step:"0.041666667",
-    value:(p.chunk_frames/24).toFixed(3),"aria-label":"H3 chunk duration seconds"});
-  seconds.addEventListener("change",()=>editor.edit((next)=>
-    changeTiming(next,"chunk_seconds",Number(seconds.value))));
-  const sceneStart=el("input",{type:"number",min:"0",
-    max:String(Math.max(0,p.duration_frames-1)),step:"1",
-    value:String(p.chunk_origin_frame||0),
-    "aria-label":"First scene frame in original movie"});
-  const sceneControls=el("div",{class:"h3ts-scene-controls"});
-  sceneControls.append(
-    control("Start frame",sceneStart),
-    control("Chunks",count),control("Seconds per chunk",seconds),
-    button("Start scene",()=>editor.guard(()=>editor.startScene(Number(sceneStart.value))),
-      "Only specify the first original movie frame; following chunks are automatic"),
-    button("Use playhead",()=>editor.guard(()=>editor.startScene(editor.playhead)),
-      "Start the scene at the currently displayed movie frame"),
-    button("Restore original",()=>editor.guard(()=>editor.restoreMovie()),
-      "Clear all timeline edits and return to the uncut original movie"));
-  heading.append(sceneControls);
+  const heading=el("div",{class:"h3ts-chunk-heading"},
+    el("strong",{text:"SCENE SETUP"}),
+    el("span",{text:"Choose the first source frame. Video, driving audio and all following H3 chunks are automatic."}));
+  const draft=editor.sceneDraft||{};
+  const count=el("input",{type:"number",min:"1",max:"65536",step:"1",
+    value:String(draft.count??selectionChunks(p)),
+    "aria-label":"Scene chunk count"});
+  const seconds=el("input",{type:"number",min:"4",max:"15",step:"0.041666667",
+    value:String(draft.seconds??(p.chunk_frames/24).toFixed(3)),
+    "aria-label":"Seconds per H3 chunk"});
+  const summary=el("output",{class:"h3ts-scene-summary"});
+  const update=()=>{
+    editor.sceneDraft={count:Number(count.value),seconds:Number(seconds.value)};
+    const frame=editor.playhead;
+    const duration=Math.round(Number(seconds.value)*24)*Number(count.value);
+    summary.textContent=Number.isFinite(duration)&&duration>0
+      ? "Start "+frameTime(frame)+" (frame "+frame+") · "+
+        Number(count.value)+" chunks · ends "+frameTime(frame+duration)
+      : "Set a valid chunk count and duration";
+  };
+  count.addEventListener("input",update);
+  seconds.addEventListener("input",update);
+  const useScene=(frame)=>editor.guard(()=>editor.startScene(
+    frame,Number(count.value),Number(seconds.value)));
+  const controls=el("div",{class:"h3ts-scene-controls"});
+  const start=button("Create scene from playhead",()=>useScene(editor.playhead),
+    "Rebuild an uncut video and synchronized soundtrack; calculate all scene chunks");
+  start.className="h3ts-scene-primary";
+  const manualFrame=el("input",{type:"number",min:"0",step:"1",
+    value:String(editor.playhead),"aria-label":"Exact source start frame"});
+  const exact=el("details",{class:"h3ts-scene-manual"},
+    el("summary",{text:"Specify exact source frame"}),
+    control("Source frame",manualFrame),
+    button("Create from entered frame",()=>useScene(Number(manualFrame.value))));
+  controls.append(control("Chunks",count),control("Seconds per chunk",seconds),
+    start,
+    button("Restore uncut original",()=>editor.guard(()=>editor.restoreMovie()),
+      "Undo all timeline cuts and muted sound clips; source files and saved takes remain"),
+    exact);
+  update();
+  heading.append(controls,summary);
   host.append(heading);
   const viewTools=el("details",{class:"h3ts-scene-view-tools"});
   viewTools.append(el("summary",{text:"View, media refresh and layout options"}));
@@ -586,12 +599,25 @@ export function renderChunkWorkspace(editor) {
       el("summary",{text:"Add video or audio to this chunk"}),
       control("Video guidance",video),
       control("Audio · guide / reference / final",audio));
+    const activeMedia=items.filter(({track,clip})=>
+      !(track.muted||clip.muted) && !!clip.asset_id);
+    const hasAudioGuide=activeMedia.some(({clip})=>
+      ["guide","both"].includes(clip.audio_role));
+    const hasFinalAudio=activeMedia.some(({clip})=>
+      ["final","both"].includes(clip.audio_role));
+    const hasVideo=activeMedia.some(({track})=>
+      track.role==="video_guide" ||
+      (track.role==="retained" && p.operation==="recreate"));
+    const mediaDetails=el("details",{class:"h3ts-chunk-media-details"});
+    const status=(hasVideo?"Video guide ready":"No video guide")+
+      " · "+(hasAudioGuide?"Driving audio active":"No driving audio")+
+      " · "+(hasFinalAudio?"Original/final audio active":"No preserved final audio");
+    mediaDetails.append(el("summary",{text:"Media routing · "+status}));
     const media=el("section",{class:"h3ts-chunk-media"},
-      el("strong",{text:"3 · Media in this chunk · enable / disable"}),
-      el("small",{text:"Switch media on or off for this chunk. Connected "+
-        "tracks can also be muted globally. Original footage is a "+
-        "timeline source, while Video guidance conditions H3."}));
-    card.append(media);
+      el("strong",{text:"Source clips and advanced enable / disable"}),
+      el("small",{text:"These advanced controls split clips when toggled. "+
+        "Use Create scene to rebuild the original movie and audio without cuts."}));
+    mediaDetails.append(media);
     if (!items.some(({track,clip})=>
       track.role!=="prompt" && !!clip.asset_id))
       media.append(el("small",{text:"No timeline media placed in this chunk"}));
@@ -669,7 +695,8 @@ export function renderChunkWorkspace(editor) {
         }));
       media.append(row);
     }
-    card.append(addMedia);
+    mediaDetails.append(addMedia);
+    card.append(mediaDetails);
     card.addEventListener("dragover",(e)=>e.preventDefault());
     card.addEventListener("drop",(e)=>{
       const assetId=e.dataTransfer?.getData("application/x-h3-asset");
