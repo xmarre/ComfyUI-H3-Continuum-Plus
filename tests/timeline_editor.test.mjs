@@ -2076,7 +2076,7 @@ test("cached prebuffer cannot resume at the previous playback timestamp",async()
 
 test("prefetch still warms standby player after playback consumes in-flight request",async()=>{
   let resolveFetch,loads=0;
-  const old={src:"old",hidden:false};
+  const old={src:"old",hidden:false,pause(){this.paused=true;}};
   const next={dataset:{},hidden:true,pause(){},load(){loads++;},
     play(){return Promise.resolve();}};
   const player={playWanted:true,playEpoch:1,closed:false,
