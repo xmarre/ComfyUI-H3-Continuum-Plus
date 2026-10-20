@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import PurePosixPath
 import subprocess
+import stat
 import uuid
 import zipfile
 
@@ -41,6 +42,10 @@ def read_manifest(archive):
     names = [m.filename for m in members]
     if len(set(names)) != len(names):
         raise ValueError("Clip pack contains duplicate member names")
+    for member in members:
+        member_path(member.filename.rstrip("/") if member.is_dir() else member.filename)
+        if stat.S_ISLNK(member.external_attr >> 16):
+            raise ValueError("Clip packs do not support symbolic-link members")
     if sum(m.file_size for m in members) > MAX_UNPACKED_BYTES:
         raise ValueError("Clip pack exceeds the unpacked size limit")
     found = []
@@ -73,6 +78,7 @@ def import_bundle(path, assets, current, *, cancel=lambda: None):
             if not isinstance(prefix, str):
                 raise ValueError("Clip-pack global_prefix must be text")
             prepared = []
+            notes = []
             end = Fraction(0)
             for index, segment in enumerate(segments):
                 if not isinstance(segment, dict):
@@ -90,6 +96,12 @@ def import_bundle(path, assets, current, *, cancel=lambda: None):
                 if member.is_dir() or member.flag_bits & 1:
                     raise ValueError("Clip pack requires readable picture files")
                 a, b = round(start * 24), round(stop * 24)
+                if Fraction(a, 24) != start or Fraction(b, 24) != stop:
+                    notes.append(
+                        f"Segment {index + 1}: {float(start):.6f}–{float(stop):.6f}s "
+                        f"maps to frames [{a}, {b}) at 24 fps "
+                        f"({a/24:.6f}–{b/24:.6f}s); playback speed is unchanged."
+                    )
                 if b <= a:
                     raise ValueError("Clip-pack segment is shorter than one output frame")
                 prepared.append((segment, name, a, b))
@@ -170,6 +182,11 @@ def import_bundle(path, assets, current, *, cancel=lambda: None):
                 audio = register(audio_name)
                 if not audio.get("audio"):
                     raise ValueError("Clip-pack soundtrack has no audio stream")
+                if rational(audio["duration"]) < Fraction(p["duration_frames"], 24):
+                    notes.append(
+                        "Original soundtrack ends before the picture timeline; "
+                        "the uncovered final interval uses silence, not generated H3 audio."
+                    )
                 p["audio_sample_rate"] = int(audio["audio"]["sample_rate"])
                 p["tracks"].append({"id": uuid.uuid4().hex, "role": "audio",
                     "name": "Original soundtrack · H3 driving + final", "clips": [{
@@ -178,6 +195,7 @@ def import_bundle(path, assets, current, *, cancel=lambda: None):
                         "speed": "1", "padding": "silence", "audio_role": "both",
                     }]})
             p["assets"] = list({a["id"]: a for a in registered.values()}.values())
+            p["import_notes"] = notes
             return validate(p)
     except (zipfile.BadZipFile, KeyError, TypeError, ZeroDivisionError,
             subprocess.CalledProcessError, RuntimeError) as exc:

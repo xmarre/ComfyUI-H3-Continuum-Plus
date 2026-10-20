@@ -435,8 +435,10 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
                     and rational(s["start"]) < Fraction(section_end, 24)
                     and Fraction(section_start, 24) < rational(s["end"])
                 ]
-                shared_text += "\n" + timeline_preamble(script)
-                base += "\n" + timeline_preamble(script)
+                preamble = timeline_preamble(script)
+                if preamble.strip() != global_text.strip():
+                    shared_text += "\n" + preamble
+                base = shared_text
                 if exact:
                     from ..v2.physical_prompts import inspect_strict_inner_ranges
 

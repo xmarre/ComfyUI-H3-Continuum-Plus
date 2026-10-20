@@ -485,6 +485,9 @@ export function renderChunkWorkspace(editor) {
   editor.updateScenePreview=update;
   heading.append(controls,summary);
   host.append(heading);
+  if(p.import_notes?.length) host.append(el("details",{class:"h3ts-import-notes"},
+    el("summary",{text:"Clip-pack timing and soundtrack notes ("+p.import_notes.length+")"}),
+    ...p.import_notes.map(text=>el("p",{text}))));
   const globalPrompt=el("textarea",{
     class:"h3ts-global-prompt",rows:"3","aria-label":"Global prompt for every chunk",
     placeholder:"Identity, style and instructions shared by every chunk",

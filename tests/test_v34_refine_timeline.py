@@ -234,3 +234,17 @@ def test_short_last_source_window_crops_final_duration_and_original_pcm(monkeypa
     plan['target_frames'] = 120
     with pytest.raises(ValueError,match='final logical chunk'):
         validate_assembly_plan(plan)
+
+
+def test_post_refinement_finalizer_keeps_original_pcm_without_anchor_splice():
+    plan = _plan()
+    original = _audio(240)
+    natural = {'sample_rate':48000,
+        'waveform':torch.nn.functional.pad(original['waveform'],(0,3*2000))}
+    plan['_h3_continuum_driving_audio_v1'] = natural
+    images = torch.zeros((243,8,8,3))
+    out, audio, report = H3ContinuumFinalizeDurationV34().finalize(
+        images, _audio(243), plan, timeline_mode=V34_TIMELINE_SAFE)
+    assert len(out) == 240
+    assert torch.equal(audio['waveform'],original['waveform'])
+    assert 'original PCM clock retained' in report

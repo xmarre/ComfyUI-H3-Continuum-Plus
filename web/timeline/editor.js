@@ -872,7 +872,8 @@ export class TimelineEditor {
       this.sceneDraft=null;
     });
     this.fitSelectedRange();
-    this.message("Clip pack imported · global + chunk prompts · original soundtrack drives H3 and final audio · Undo available");
+    this.message("Clip pack imported · global + chunk prompts · original soundtrack drives H3 and final audio · Undo available" +
+      (scene.import_notes?.length ? " · " + scene.import_notes.join(" ") : ""));
   }
   addImportedAsset(a) {
     this.edit((p) => {

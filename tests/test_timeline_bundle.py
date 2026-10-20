@@ -123,3 +123,52 @@ def test_cancelled_pack_cleans_partial_file_and_never_changes_project(tmp_path):
         import_bundle(pack(tmp_path), Assets(tmp_path), p, cancel=cancel)
     assert p == old
     assert [x.name for x in tmp_path.iterdir()] == ['pack.zip']
+
+
+def test_duplicate_and_symlink_members_are_rejected_before_registration(tmp_path):
+    import stat
+    path = pack(tmp_path)
+    with zipfile.ZipFile(path, 'a') as z:
+        with pytest.warns(UserWarning, match='Duplicate name'):
+            z.writestr('scene/chunk_01.mp4', b'different bytes')
+    assets = Assets(tmp_path)
+    with pytest.raises(ValueError, match='duplicate member'):
+        import_bundle(path, assets, {})
+    path = pack(tmp_path)
+    with zipfile.ZipFile(path, 'a') as z:
+        symlink = zipfile.ZipInfo('scene/link.mp4')
+        symlink.create_system = 3
+        symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
+        z.writestr(symlink, '/outside')
+    with pytest.raises(ValueError, match='symbolic-link'):
+        import_bundle(path, assets, {})
+    assert not assets.calls
+
+
+def test_rounding_receipt_and_short_soundtrack_are_visible_metadata(tmp_path):
+    assets = Assets(tmp_path)
+    adopt = assets.adopt
+    def shortened(path, checksum, name, *, cancel):
+        a = adopt(path, checksum, name, cancel=cancel)
+        if name.endswith('.m4a'):
+            a['duration'] = '10'
+        return a
+    assets.adopt = shortened
+    p = import_bundle(pack(tmp_path), assets, {})
+    assert len(p['import_notes']) == 2
+    assert '11.958333s' in p['import_notes'][0]
+    assert 'uses silence' in p['import_notes'][1]
+    assert p['tracks'][-1]['clips'][0]['end'] == 287
+
+
+def test_pack_limits_and_bad_zip_do_not_register_bytes(tmp_path, monkeypatch):
+    from ComfyUI_H3_Continuum_Join.timeline import bundle
+    assets = Assets(tmp_path)
+    path = pack(tmp_path)
+    monkeypatch.setattr(bundle, 'MAX_UNPACKED_BYTES', 1)
+    with pytest.raises(ValueError, match='unpacked size limit'):
+        import_bundle(path, assets, {})
+    path.write_bytes(b'not an archive')
+    with pytest.raises(ValueError, match='Unreadable clip pack'):
+        import_bundle(path, assets, {})
+    assert not assets.calls

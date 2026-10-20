@@ -483,3 +483,11 @@ def test_script_preamble_survives_partial_chunk_override():
         'Identity\nShared setting\nOriginal action',
         'Identity\nShared setting\nEdited action',
         'Identity\nShared setting\nOriginal action']
+
+
+def test_identical_studio_global_and_connected_preamble_are_prepended_once():
+    p = blank_project()
+    p['prompts']['global'] = 'Shared identity'
+    merged = with_external_prompt_source(p, {'mode':'Timeline',
+        'script':'Shared identity\n[0-7s]\nAction'})
+    assert compile_window(merged,0)['prompt'] == 'Shared identity\nAction'

@@ -601,13 +601,21 @@ class H3ContinuumFinalizeDurationV34:
         timeline_mode = _unwrap_single_audio_value(timeline_mode)
         if timeline_mode not in V34_TIMELINE_MODES:
             raise ValueError(f"unknown V3.4 Timeline Output mode: {timeline_mode!r}")
-        return finalize_assembled_timeline(
+        preserved = _driving_audio_from_plan((), {"assembly_plan": assembly_plan})
+        images, audio, report = finalize_assembled_timeline(
             images=images,
-            audio=audio,
+            audio=preserved if preserved is not None else audio,
             assembly_plan=assembly_plan,
             exact_total_duration=timeline_mode != V34_TIMELINE_NATURAL,
             preserve_audible_tail=timeline_mode in (V34_TIMELINE_SAFE, V34_TIMELINE_EXACT),
         )
+        if preserved is not None:
+            _, audio, _ = enforce_total_frames(
+                images, preserved, target_frames=int(images.shape[0]),
+                preserve_final_frame=False,
+            )
+            report += "\nDriving Audio: preserved assembly-plan soundtrack; original PCM clock retained."
+        return images, audio, report
 
 
 NODE_CLASS_MAPPINGS = {
