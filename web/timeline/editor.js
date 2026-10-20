@@ -385,6 +385,7 @@ export class TimelineEditor {
     this.stopPlayback();
     const p = await request(this.api, "/project/" + this.p.project_id);
     this.history = new History(p);
+    this.promptEditKey = null;
     this.serverRevision = p.revision;
     this.selected = [];
     this.render();
@@ -2386,6 +2387,7 @@ export class TimelineEditor {
       }),
     });
     this.history = new History(p);
+    this.promptEditKey = null;
     this.serverRevision = p.revision;
     this.persistWidget();
     this.render();
