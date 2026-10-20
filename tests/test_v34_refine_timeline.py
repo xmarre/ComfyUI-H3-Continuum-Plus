@@ -248,3 +248,12 @@ def test_post_refinement_finalizer_keeps_original_pcm_without_anchor_splice():
     assert len(out) == 240
     assert torch.equal(audio['waveform'],original['waveform'])
     assert 'original PCM clock retained' in report
+
+
+def test_generated_audio_choice_survives_post_refinement_finalization():
+    from ComfyUI_H3_Continuum_Join.v3.driving_nodes import _FINAL_AUDIO_SOURCE_PLAN_KEY, _DRIVING_AUDIO_PLAN_KEY
+    plan=_plan();generated=_audio(243)
+    plan[_FINAL_AUDIO_SOURCE_PLAN_KEY]='generated'
+    plan[_DRIVING_AUDIO_PLAN_KEY]={'waveform':torch.zeros_like(generated['waveform']),'sample_rate':generated['sample_rate']}
+    _,output,_=H3ContinuumFinalizeDurationV34().finalize(torch.zeros((243,8,8,3)),generated,plan,V34_TIMELINE_NATURAL)
+    assert torch.equal(output['waveform'],generated['waveform'])

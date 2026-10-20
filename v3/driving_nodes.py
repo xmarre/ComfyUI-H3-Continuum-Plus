@@ -489,8 +489,8 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
             "AUDIO",
             {
                 "tooltip": (
-                    "Connect the sampler Driving Audio output. When present, generated "
-                    "audio and Audio Seam are bypassed."
+                    "Connect the sampler Driving Audio output to preserve source PCM. "
+                    "A Timeline plan selecting Generated H3 audio disables this replacement."
                 )
             },
         )
