@@ -817,7 +817,14 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         )
     reuse_notes.extend(physical_reuse_notes)
     if storage_controller is not None:
+        validated_count = storage_controller.reused_count
         storage_controller.reused_count=len(preserved)
+        LOG.warning(
+            "H3C Run Storage prefix decision name=%s revision=%s "
+            "manifest_validated=%d preserved=%d/%d reasons=%r",
+            storage_controller.run_name, storage_controller.revision_id,
+            validated_count, len(preserved), chunks, reuse_notes,
+        )
     reuse_notes.insert(0,f"Continuation method: {continuation_method}."+(f" Native mask contract v{NATIVE_MASK_CONTRACT_VERSION}." if continuation_method==CONTINUATION_NATIVE_MASKED else ""))
     reuse_notes.insert(0,"Physical prompt transport: "+("candidate physical compiler enabled." if physical_candidate else "legacy nominal control enabled."))
     if timeline_video_source is not None:
