@@ -1,0 +1,234 @@
+"""Single-pass, atomic video+audio muxing for full Timeline Studio exports.
+
+The prior implementation created a potentially huge FFV1 video and raw PCM
+intermediate, then transcoded the *entire movie again*. This module encodes
+video/audio into the final container together, with <= one second of RGB frames
+in memory, and one temporary decoded PCM cache per distinct final-audio source
+to prevent O(N^2) prefix decoding on two-hour timelines.
+
+This path does not change H3 generation, final sample-index semantics, or the
+native no-copy original asset store.
+"""
+
+from __future__ import annotations
+
+from fractions import Fraction
+from pathlib import Path
+import shutil
+import tempfile
+import uuid
+
+import numpy as np
+
+from .media import PcmCache, check_cancel, mix_audio, probe
+from .model import active_clips, rational, source_time
+
+AUDIO_CHUNK_SAMPLES = 1024
+AUDIO_CHANNELS = 2
+BYTES_PER_SAMPLE = 4
+AUDIO_CACHE_MARGIN = 64 * 1024**2
+
+
+def _export_pcm_cache(p, store, start, stop, rate, workdir, *, cancel):
+    """Use temporary exact decoded audio, never a persistent full-film duplicate.
+
+    Without a cache, decoding N successive exact windows from source start
+    performs approximately N² work. Source audio is decoded once per asset
+    into a temporary PCM file and reused with absolute sample-index slices.
+    The files are removed automatically when export completes or fails.
+    """
+    # Scope exact PCM preparation to the output selection. A source can be
+    # 1h50 long while the requested output is just 14 seconds; making an
+    # entire 1h50 PCM copy here would silently defeat range-limited export.
+    clips_by_asset = {}
+    for _, clip in active_clips(p, start, stop):
+        if clip.get("audio_role") not in {"final", "both"}:
+            continue
+        left = max(start, clip["start"])
+        right = min(stop, clip["end"])
+        if left >= right:
+            continue
+        clips_by_asset.setdefault(clip["asset_id"], []).append(
+            max(source_time(clip, left), source_time(clip, right))
+        )
+    if not clips_by_asset:
+        return None
+
+    caps = {}
+    expected = 0
+    for asset_id, endpoints in sorted(clips_by_asset.items()):
+        cancel()
+        file = store.assets.verify(asset_id, cancel=cancel)
+        info = probe(file)
+        if not info.get("audio"):
+            continue
+        origin = rational(info["audio"].get("start_time", "0"))
+        # audio_window computes absolute samples with round(end * rate)
+        # - round(origin * rate), not float time or an approximated seek.
+        highest = max(endpoints)
+        needed = max(0, round(highest * rate) - round(origin * rate))
+        if needed:
+            key = str(file.resolve())
+            caps[key] = max(caps.get(key, 0), needed)
+            expected += needed * AUDIO_CHANNELS * BYTES_PER_SAMPLE
+    if not expected:
+        return None
+    available = shutil.disk_usage(workdir).free
+    required = expected + AUDIO_CACHE_MARGIN
+    if required > available:
+        raise ValueError(
+            "Not enough disk space for sample-exact export audio: "
+            f"requires approximately {required / 1024**3:.2f} GiB, "
+            f"available {available / 1024**3:.2f} GiB. "
+            "Free space in the ComfyUI output location or export a shorter range."
+        )
+    return PcmCache(
+        Path(workdir) / "pcm", limit_bytes=required,
+        end_frames_by_path=caps,
+    )
+
+
+def encode_export(
+    p,
+    store,
+    output,
+    start,
+    stop,
+    rate,
+    *,
+    codec,
+    cancel=check_cancel,
+    on_progress=None,
+    preview=False,
+    width=None,
+    height=None,
+):
+    """One-pass direct mux at the explicitly resolved output dimensions."""
+    import av
+    from .compose import render_frames
+
+    if codec not in {"lossless", "h264"}:
+        raise ValueError("Unknown export codec")
+    width = p["width"] if width is None else int(width)
+    height = p["height"] if height is None else int(height)
+    if width <= 0 or height <= 0:
+        raise ValueError("Invalid export dimensions")
+    if codec == "h264" and (width % 2 or height % 2):
+        raise ValueError(
+            "H.264 yuv420p requires even source dimensions; select FFV1 "
+            "or an even-sized Timeline canvas"
+        )
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(
+        output.stem + "-" + uuid.uuid4().hex + output.suffix
+    )
+    total = stop - start
+    if not 0 <= start < stop <= p["duration_frames"]:
+        raise ValueError("Invalid export range")
+    on_progress = on_progress or (lambda **info: None)
+
+    try:
+        on_progress(
+            stage="preparing exact source audio",
+            frames_done=0, total_frames=total,
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="h3-export-scratch-", dir=output.parent
+        ) as scratch:
+            cache = (
+                None if preview else _export_pcm_cache(
+                    p, store, start, stop, rate, scratch, cancel=cancel
+                )
+            )
+            on_progress(stage="encoding", frames_done=0, total_frames=total)
+            container_format = "matroska" if codec == "lossless" else "mp4"
+            options = (
+                {} if codec == "lossless" else {"movflags": "+faststart"}
+            )
+            with av.open(
+                str(temporary), "w", format=container_format, options=options
+            ) as container:
+                vstream = container.add_stream(
+                    "ffv1" if codec == "lossless" else "libx264", rate=24
+                )
+                vstream.width = width
+                vstream.height = height
+                vstream.pix_fmt = "bgr0" if codec == "lossless" else "yuv420p"
+                if codec == "h264":
+                    vstream.options = {
+                        "crf": "20" if preview else "16",
+                        "preset": "ultrafast" if preview else "medium",
+                    }
+                # Bound CPU encoders so exporting a long movie cannot
+                # monopolize every Windows/WSL CPU core.
+                vstream.thread_count = 1 if preview else 4
+                astream = container.add_stream(
+                    "pcm_f32le" if codec == "lossless" else "aac", rate=rate
+                )
+                astream.layout = "stereo"
+                if codec == "h264":
+                    astream.bit_rate = 192_000
+                audio_format = "flt" if codec == "lossless" else "fltp"
+                sample_cursor = 0
+                # Bound RGB working memory at native 1080p/4K dimensions.
+                block = max(1, min(24, (96 * 1024**2) // (width * height * 3)))
+                for a in range(start, stop, block):
+                    cancel()
+                    b = min(a + block, stop)
+                    frames = render_frames(
+                        p, store.assets, a, b,
+                        width, height, cancel=cancel,
+                    )
+                    for n, pixels in enumerate(frames):
+                        cancel()
+                        frame = av.VideoFrame.from_ndarray(
+                            pixels, format="rgb24"
+                        )
+                        frame.pts = a - start + n
+                        frame.time_base = Fraction(1, 24)
+                        for packet in vstream.encode(frame):
+                            container.mux(packet)
+                    pcm = mix_audio(
+                        p, store.assets, a, b, rate, "final",
+                        cancel=cancel, preview=preview,
+                        export_cache=cache,
+                    )
+                    for index in range(
+                        0, pcm.shape[1], AUDIO_CHUNK_SAMPLES
+                    ):
+                        cancel()
+                        chunk = pcm[:, index:index + AUDIO_CHUNK_SAMPLES]
+                        data = (
+                            np.ascontiguousarray(chunk)
+                            if audio_format == "fltp"
+                            else np.ascontiguousarray(chunk.T.reshape(1, -1))
+                        )
+                        af = av.AudioFrame.from_ndarray(
+                            data, format=audio_format, layout="stereo"
+                        )
+                        af.sample_rate = rate
+                        af.pts = sample_cursor
+                        af.time_base = Fraction(1, rate)
+                        sample_cursor += chunk.shape[1]
+                        for packet in astream.encode(af):
+                            container.mux(packet)
+                    on_progress(
+                        stage="encoding",
+                        frames_done=b - start,
+                        total_frames=total,
+                    )
+                cancel()
+                on_progress(
+                    stage="finalizing", frames_done=total, total_frames=total
+                )
+                for packet in vstream.encode(None):
+                    container.mux(packet)
+                for packet in astream.encode(None):
+                    container.mux(packet)
+        cancel()
+        temporary.replace(output)
+        on_progress(stage="complete", frames_done=total, total_frames=total)
+        return output
+    finally:
+        temporary.unlink(missing_ok=True)
