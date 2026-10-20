@@ -19,8 +19,10 @@ export function fitRangeZoom(start,end,viewportWidth) {
     (Math.max(200,viewportWidth)-210)*24/Math.max(1,end-start)));
 }
 
-export function timelineWheelPan(deltaX,deltaY,{ctrlKey=false,metaKey=false}={}) {
+export function timelineWheelPan(deltaX,deltaY,
+                                 {ctrlKey=false,metaKey=false,altKey=false}={}) {
   if(ctrlKey||metaKey)return 0;
+  if(altKey && Number.isFinite(deltaY) && deltaY!==0)return deltaY;
   return Number.isFinite(deltaX)?deltaX:0;
 }
 

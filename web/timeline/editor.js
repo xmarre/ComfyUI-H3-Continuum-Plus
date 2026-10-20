@@ -621,8 +621,8 @@ export class TimelineEditor {
       this.persistView();
     });
     // Standard wheel magnifies time around the pointer over ruler or tracks.
-    // Trackpad horizontal scrolling pans, Shift+wheel scrolls track rows,
-    // and browser Ctrl/Meta zoom is never intercepted.
+    // Trackpad horizontal scrolling or Alt+wheel pans; Shift+wheel
+    // scrolls track rows, and browser Ctrl/Meta zoom is not intercepted.
     this.scroller.addEventListener("wheel",(event)=>{
       if(event.ctrlKey||event.metaKey||event.shiftKey)return;
       const pan=timelineWheelPan(event.deltaX,event.deltaY,event);
@@ -1631,6 +1631,10 @@ export class TimelineEditor {
         target.dataset.source=result.url;
         target.src=result.url;
         target.load?.();
+      } else if(target.ended || target.currentTime>0.01) {
+        // Replaying a cached segment must start at its first source frame,
+        // never resume the standby element's old playback timestamp.
+        target.currentTime=0;
       }
       // Old player's final decoded frame remains visible while the next
       // player buffers. A rejected play does not tear down the working source.

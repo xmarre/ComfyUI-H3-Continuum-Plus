@@ -1795,6 +1795,7 @@ test("ordinary wheel and horizontal trackpad gestures pan movie without stealing
   assert.equal(timelineWheelPan(0,120),0);
   assert.equal(timelineWheelPan(-55,120),-55);
   assert.equal(timelineWheelPan(0,-75),0);
+  assert.equal(timelineWheelPan(0,-75,{altKey:true}),-75);
   assert.equal(timelineWheelPan(0,120,{ctrlKey:true}),0);
   assert.equal(timelineWheelPan(30,0,{metaKey:true}),0);
   assert.equal(timelineWheelPan(NaN,NaN),0);
@@ -2055,4 +2056,20 @@ test("playback switches to buffered video only after its play starts",async()=>{
   assert.equal(standby.hidden,false);
   assert.equal(player.compositionStart,48);
   assert.equal(player.compositionEnd,192);
+});
+
+test("cached prebuffer cannot resume at the previous playback timestamp",async()=>{
+  const prior={hidden:false,pause() {}};
+  const queued={dataset:{source:"/composed/old"},
+    currentTime:2.5,ended:true,hidden:true,pause(){},
+    play(){return Promise.resolve();}};
+  const player={playWanted:true,playEpoch:9,closed:false,
+    abort:new AbortController(),video:prior,preloadVideo:queued,
+    p:{duration_frames:700},image:{hidden:false},nextPreview:null,
+    message(){},prefetchSegment(){},fetchSegment(){return Promise.resolve({
+      url:"/composed/old",start:48,end:192,
+    });}};
+  await TimelineEditor.prototype.playSegment.call(player,48,9);
+  assert.equal(queued.currentTime,0);
+  assert.equal(player.video,queued);
 });

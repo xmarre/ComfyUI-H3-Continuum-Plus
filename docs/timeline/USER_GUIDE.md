@@ -142,9 +142,10 @@ The timeline's horizontal extent always represents the **entire movie**, even
 when the H3 render selection covers only a few chunks. The selected render
 range remains visibly highlighted and does not restrict scrubbing, seeking,
 scrolling or frame stepping. Use the horizontal scrollbar, trackpad horizontal
-gesture, or **Alt+mouse-wheel** to pan. **Fit selected chunks** zooms to the
-current render selection without clipping the rest of the movie; **Fit full
-movie** zooms out to its full duration. **Jump to selection** returns the
+gesture, or **Alt+mouse-wheel** to pan. Ordinary vertical mouse-wheel
+scrolling over the movie ruler or track content zooms around the cursor.
+**Fit selection** zooms to the current render selection without clipping the
+rest of the movie; **Fit movie** zooms out to its full duration. **Jump to selection** returns the
 playhead and viewport to the chosen generation range. These actions update
 view-only state and do not change render in/out, accepted takes or sampling.
 
@@ -179,8 +180,9 @@ images remain connected IMAGE inputs rather than imported copies.
 ## Timeline navigation and chunk media switches
 
 The lower track timeline navigates the full source duration. Scroll the mouse
-wheel over the ruler or any timeline track to zoom around the mouse cursor; horizontal trackpad gestures pan. Shift+wheel scrolls tracks vertically
-directly. The toolbar also offers **← Pan**, **Pan →**, **Fit selection** and
+wheel over the ruler or any timeline track to zoom around the mouse cursor;
+horizontal trackpad gestures and Alt+wheel pan. Shift+wheel scrolls tracks
+vertically. The toolbar also offers **← Pan**, **Pan →**, **Fit selection** and
 **Fit movie**. Pan changes the visible range, not the selected H3 generation
 interval, clip positions or source PTS. Zoom changes only view magnification.
 Ctrl/Command-wheel remains available for the browser's native zoom action.
