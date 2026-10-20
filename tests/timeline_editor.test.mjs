@@ -2174,3 +2174,58 @@ test("150 prompt keystrokes coalesce and preserve structural Undo and redo",()=>
     p=>{p.name="broken";throw Error("failed");},"global"),/failed/);
   assert.equal(editor.p.name,"imported");
 });
+
+test("single-job queues preserve cache identity; rerolls and multi-job batches retain distinct identity", async () => {
+  const studio = {id:1,widgets:[]};
+  const sampler = {
+    id:2,comfyClass:"H3ContinuumTimelineSampler",
+    inputs:[{name:"timeline",link:11}],widgets:[],
+  };
+  const submissions=[];
+  let jobCount=1;
+  const editor={
+    p:{project_id:"fixed-project",chunk_frames:168,selection:[0,168],duration_frames:504},
+    node:studio,queuedIds:new Set(),async save(){},persistView(){},message(){},
+    app:{
+      graph:{_nodes:[studio,sampler],links:{11:{origin_id:1}},setDirtyCanvas(){}},
+      async graphToPrompt(){return {
+        output:{"1":{inputs:{project_json:""}},"2":{inputs:{base_seed:123,regenerate_from:0,reroll_nonce:0}}},
+        workflow:{nodes:[{id:1,widgets_values:[""]},{id:2,widgets_values:[]}]},
+      };},
+    },
+    api:{
+      async fetchApi(){return {ok:true,json:async()=>({
+        jobs:Array.from({length:jobCount},(_,i)=>({
+          start_chunk:i,requires_previous_job:i>0,
+        })),
+      })};},
+      async queuePrompt(_priority,payload){
+        submissions.push(structuredClone(payload));
+        return {prompt_id:String(submissions.length)};
+      },
+    },
+  };
+  await TimelineEditor.prototype.queue.call(editor);
+  await TimelineEditor.prototype.queue.call(editor);
+  const first=JSON.parse(submissions[0].output["1"].inputs.project_json);
+  const second=JSON.parse(submissions[1].output["1"].inputs.project_json);
+  assert.deepEqual(first,second);
+  assert.equal(Object.hasOwn(first,"queued_batch_id"),false);
+  assert.equal(submissions[0].output["2"].inputs.base_seed,123);
+
+  await TimelineEditor.prototype.queue.call(editor,true);
+  const reroll=JSON.parse(submissions[2].output["1"].inputs.project_json);
+  assert.equal(typeof reroll.queued_batch_id,"string");
+  assert.equal(submissions[2].output["2"].inputs.regenerate_from,1);
+
+  jobCount=2;
+  await TimelineEditor.prototype.queue.call(editor);
+  const a=JSON.parse(submissions[3].output["1"].inputs.project_json);
+  const b=JSON.parse(submissions[4].output["1"].inputs.project_json);
+  assert.equal(typeof a.queued_batch_id,"string");
+  assert.equal(a.queued_batch_id,b.queued_batch_id);
+  assert.notEqual(a.queued_batch_id,reroll.queued_batch_id);
+  assert.equal(submissions[3].output["2"].inputs.job_index,0);
+  assert.equal(submissions[4].output["2"].inputs.job_index,1);
+  assert.equal(Object.hasOwn(editor.p,"queued_batch_id"),false);
+});
