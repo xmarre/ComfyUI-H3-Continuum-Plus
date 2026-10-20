@@ -44,6 +44,7 @@ const { chromium } = require("playwright");
     }, JSON.parse(process.env.H3_TIMELINE_TEST_PROJECT));
     await page.locator(".h3ts").waitFor({ state: "visible" });
     assert.equal(await page.locator(".h3ts-clip").count(), 1);
+    await page.locator(".h3ts-advanced-toolbar > summary").click();
     await page
       .getByRole("button", { name: "Inspect inputs", exact: true })
       .click();
@@ -89,6 +90,7 @@ const { chromium } = require("playwright");
       await page.evaluate(() =>
         h3TestNode.properties.h3_timeline_view.layout.left>190),
     );
+    await page.locator(".h3ts-scene-view-tools > summary").click();
     await page.getByRole("slider",{name:"Reference thumbnail size"})
       .evaluate((slider)=>{
         slider.value="150";
@@ -125,7 +127,7 @@ const { chromium } = require("playwright");
     // A short H3 selection must not eliminate horizontal navigation over
     // the full registered movie. Verify the real scroll range, not only
     // pure geometry helpers.
-    await page.getByRole("button",{name:"Fit selected chunks"}).click();
+    await page.getByRole("button",{name:"Fit selection"}).click();
     const movieExtent=await page.evaluate(()=>{
       const el=document.querySelector(".h3ts-scroll");
       return {scrollWidth:el.scrollWidth,viewport:el.clientWidth};
@@ -138,15 +140,16 @@ const { chromium } = require("playwright");
       return el.scrollLeft;
     });
     assert.ok(pan>30,"Horizontal scrollbar must pan beyond selected chunks");
-    await page.getByRole("button",{name:"Fit full movie"}).click();
+    await page.getByRole("button",{name:"Fit movie"}).click();
     const fitted=await page.evaluate(()=>{
       const el=document.querySelector(".h3ts-scroll");
       return {scrollWidth:el.scrollWidth,viewport:el.clientWidth};
     });
     assert.ok(fitted.scrollWidth<=fitted.viewport+2,JSON.stringify(fitted));
-    await page.getByRole("button",{name:"Fit selected chunks"}).click();
+    await page.getByRole("button",{name:"Fit selection"}).click();
     // Existing retained footage must be independently activatable from the
     // chunk card and still shown when muted so the user can restore it.
+    await page.locator(".h3ts-chunk-media-details > summary").first().click();
     const originalUse=page.getByRole("checkbox",{
       name:"Use Original footage in chunk 1",
     });
@@ -155,6 +158,7 @@ const { chromium } = require("playwright");
     assert.equal(await page.evaluate(()=>
       JSON.parse(h3TestNode.widgets.find(w=>w.name==="project_json").value)
         .tracks.find(t=>t.role==="retained").clips[0].muted),true);
+    await page.locator(".h3ts-chunk-media-details > summary").first().click();
     await originalUse.check();
     assert.equal(await page.evaluate(()=>
       JSON.parse(h3TestNode.widgets.find(w=>w.name==="project_json").value)
@@ -185,6 +189,32 @@ const { chromium } = require("playwright");
         .textContent.includes("Saved project loaded"),
     );
     assert.equal(await page.locator(".h3ts-clip").count(), 2);
+    // A real browser must rebuild the original video/audio after old cuts.
+    await page.getByRole("spinbutton",{name:"Scene chunk count"}).fill("2");
+    await page.getByRole("spinbutton",{name:"Seconds per H3 chunk"}).fill("4");
+    page.once("dialog",dialog=>dialog.accept());
+    await page.getByRole("button",{name:"Create scene from playhead"}).click();
+    const rebuilt=await page.evaluate(()=>{
+      const p=JSON.parse(h3TestNode.widgets.find(w=>w.name==="project_json").value);
+      return {selection:p.selection,origin:p.chunk_origin_frame,size:p.chunk_frames,
+        duration:p.duration_frames,
+        retained:p.tracks.filter(t=>t.role==="retained").flatMap(t=>t.clips),
+        guide:p.tracks.filter(t=>t.role==="video_guide").flatMap(t=>t.clips),
+        audioTracks:p.tracks.filter(t=>t.role==="audio").length};
+    });
+    assert.equal(rebuilt.origin,24);
+    assert.deepEqual(rebuilt.selection,[24,216]);
+    assert.equal(rebuilt.size,96);
+    assert.equal(rebuilt.duration,240);
+    assert.equal(rebuilt.retained.length,1);
+    assert.equal(rebuilt.retained[0].start,0);
+    assert.equal(rebuilt.retained[0].end,240);
+    assert.equal(rebuilt.retained[0].audio_role,"both");
+    assert.equal(rebuilt.guide.length,1);
+    assert.equal(rebuilt.guide[0].audio_role,"neither");
+    assert.equal(rebuilt.audioTracks,0);
+    assert.equal(await page.getByRole("spinbutton",{name:"Scene chunk count"}).inputValue(),"2");
+    assert.match(await page.locator(".h3ts-chunk-card").first().innerText(),/CHUNK 1\/2/);
     // Editing text must not trigger split shortcuts.
     await page
       .getByRole("textbox", { name: "Project name", exact: true })
