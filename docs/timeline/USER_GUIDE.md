@@ -466,3 +466,32 @@ to H3 driving conditioning and the preserved final soundtrack. Its linked
 video-guide role supplies video frames only; no second soundtrack is mixed.
 Compilation selects each video's and audio's exact scene-window source
 timestamps rather than feeding the entire movie to H3.
+
+## Import pre-cut video with prompts and soundtrack
+
+Choose **Import clip pack** and select a ZIP containing one JSON manifest and its referenced video files. This explicitly uploads the pack to ComfyUI; ordinary movie imports continue to link the selected original through Timeline Desktop. The imported scene replaces the timeline, prompts, take selections and media placements in one Undo-able edit. The Studio node identity and output width/height remain unchanged. Model, sampler and Image Conveyor connections remain in the graph.
+
+The manifest uses this structure (filenames are relative to the JSON file inside the ZIP):
+
+```json
+{
+  "global_prefix": "Identity and style shared by every chunk.",
+  "audio_filename": "original_audio.m4a",
+  "segments": [
+    {"chunk": 1, "start_seconds": 0, "end_seconds": 7,
+     "duration_seconds": 7, "filename": "chunk_01.mp4", "prompt": "First action."},
+    {"chunk": 2, "start_seconds": 7, "end_seconds": 11.96,
+     "duration_seconds": 4.96, "filename": "chunk_02.mp4", "prompt": "Second action."}
+  ]
+}
+```
+
+Intervals must be contiguous from zero, with a uniform 4–15 second chunk length and an optional shorter last picture. Their absolute endpoints are rounded onto the 24 fps output grid. Picture streams retain their actual source PTS origins; the importer does not change playback speed. `duration_seconds` is optional and must agree with the interval when present. `chunk` is a descriptive label; array order and timestamps define the actual schedule. An empty prompt is allowed. Review images, text notes and other unreferenced files are ignored.
+
+`audio_filename` is optional when the manifest directory contains exactly one standalone audio file. That continuous soundtrack supplies both H3 driving conditioning and final output. Embedded audio on the picture clips is disabled to prevent a second copy from mixing in. If no standalone soundtrack exists, each picture's embedded audio is used when available. The source pictures supply automatic video guidance in Recreate mode; the per-chunk prompts and global prefix populate editable fields. A pack is limited to 16 GiB uploaded, 32 GiB unpacked and 8,192 members.
+
+The **Global prompt** field above the chunk cards is prepended to every chunk, including authored overrides and workflows with connected `sequence_prompt`. A valid Timeline script's text before the first outer section is also shared. Editing a chunk replaces its action body while preserving those shared instructions. Changing the global field invalidates matching stored generations through the effective prompt hash.
+
+The sampler's **Driving Audio** output carries the chosen original soundtrack for its job. Updated example workflows connect it to the V3.4 assembler's matching input; existing workflows also carry the soundtrack inside the assembly plan, so an unconnected optional AUDIO socket alone does not imply missing audio. The assembler's **audio** output must feed Video Combine or Save Take. Connecting decoded generated audio directly to Video Combine bypasses source-audio selection. The status report identifies the selected original soundtrack or explains when incomplete authored audio leaves generated audio active.
+
+Natural retained output includes native model overhang for downstream refinement; its original PCM is followed by silence. Finalize or export at the authored duration for delivery. A shorter last picture sets the assembly target to that shorter source window. Final-frame anchoring adjusts video without splicing or moving preserved original PCM. These timestamp and PCM guarantees do not establish how accurately H3 follows mouth motion; assess lip-sync on a generated audiovisual result.

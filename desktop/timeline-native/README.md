@@ -105,3 +105,5 @@ code in the old ComfyUI process. If the incompatibility screen persists, the
 server is still registering an older or duplicate installation. The screen
 shows the exact local server address being checked. No recursive filesystem
 search or movie upload is performed by this validation step.
+
+Clip packs use the editor's **Import clip pack** ZIP upload. They include pre-cut picture files, a JSON prompt manifest and an optional continuous original soundtrack. This explicit pack import is separate from ordinary native-path movie linking. Install the desktop artifact matching the frontend/backend v19 contract.

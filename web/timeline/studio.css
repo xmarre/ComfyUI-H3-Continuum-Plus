@@ -1162,3 +1162,11 @@
 @media(max-width:1050px) {
   .h3ts .h3ts-conveyor-refs {grid-template-columns:repeat(2,minmax(0,1fr));}
 }
+
+.h3ts-global-prompt-field {
+  display: grid;
+  gap: 5px;
+  padding: 8px 12px;
+}
+.h3ts-global-prompt-field > span { color: var(--descrip-text, #aaa); font-size: 12px; }
+.h3ts-global-prompt { width: 100%; min-height: 64px; resize: vertical; box-sizing: border-box; }

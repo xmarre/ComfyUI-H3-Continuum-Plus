@@ -1,6 +1,6 @@
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-compact-scenes-v18";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-clip-pack-prompts-v19";
 import {
   History,
   clone,
@@ -26,9 +26,9 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-compact-scenes-v18";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-clip-pack-prompts-v19";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
-import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-compact-scenes-v18";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-clip-pack-prompts-v19";
 import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
@@ -390,6 +390,11 @@ export class TimelineEditor {
       onchange: (e) => this.guard(() => this.importFiles(e.target.files)),
     });
     file.hidden = true;
+    const pack = el("input", {
+      type: "file", accept: ".zip,application/zip",
+      onchange: (e) => this.guard(() => this.importPack(e.target.files?.[0])),
+    });
+    pack.hidden = true;
     this.root.append(
       el(
         "header",
@@ -398,6 +403,9 @@ export class TimelineEditor {
         this.title,
         button("Import media", () => file.click()),
         file,
+        button("Import clip pack", () => { pack.value=""; pack.click(); },
+          "Import a ZIP with pre-cut video, JSON prompts and original soundtrack; replaces the timeline as one Undo-able edit"),
+        pack,
         button("Save", () => this.guard(() => this.save())),
         button("Reload", () => this.guard(() => this.reload())),
         button("Close", () => this.close()),
@@ -828,6 +836,10 @@ export class TimelineEditor {
   }
   async importFiles(files) {
     for (const file of files) {
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        await this.importPack(file);
+        continue;
+      }
       const asset = await this.resolveOriginal(file);
       this.addImportedAsset(asset);
       this.message(
@@ -836,6 +848,31 @@ export class TimelineEditor {
           : "Ready · identical asset already registered in the managed store",
       );
     }
+  }
+  async importPack(file) {
+    if (!file) return;
+    const version = this.editVersion;
+    this.message("Importing clip pack · registering pictures, prompts and soundtrack…");
+    const scene = await request(this.api, "/import-pack", {
+      method: "POST", body: file, signal: this.abort.signal,
+      headers: {"Content-Type":"application/zip"},
+    });
+    if (this.abort.signal.aborted) return;
+    if (version !== this.editVersion)
+      throw new Error("The timeline changed during import. Import the pack again to apply it.");
+    this.stopPlayback();
+    this.edit((p) => {
+      const keep = Object.fromEntries(["project_id","revision","width","height"]
+        .filter(key=>key in p).map(key=>[key,p[key]]));
+      for (const key of Object.keys(p)) delete p[key];
+      Object.assign(p, scene, keep);
+      this.selected=[];
+      this.playhead=0;
+      this.chunkPage=0;
+      this.sceneDraft=null;
+    });
+    this.fitSelectedRange();
+    this.message("Clip pack imported · global + chunk prompts · original soundtrack drives H3 and final audio · Undo available");
   }
   addImportedAsset(a) {
     this.edit((p) => {

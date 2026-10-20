@@ -923,6 +923,9 @@ class H3ContinuumTimelineSampler:
             preserve_final_frame=last_frame is not None,
             terminal_merged=False,
         )
+        from .runtime import limit_assembly_to_authored_window
+
+        limit_assembly_to_authored_window(assembly, job)
         videos = [{"samples": e["video"]} for e in decode]
         audios = [{"samples": e["audio"]} for e in decode]
         if emit_refine_state:

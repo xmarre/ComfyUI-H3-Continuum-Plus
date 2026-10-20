@@ -297,9 +297,9 @@ def test_external_sequence_prompt_preserves_explicit_chunk_prompts_only():
         "script": json.dumps(["external one", "external two", "external three"]),
     }
     merged = with_external_prompt_source(p, source)
-    assert compile_window(merged, 0)["prompt"] == "external one"
-    assert compile_window(merged, 1)["prompt"] == "precise second chunk"
-    assert compile_window(merged, 2)["prompt"] == "external three"
+    assert compile_window(merged, 0)["prompt"] == "<Picture 1> sees @Bob\nexternal one"
+    assert compile_window(merged, 1)["prompt"] == "<Picture 1> sees @Bob\nprecise second chunk"
+    assert compile_window(merged, 2)["prompt"] == "@Alice sees <Picture 1>\nexternal three"
     assert p["prompts"]["script"] == "inherited project script"
     assert len(p["tracks"][-1]["clips"]) == 2
 
@@ -447,3 +447,39 @@ def test_embedded_audio_padding_validated_independently_of_video_padding():
     clip["audio_padding"]="invalid"
     with pytest.raises(ValueError, match="soundtrack end policy"):
         validate(p)
+
+
+def test_global_and_script_preamble_survive_chunk_override_and_external_source():
+    p = blank_project()
+    p['prompts']['global'] = 'Studio identity'
+    p['tracks'] = [{'id':'prompt','role':'prompt','clips':[
+        {'id':'second','start':168,'end':336,'text':'Edited action',
+         'override':True,'chunk_prompt':True,'audio_role':'neither'}]}]
+    p = validate(p)
+    external = {'global':'stale copy', 'mode':'Timeline',
+                'script':'Shared script identity\n[0-7s]\nFirst action\n[7-14s]\nOld action\n[14-21s]\nLast action'}
+    merged = with_external_prompt_source(p, external)
+    windows = [compile_window(validate(merged), i) for i in range(3)]
+    assert [w['prompt'] for w in windows] == [
+        'Studio identity\nShared script identity\nFirst action',
+        'Studio identity\nShared script identity\nEdited action',
+        'Studio identity\nShared script identity\nLast action']
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import stale_take
+    record = {'id':'c'*32,'indices':[1],'input_hashes':[windows[1]['generation_hash']],
+              'prompt_override':merged['prompts']}
+    assert not stale_take(p,record,[record])
+    p['prompts']['global'] = 'New identity'
+    assert stale_take(p,record,[record])
+
+
+def test_script_preamble_survives_partial_chunk_override():
+    p = blank_project()
+    p['prompts'] = {'global':'Identity','mode':'Timeline',
+                    'script':'Shared setting\n[0-7s]\nOriginal action'}
+    p['tracks'] = [{'id':'p','role':'prompt','clips':[
+        {'id':'c','start':42,'end':84,'text':'Edited action','override':True}]}]
+    w = compile_window(validate(p),0)
+    assert [s['text'] for s in w['segments']] == [
+        'Identity\nShared setting\nOriginal action',
+        'Identity\nShared setting\nEdited action',
+        'Identity\nShared setting\nOriginal action']

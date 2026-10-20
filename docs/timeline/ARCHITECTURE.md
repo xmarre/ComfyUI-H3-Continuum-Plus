@@ -277,3 +277,13 @@ best-effort media cleanup. It never invokes the potentially costly sampler
 refresh or HTMLMediaElement.load synchronously before detachment. Native
 Electron close uses main-process BrowserWindow.destroy followed by app.exit,
 so renderer beforeunload handlers cannot indefinitely veto the Windows X.
+
+## Clip-pack transport and shared prompts
+
+`timeline/bundle.py` reads one `global_prefix`/`segments` manifest from an explicitly uploaded ZIP and streams only referenced members through the existing content-addressed AssetStore. Archive names are lookup keys, never extraction destinations. The importer builds a candidate project without mutating the active one; the editor applies it as one history edit only if its edit version has not changed during registration. Cancellation waits for the worker before deleting its temporary archive. Already registered immutable assets remain reusable after a failed import.
+
+Each picture clip starts at its video stream's PTS origin and occupies its manifest interval rounded by absolute endpoint to the 24 fps grid. A standalone soundtrack occupies one continuous guide/final lane, with picture-embedded audio disabled. Without that file, embedded picture audio supplies the existing routes. Recreate mode derives video guidance from retained pictures without duplicate guide tracks.
+
+Connected prompt sources replace the project script while preserving the live project global field. `compile_window` retains both that field and a valid Timeline script's shared preamble through timed and chunk overrides. The same transformation recomputes stale-take hashes, so changing the live global cannot reuse an earlier source override's stale copy.
+
+A partial final source window adds `timeline_requested_frames` to the assembly plan and sets `target_frames` to that integer. Contract validation requires it to end inside the final logical chunk; plans without this optional field retain the original uniform-duration invariant. Native chunk/decode-group topology and natural retained lengths are unchanged. Exact assembly uses the authored target, and preserved source PCM is prefix-cropped/padded without terminal-anchor audio splicing.

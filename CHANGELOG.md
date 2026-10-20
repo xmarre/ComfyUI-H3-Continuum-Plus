@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Import pre-cut clip packs with JSON global/chunk prompts, exact source PTS mapping and a continuous original soundtrack routed to H3 driving conditioning and final assembly.
+- Expose a global prompt above chunk cards; retain it and Timeline script preambles through connected prompt sources and authored chunk overrides.
+- Respect a shorter final source window in exact assembly and preserve source PCM without final-frame anchor splicing. Connect sampler Driving Audio to the assembler in Timeline examples. Advance desktop/frontend/backend compatibility to v19.
+
 - Display compact per-chunk Image Conveyor references with readable, non-wrapping identifiers, bounded thumbnails, tooltip/full-size provenance, and unchanged reference-image checkboxes.
 - Show a numbered, seekable virtual H3 chunk strip over the full uncut original movie. Chunk boundaries remain logical input windows rather than destructive source cuts.
 - Clarify original-video/audio versus derived H3 guidance in per-chunk routing: the linked guide reuses one original asset and has no extra audio track. Bump frontend/backend/native handshake to v18.

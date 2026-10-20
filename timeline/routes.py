@@ -279,6 +279,28 @@ def register_routes():
             asset["kind"] = "image"
         return web.json_response(asset)
 
+    @endpoint("post", "/import-pack")
+    async def ingest_pack(request):
+        """Explicit ZIP upload; ordinary movie imports retain native linking."""
+        from .bundle import MAX_ARCHIVE_BYTES, import_bundle
+
+        store = project_store()
+        temporary = store.assets.upload_path()
+        size = 0
+        try:
+            with temporary.open("xb") as file:
+                async for chunk in request.content.iter_chunked(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_ARCHIVE_BYTES:
+                        raise ValueError("Clip pack exceeds the 16 GiB upload limit")
+                    file.write(chunk)
+            scene = await _media_cpu_cancellable(
+                request, import_bundle, temporary, store.assets, {},
+            )
+            return web.json_response(scene)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     @endpoint("get", "/media/{asset_id}")
     async def media(request):
         file = await asyncio.to_thread(

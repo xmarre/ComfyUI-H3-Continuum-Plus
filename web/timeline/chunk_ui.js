@@ -215,7 +215,7 @@ export function samplerInputDescription(editor) {
   const externalPrompt = linked("sequence_prompt") ||
     (typeof widget("sequence_prompt") === "string" &&
       !!widget("sequence_prompt").trim());
-  if (externalPrompt) overrides.push("sequence_prompt supplies inherited prompts; authored chunk prompts override it inside their own spans");
+  if (externalPrompt) overrides.push("sequence_prompt supplies inherited prompts; Studio global prompt and script preamble apply to every chunk, including chunk overrides");
   if (linked("driving_audio")) overrides.push("driving_audio overrides timeline guide audio");
   if (linked("reference_video_1")) overrides.push("persistent video reference applies where no scoped guide");
   if (linked("width")) overrides.push("width comes from a connected node");
@@ -485,6 +485,18 @@ export function renderChunkWorkspace(editor) {
   editor.updateScenePreview=update;
   heading.append(controls,summary);
   host.append(heading);
+  const globalPrompt=el("textarea",{
+    class:"h3ts-global-prompt",rows:"3","aria-label":"Global prompt for every chunk",
+    placeholder:"Identity, style and instructions shared by every chunk",
+  });
+  globalPrompt.value=p.prompts?.global || "";
+  globalPrompt.addEventListener("change",()=>editor.edit(project=>{
+    project.prompts ||= {mode:"Fixed",script:""};
+    project.prompts.global=globalPrompt.value;
+  }));
+  host.append(el("label",{class:"h3ts-global-prompt-field"},
+    el("strong",{text:"Global prompt · prepended to every chunk"}),globalPrompt,
+    el("span",{text:"Applies with connected sequence_prompt and per-chunk overrides. Text before the first timed section is also shared."})));
   const viewTools=el("details",{class:"h3ts-scene-view-tools"});
   viewTools.append(el("summary",{text:"View, media refresh and layout options"}));
   const tools=el("div",{class:"h3ts-scene-view-tools-body"});

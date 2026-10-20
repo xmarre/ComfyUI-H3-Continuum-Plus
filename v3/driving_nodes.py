@@ -534,13 +534,19 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
             report = str(report) + "\n" + str(duration_note)
             if selected is None:
                 return images, audio, report
-            selected = audio
+            # Final-frame anchoring may splice generated PCM together with
+            # the terminal video frame. A preserved soundtrack stays on its
+            # original clock: crop/pad its prefix to the chosen AV duration.
+            _, selected, _ = enforce_total_frames(
+                images, selected, target_frames=int(images.shape[0]),
+                preserve_final_frame=False,
+            )
         elif bool(exact) and selected is not None:
             _, selected, _ = enforce_total_frames(
                 images,
                 selected,
                 target_frames=int(plan_value["target_frames"]),
-                preserve_final_frame=bool(plan_value.get("preserve_final_frame", False)),
+                preserve_final_frame=False,
             )
         source_name = "assembly plan" if preserved_audio is not None else "direct input"
         samples = int(selected["waveform"].shape[-1])

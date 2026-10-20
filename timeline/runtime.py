@@ -10,6 +10,15 @@ import torch
 from .media import mix_audio
 
 
+def limit_assembly_to_authored_window(assembly, job):
+    """Keep native decode topology and record a short final picture's target."""
+    requested = job["range"][1] - job["range"][0]
+    if requested < assembly["target_frames"]:
+        assembly["timeline_requested_frames"] = requested
+        assembly["target_frames"] = requested
+    return assembly
+
+
 def merge_references(persistent, scoped):
     """Persistent socket pictures precede window-local pictures and aliases."""
     if persistent is None:

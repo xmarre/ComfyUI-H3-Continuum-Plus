@@ -2,7 +2,7 @@
   "id": "4cbf182b-8c06-4f3b-949e-319163fe3cad",
   "revision": 0,
   "last_node_id": 12,
-  "last_link_id": 18,
+  "last_link_id": 19,
   "nodes": [
     {
       "id": 1,
@@ -290,7 +290,7 @@
         {
           "name": "driving_audio",
           "type": "AUDIO",
-          "links": []
+          "links": [19]
         }
       ],
       "properties": {
@@ -438,7 +438,7 @@
         {
           "name": "driving_audio",
           "type": "AUDIO",
-          "link": null
+          "link": 19
         }
       ],
       "outputs": [
@@ -530,7 +530,8 @@
     [15, 8, 2, 11, 2, "H3_CONTINUUM_ASSEMBLY_PLAN"],
     [16, 11, 0, 12, 0, "IMAGE"],
     [17, 11, 1, 12, 1, "AUDIO"],
-    [18, 8, 3, 12, 2, "H3_CONTINUUM_TIMELINE_TAKE"]
+    [18, 8, 3, 12, 2, "H3_CONTINUUM_TIMELINE_TAKE"],
+    [19, 8, 6, 11, 3, "AUDIO"]
   ],
   "groups": [],
   "config": {},

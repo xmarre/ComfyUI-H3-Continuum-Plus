@@ -277,6 +277,9 @@ def with_external_prompt_source(project, prompts):
     """
     p = copy.deepcopy(project)
     p["prompts"] = copy.deepcopy(prompts)
+    # Connected text replaces the script, while Studio's global field remains
+    # live. Reapply it here for both sampling and stale-take verification.
+    p["prompts"]["global"] = project.get("prompts", {}).get("global", "")
     p["tracks"] = [
         {
             **t,
@@ -379,6 +382,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
     }
     prompts = p["prompts"]
     global_text = str(prompts.get("global", ""))
+    shared_text = global_text
     base = global_text
     # Timed items are (start_frame, end_frame, body, override) in project frames.
     timed = []
@@ -431,6 +435,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
                     and rational(s["start"]) < Fraction(section_end, 24)
                     and Fraction(section_start, 24) < rational(s["end"])
                 ]
+                shared_text += "\n" + timeline_preamble(script)
                 base += "\n" + timeline_preamble(script)
                 if exact:
                     from ..v2.physical_prompts import inspect_strict_inner_ranges
@@ -490,7 +495,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         segments = []
         for a, b in zip(cuts, cuts[1:]):
             active = [t for t in timed if t[0] < b and a < t[1]]
-            head = global_text if any(t[3] for t in active) else base
+            head = shared_text if any(t[3] for t in active) else base
             body = resolve("\n".join([head, *(t[2] for t in active)]))
             if segments and (not body or body == segments[-1]["text"]):
                 segments[-1]["range"][1] = b
