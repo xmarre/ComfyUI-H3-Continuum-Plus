@@ -24,6 +24,11 @@ from .model import (
 from .nodes import project_store, stale_take, take_path, takes
 
 _PREFIX = "/h3_continuum/timeline"
+
+
+class MediaRequestCancelled(InterruptedError):
+    """An obsolete UI request whose socket disconnected during decoding."""
+
 _tasks = {}
 _media_slots = asyncio.Semaphore(2)
 # Low-latency playback must not queue behind thumbnail/waveform jobs.
@@ -87,7 +92,7 @@ async def _media_cpu_cancellable(request, fn, *args, slots=None, **kwargs):
 
     def cancel():
         if stopped.is_set():
-            raise InterruptedError("Media request cancelled")
+            raise MediaRequestCancelled("Media request cancelled")
 
     async with (slots if slots is not None else _media_slots):
         task = asyncio.create_task(
@@ -131,6 +136,10 @@ def register_routes():
             async def safe(request):
                 try:
                     return await fn(request)
+                except MediaRequestCancelled:
+                    # Expected during rapid scrolling, seeking or closing.
+                    # Do not log an aiohttp server error for abandoned work.
+                    return web.Response(status=499)
                 except (ValueError, KeyError, IndexError, FileNotFoundError) as exc:
                     return web.json_response({"error": str(exc)}, status=400)
 
@@ -616,7 +625,7 @@ def register_routes():
 
             def cancel():
                 if stop_requested.is_set():
-                    raise InterruptedError("Playback preview cancelled")
+                    raise MediaRequestCancelled("Playback preview cancelled")
 
             async with _preview_slots:
                 # Another request can have published the same segment while

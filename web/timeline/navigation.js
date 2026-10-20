@@ -21,6 +21,19 @@ export function fitRangeZoom(start,end,viewportWidth) {
 
 export function timelineWheelPan(deltaX,deltaY,{ctrlKey=false,metaKey=false}={}) {
   if(ctrlKey||metaKey)return 0;
-  if(Number.isFinite(deltaX) && deltaX!==0)return deltaX;
-  return Number.isFinite(deltaY)?deltaY:0;
+  return Number.isFinite(deltaX)?deltaX:0;
+}
+
+/** Zoom the complete source clock around the mouse's exact point. */
+export function timelineWheelZoom(zoom,scroll,pointerX,deltaY,viewport,duration,
+                                  {ctrlKey=false,metaKey=false,shiftKey=false}={}) {
+  if(ctrlKey||metaKey||shiftKey||!Number.isFinite(deltaY)||deltaY===0)
+    return null;
+  const factor=Math.exp(-Math.max(-500,Math.min(500,deltaY))*.002);
+  const next=Math.max(.1,Math.min(1000,zoom*factor));
+  const anchor=(scroll+pointerX-180)*24/zoom;
+  const width=movieTimelineWidth(duration,next,viewport);
+  return {zoom:next,scrollLeft:Math.max(0,
+    Math.min(Math.max(0,width-viewport),180+anchor*next/24-pointerX)),
+    anchorFrame:anchor};
 }

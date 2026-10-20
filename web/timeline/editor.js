@@ -28,7 +28,7 @@ import {
 } from "./core.js";
 import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-scene-recovery-v16";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
-import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan } from "./navigation.js";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js";
 import { selectedChunkPage } from "./chunk_workspace.js";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
@@ -558,6 +558,10 @@ export class TimelineEditor {
           "Zoom to the selected H3 render window"),
         button("Fit movie", () => this.fitFullMovie(),
           "Zoom out to see the entire original movie"),
+        button("− Zoom", () => this.zoomAround(this.zoom/1.5,
+          this.scroller.clientWidth/2)),
+        button("+ Zoom", () => this.zoomAround(this.zoom*1.5,
+          this.scroller.clientWidth/2)),
         button("Queue scene", () => this.guard(() => this.queue())),
         button("Cancel sampling", () => this.guard(() => this.cancelSampling())),
       ),
@@ -575,8 +579,8 @@ export class TimelineEditor {
         remove(p,this.selected,this.ripple.checked))),
       el("label",{},this.ripple,"Ripple"),
       el("label",{},this.snapping,"Snap"),
-      button("− Zoom",()=>this.setZoom(this.zoom/1.5)),
-      button("+ Zoom",()=>this.setZoom(this.zoom*1.5)),
+      button("− Zoom (advanced)",()=>this.zoomAround(this.zoom/1.5,this.scroller.clientWidth/2)),
+      button("+ Zoom (advanced)",()=>this.zoomAround(this.zoom*1.5,this.scroller.clientWidth/2)),
       button("Marker",()=>this.edit(p=>p.markers.push({
         id:uid(),frame:this.playhead,name:"Marker"}))),
       el("span",{text:"Manual render [in,out)"}),
@@ -603,17 +607,29 @@ export class TimelineEditor {
       this.scheduleDraw();
       this.persistView();
     });
-    // A video timeline navigates horizontally with the ordinary wheel.
-    // Preserve native horizontal trackpad movement and explicit vertical
-    // scrolling when Shift is held. Never capture browser zoom shortcuts.
+    // Standard wheel magnifies time around the pointer over ruler or tracks.
+    // Trackpad horizontal scrolling pans, Shift+wheel scrolls track rows,
+    // and browser Ctrl/Meta zoom is never intercepted.
     this.scroller.addEventListener("wheel",(event)=>{
-      // Shift+vertical-wheel explicitly scrolls stacked tracks when present.
-      if(event.shiftKey && !event.deltaX &&
-          this.scroller.scrollHeight>this.scroller.clientHeight)return;
+      if(event.ctrlKey||event.metaKey||event.shiftKey)return;
       const pan=timelineWheelPan(event.deltaX,event.deltaY,event);
-      if(!pan || this.scroller.scrollWidth<=this.scroller.clientWidth)return;
+      if(pan) {
+        if(this.scroller.scrollWidth<=this.scroller.clientWidth)return;
+        event.preventDefault();
+        this.scroller.scrollLeft+=pan;
+        return;
+      }
+      const rect=this.scroller.getBoundingClientRect();
+      const next=timelineWheelZoom(this.zoom,this.scroller.scrollLeft,
+        event.clientX-rect.left,event.deltaY,
+        this.scroller.clientWidth,this.p.duration_frames,event);
+      if(!next)return;
       event.preventDefault();
-      this.scroller.scrollLeft+=pan;
+      this.zoom=next.zoom;
+      this.drawTimeline();
+      this.scroller.scrollLeft=next.scrollLeft;
+      this.scheduleDraw();
+      this.persistView();
     },{passive:false});
     this.root.addEventListener("dragover", (e) => e.preventDefault());
     this.root.addEventListener("drop", (e) => {
@@ -1814,11 +1830,18 @@ export class TimelineEditor {
         this.p.chunk_frames)+1}`;
     this.updateScenePreview?.();
   }
-  setZoom(z) {
-    this.zoom = Math.max(0.1, Math.min(1000, z));
+  zoomAround(z,pointerX) {
+    const width=this.scroller.clientWidth,zoom=this.zoom;
+    const anchor=(this.scroller.scrollLeft+pointerX-180)*24/zoom;
+    this.zoom=Math.max(.1,Math.min(1000,z));
     this.drawTimeline();
+    const span=movieTimelineWidth(this.p.duration_frames,this.zoom,width);
+    this.scroller.scrollLeft=Math.max(0,Math.min(Math.max(0,span-width),
+      180+anchor*this.zoom/24-pointerX));
+    this.scheduleDraw();
     this.persistView();
   }
+  setZoom(z) { this.zoomAround(z,this.scroller.clientWidth/2); }
   copy() {
     this.clipboard = selectedClips(this.p, this.selected).map(([t, c]) => [
       t.id,
