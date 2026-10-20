@@ -192,23 +192,31 @@ export class TimelineEditor {
     }
   }
   edit(fn) {
+    this.promptEditKey=null;
     this.stopPlayback();
     this.editVersion++;
     this.history.commit(fn);
     this.persistWidget();
     this.render();
   }
-  editPrompt(fn) {
+  editPrompt(fn, key = null) {
     // Persist every input event without replacing the focused textarea.
     // Graph serialization and keyboard queueing must see the current text.
     this.editVersion++;
-    this.history.commit(fn);
+    if(key && this.promptEditKey===key) {
+      const next=clone(this.p);
+      fn(next);
+      this.history.value=next;
+      this.history.redoStack=[];
+    } else this.history.commit(fn);
+    this.promptEditKey=key;
     this.persistWidget();
     this.compiledWindows=null;
     updateChunkCompiledLines(this);
     this.scheduleChunkCompile();
   }
   editChunkReferences(fn) {
+    this.promptEditKey=null;
     // The reference checkbox edits only input routing. Do not stop an active
     // source preview, rebuild the movie track DOM, or restart decodes.
     this.editVersion++;
@@ -922,7 +930,10 @@ export class TimelineEditor {
         "aria-label": label,
       });
       if (type === "textarea") i.value = value;
-      if(type === "textarea") i.oninput = () => this.editPrompt(fn.bind(null, i.value));
+      if(type === "textarea") {
+        i.oninput = () => this.editPrompt(fn.bind(null, i.value), "inspector:"+label);
+        i.onblur = () => { this.promptEditKey=null; };
+      }
       else i.onchange = () => this.edit(fn.bind(null, i.value));
       this.inspector.append(el("label", {}, label, i));
     };
@@ -1982,6 +1993,7 @@ export class TimelineEditor {
     this.edit((p) => (this.selected = paste(p, this.clipboard, end)));
   }
   undo() {
+    this.promptEditKey=null;
     this.stopPlayback();
     this.editVersion++;
     this.history.undo();
@@ -1989,6 +2001,7 @@ export class TimelineEditor {
     this.render();
   }
   redo() {
+    this.promptEditKey=null;
     this.stopPlayback();
     this.editVersion++;
     this.history.redo();

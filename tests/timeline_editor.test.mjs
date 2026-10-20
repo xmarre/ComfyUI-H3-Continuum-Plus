@@ -2170,3 +2170,27 @@ test("prompt input persists immediately without rebuilding the focused textareas
   assert.equal(editor.editVersion,1);
   assert.equal(inspections,1);
 });
+
+test("150 prompt keystrokes coalesce and preserve structural Undo and redo",()=>{
+  const before={prompts:{global:"before"},name:"original"};
+  const history=new History(before);
+  history.commit(p=>{p.name="imported";p.prompts.global="imported identity";});
+  const editor={history,editVersion:0,chunkBoard:null,
+    get p(){return history.value;},persistWidget(){},scheduleChunkCompile(){},
+    stopPlayback(){},render(){}};
+  for(let i=0;i<150;i++) TimelineEditor.prototype.editPrompt.call(editor,
+    p=>p.prompts.global="x".repeat(i+1),"global");
+  assert.equal(history.undoStack.length,2);
+  TimelineEditor.prototype.undo.call(editor);
+  assert.equal(editor.p.prompts.global,"imported identity");
+  assert.equal(editor.promptEditKey,null);
+  TimelineEditor.prototype.undo.call(editor);
+  assert.deepEqual(editor.p,before);
+  TimelineEditor.prototype.redo.call(editor);
+  TimelineEditor.prototype.redo.call(editor);
+  assert.equal(editor.p.prompts.global,"x".repeat(150));
+  // A failed grouped edit must not mutate current state or Undo entries.
+  assert.throws(()=>TimelineEditor.prototype.editPrompt.call(editor,
+    p=>{p.name="broken";throw Error("failed");},"global"),/failed/);
+  assert.equal(editor.p.name,"imported");
+});

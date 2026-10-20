@@ -496,7 +496,8 @@ export function renderChunkWorkspace(editor) {
   globalPrompt.addEventListener("input",()=>editor.editPrompt(project=>{
     project.prompts ||= {mode:"Fixed",script:""};
     project.prompts.global=globalPrompt.value;
-  }));
+  },"global"));
+  globalPrompt.addEventListener("blur",()=>{editor.promptEditKey=null;});
   host.append(el("label",{class:"h3ts-global-prompt-field"},
     el("strong",{text:"Global prompt · prepended to every chunk"}),globalPrompt,
     el("span",{text:"Applies with connected sequence_prompt and per-chunk overrides. Text before the first timed section is also shared."})));
@@ -603,7 +604,8 @@ export function renderChunkWorkspace(editor) {
     });
     prompt.value=ownPrompt?.clip.text || "";
     prompt.addEventListener("input",()=>editor.editPrompt((next)=>
-      setChunkPrompt(next,chunk.index,prompt.value)));
+      setChunkPrompt(next,chunk.index,prompt.value),"chunk:"+chunk.index));
+    prompt.addEventListener("blur",()=>{editor.promptEditKey=null;});
     card.append(control("1 · Per-chunk H3 prompt",prompt));
     const preview=el("div",{class:"h3ts-chunk-compiled",
       "data-compiled-chunk":chunk.index});
