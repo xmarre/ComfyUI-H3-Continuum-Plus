@@ -2184,8 +2184,8 @@ test("single-job queues preserve cache identity; rerolls and multi-job batches r
   const submissions=[];
   let jobCount=1;
   const editor={
-    p:{project_id:"fixed-project",chunk_frames:168,selection:[0,168],duration_frames:504},
-    node:studio,queuedIds:new Set(),async save(){},persistView(){},message(){},
+    p:{project_id:"fixed-project",chunk_frames:168,selection:[0,168],duration_frames:504,revision:2},
+    node:studio,queuedIds:new Set(),async save(){this.p.revision++;},persistView(){},message(){},
     app:{
       graph:{_nodes:[studio,sampler],links:{11:{origin_id:1}},setDirtyCanvas(){}},
       async graphToPrompt(){return {
@@ -2211,6 +2211,8 @@ test("single-job queues preserve cache identity; rerolls and multi-job batches r
   const second=JSON.parse(submissions[1].output["1"].inputs.project_json);
   assert.deepEqual(first,second);
   assert.equal(Object.hasOwn(first,"queued_batch_id"),false);
+  assert.equal(Object.hasOwn(first,"revision"),false);
+  assert.equal(editor.p.revision,4);
   assert.equal(submissions[0].output["2"].inputs.base_seed,123);
 
   await TimelineEditor.prototype.queue.call(editor,true);
