@@ -2082,6 +2082,7 @@ test("prefetch still warms standby player after playback consumes in-flight requ
   const player={playWanted:true,playEpoch:1,closed:false,
     abort:new AbortController(),p:{duration_frames:500},
     video:old,preloadVideo:next,image:{hidden:false},message(){},
+    prefetchSegment(){},stopPlayback(){throw Error("Unexpected playback failure");},
     fetchSegment(){return new Promise(resolve=>resolveFetch=resolve);}};
   TimelineEditor.prototype.prefetchSegment.call(player,48);
   const playing=TimelineEditor.prototype.playSegment.call(player,48,1);
