@@ -1,5 +1,6 @@
 // Chunk-first authoring operations. All spans use the same 24 fps project
 // frame clock as timeline/model.py and the connected Continuum sampler.
+import { migrateChunkPrompts, setImportedRegion } from "./import_regions.js";
 import { makeTrack, placeAsset, sourceAt, uid, ratio, videoSoundtrackRole } from "./core.js";
 
 export function chunkWindow(project, index) {
@@ -130,23 +131,8 @@ export function setChunkClipEnabled(project,index,trackId,clipId,enabled) {
 
 export function setChunkPrompt(project, index, text) {
   const [start, end] = chunkWindow(project, index);
-  const track = lane(project, "prompt", "Chunk prompts");
-  let clip = track.clips.find((c) =>
-    c.chunk_prompt === true && c.start === start && c.end === end);
-  if (!String(text).trim()) {
-    if (clip) track.clips = track.clips.filter((c) => c !== clip);
-    return null;
-  }
-  if (!clip) {
-    clip = {
-      id: uid(), start, end, chunk_prompt: true, chunk_index: index, source_in: "0",
-      speed: "1", padding: "error", audio_role: "neither",
-      override: true, text: "",
-    };
-    track.clips.push(clip);
-  }
-  clip.text = String(text);
-  return clip;
+  migrateChunkPrompts(project);
+  return setImportedRegion(project,start,end,String(text).trim()?String(text):null,{chunk_index:index});
 }
 export function addChunkMedia(project, index, role, assetId, audioRole = "guide") {
   if (!["image_reference", "video_guide", "audio"].includes(role))

@@ -506,6 +506,7 @@ class H3ContinuumTimelineSampler:
             chunks=len(job["windows"]),
             chunk_seconds=p["chunk_frames"] / 24,
         )
+        connected_prompt_warning = ""
         studio_prompt_owned = p.get("prompt_source", {}).get("mode") == "studio"
         if studio_prompt_owned:
             sequence_prompt = None
@@ -516,6 +517,8 @@ class H3ContinuumTimelineSampler:
 
             # The timeline editor must not repeat an entire [0-7s] script
             # merely because an older workflow selected List explicitly.
+            from .prompt_import import connected_import_warning
+            connected_prompt_warning = connected_import_warning(sequence_prompt)
             detected_mode = detect_prompt_mode(sequence_prompt)
             effective_mode = (
                 "Timeline"
@@ -946,6 +949,8 @@ class H3ContinuumTimelineSampler:
         )
         if reasons:
             report += "\nSession auto reuse disabled: " + "; ".join(reasons)
+        if connected_prompt_warning:
+            report += "\nTimeline warning: " + connected_prompt_warning
         if studio_prompt_owned:
             report += "\nPrompt source: imported Studio fields; connected sequence_prompt is ignored until explicitly re-linked."
         if anchor_note:

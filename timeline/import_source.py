@@ -93,6 +93,18 @@ class ImportSources:
             kind='media'
         else:
             raise ValueError('Choose a ZIP, JSON, TXT, Markdown, video, image or audio file')
+        grouped={}
+        for document in documents:
+            file=PurePosixPath(document['name'])
+            match=re.fullmatch(r'(?:chunk|clip)[ _-]*(\d+)\.(?:txt|md)',file.name,re.I)
+            if match:
+                grouped.setdefault(file.parent,[]).append({'chunk':int(match[1]),'text':document['text'].strip()})
+        for directory,chunks in grouped.items():
+            global_document=next((d for d in documents if PurePosixPath(d['name']).parent==directory and re.fullmatch(r'global(?:[_ -](?:prompt|prefix))?\.(?:txt|md)',PurePosixPath(d['name']).name,re.I)),None)
+            combined={'chunks':sorted(chunks,key=lambda c:c['chunk'])}
+            if global_document:
+                combined['global']=global_document['text'].strip()
+            documents.append({'name':str(directory/'(combined chunk text files).json'),'text':json.dumps(combined,ensure_ascii=False)})
         # Prefer the full manifest over its per-chunk text copies and audit notes.
         def rank(d):
             try:
@@ -102,7 +114,8 @@ class ImportSources:
             return (0 if isinstance(v,dict) and 'segments' in v else
                     1 if isinstance(v,dict) and 'chunks' in v else
                     2 if isinstance(v,list) else
-                    3 if any(re.match(r'^\s*(?:\[|#{1,6}\s*Chunk|Chunk\s+\d)',l,re.I) for l in d['text'].splitlines()) else 4,
+                    3 if any(re.match(r'^\s*(?:\[|#{1,6}\s*Chunk|Chunk\s+\d)',l,re.I) for l in d['text'].splitlines()) else
+                    4 if PurePosixPath(d['name']).name.lower().startswith('global') else 5,
                     natural(d['name']))
         documents.sort(key=rank)
         entries.sort(key=lambda e:natural(e['name']))
@@ -126,7 +139,7 @@ class ImportSources:
                 'documents':[{'name':d['name']} for d in source['documents']],
                 'media':source['media']}
 
-    def preview(self,current,*,token=None,text=None,document_index=0,selected=None,target='merge',provenance=None,soundtrack_mode='replace',cancel=lambda:None):
+    def preview(self,current,*,token=None,text=None,document_index=0,selected=None,target='merge',provenance=None,soundtrack_mode='replace',time_origin='auto',cancel=lambda:None):
         source=None
         path=None
         prompt_error=None
@@ -238,7 +251,7 @@ class ImportSources:
             finally:
                 if archive:
                     archive.close()
-        candidate,mapping=apply_components(current,doc,media,selected,target,provenance,soundtrack_mode)
+        candidate,mapping=apply_components(current,doc,media,selected,target,provenance,soundtrack_mode,time_origin)
         notes+=mapping['notes']
         if selected['soundtrack'] and not any(m['asset'].get('audio') for m in media):
             notes.append('No selected file has an audio stream; existing soundtrack is retained.')

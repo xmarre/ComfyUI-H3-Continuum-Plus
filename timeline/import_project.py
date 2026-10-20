@@ -8,34 +8,29 @@ import uuid
 from .model import blank_project, rational, validate
 
 
-def replace_regions(existing, incoming):
-    """Overwrite covered spans only, retaining every uncovered prompt region."""
-    result=copy.deepcopy(existing)
-    for new in incoming:
-        retained=[]
-        for old in result:
-            if old['end']<=new['start'] or old['start']>=new['end']:
-                retained.append(old)
-                continue
-            if old['start']<new['start']:
-                retained.append({**old,'id':uuid.uuid4().hex,'end':new['start']})
-            if old['end']>new['end']:
-                retained.append({**old,'id':uuid.uuid4().hex,'start':new['end']})
-        result=retained+[copy.deepcopy(new)]
-    return sorted(result,key=lambda x:(x['start'],x['end']))
+from .prompt_regions import replace_regions, migrate_chunk_prompts
 
 
-def prompt_mapping(document,project):
+def prompt_mapping(document,project,time_origin="auto"):
     origin=project.get('chunk_origin_frame',0)
     size=project['chunk_frames']
     stop=project['selection'][1]
+    if time_origin not in {'auto','scene','movie'}:
+        raise ValueError('Choose scene-relative or movie-absolute prompt times')
+    timed=[(rational(e['start_seconds'])*24,rational(e['end_seconds'])*24) for e in document.get('entries',[]) if 'start_seconds' in e]
+    used=time_origin
+    if used=='auto':
+        absolute=timed and all(origin<=a<b<=stop for a,b in timed)
+        local=any(0<=a<b<=stop-origin for a,b in timed)
+        used='movie' if absolute and not local else 'scene'
+    offset=origin if used=='scene' else 0
     incoming=[]
     surplus=[]
-    notes=[]
+    notes=[f'Prompt times use {used}-'+('relative seconds from the scene start.' if used=='scene' else 'absolute seconds from movie frame zero.')]
     for i,entry in enumerate(document.get('entries',[])):
         if 'start_seconds' in entry:
-            raw_a=origin+rational(entry['start_seconds'])*24
-            raw_b=origin+rational(entry['end_seconds'])*24
+            raw_a=offset+rational(entry['start_seconds'])*24
+            raw_b=offset+rational(entry['end_seconds'])*24
             a,b=round(raw_a),round(raw_b)
             if raw_a!=a or raw_b!=b:
                 notes.append(f'Entry {i+1}: source seconds [{entry["start_seconds"]}, {entry["end_seconds"]}) map to 24-fps frames [{a}, {b}); rounding is at most half a frame.')
@@ -70,10 +65,10 @@ def prompt_mapping(document,project):
         rows.append({'chunk':index+1,'range':[start,end],'seconds':[str(Fraction(start,24)),str(Fraction(end,24))],'parts':parts,'uncovered':not parts})
     if len(document.get('entries',[]))!=len(rows):
         notes.append(f'{len(document.get("entries",[]))} imported entries map onto {len(rows)} current scene chunks; uncovered chunks retain their existing prompts.')
-    return {'regions':incoming,'rows':rows,'surplus':surplus,'uncovered':uncovered,'gaps':gaps,'notes':notes}
+    return {'regions':incoming,'rows':rows,'surplus':surplus,'uncovered':uncovered,'gaps':gaps,'notes':notes,'time_origin':used}
 
 
-def apply_components(current, document, media, selected, target='merge', provenance=None, soundtrack_mode='replace'):
+def apply_components(current, document, media, selected, target='merge', provenance=None, soundtrack_mode='replace',time_origin='auto'):
     """Return candidate plus mapping. Preview owns confirmation, caller owns Undo."""
     validate(current)
     if target not in {'merge','replace'}:
@@ -82,9 +77,10 @@ def apply_components(current, document, media, selected, target='merge', provena
         raise ValueError('Replace scene is available only when media is selected')
     if soundtrack_mode not in {'replace','add'}:
         raise ValueError('Choose replace or add soundtrack')
-    p=copy.deepcopy(current)
+    p=migrate_chunk_prompts(copy.deepcopy(current))
     videos=[m for m in media if m['component']=='video'] if selected.get('video') else []
     sounds=[m for m in media if m['component']=='soundtrack'] if selected.get('soundtrack') else []
+    current=p
     if target=='replace':
         p=blank_project()
         for key in ('project_id','revision','width','height'):
@@ -142,9 +138,27 @@ def apply_components(current, document, media, selected, target='merge', provena
     for m in videos+sounds:
         if not any(a['id']==m['asset']['id'] for a in p['assets']):
             p['assets'].append(copy.deepcopy(m['asset']))
-    mapping=prompt_mapping(document,p)
+    mapping=prompt_mapping(document,p,time_origin)
+    if target=="replace" and (p["chunk_frames"]!=current["chunk_frames"] or p.get("chunk_origin_frame",0)!=current.get("chunk_origin_frame",0)):
+        mapping["notes"].append(f'Replace scene uses origin 0 and {p["chunk_frames"]}-frame chunks; previous scene origin/grid were {current.get("chunk_origin_frame",0)}/{current["chunk_frames"]}.')
     if selected.get('global'):
         p.setdefault('prompts',{})['global']=document.get('global','')
+        # Replace the old script's shared portion as well as the visible field.
+        # Otherwise editing the imported identity can expose an older copy of
+        # that identity still stored as a Fixed script or Timeline preamble.
+        from ..v2.prompts import resolve_prompt_mode
+        from ..constants import PROMPT_MODE_FIXED, PROMPT_MODE_TIMELINE
+        from .prompt_import import _TIME, _CHUNK
+
+        script=p['prompts'].get('script','')
+        mode=resolve_prompt_mode(p['prompts'].get('mode','Fixed'),script)
+        if mode==PROMPT_MODE_FIXED:
+            p['prompts']['script']=''
+        elif mode==PROMPT_MODE_TIMELINE:
+            lines=script.splitlines()
+            first=next((i for i,line in enumerate(lines) if _TIME.fullmatch(line) or _CHUNK.fullmatch(line)),None)
+            if first is not None:
+                p['prompts']['script']='\n'.join(lines[first:])
     if selected.get('chunks'):
         p.setdefault('prompts',{})['regions']=replace_regions(p.get('prompts',{}).get('regions',[]),mapping['regions'])
     if selected.get('global') or selected.get('chunks'):

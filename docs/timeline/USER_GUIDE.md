@@ -467,35 +467,32 @@ video-guide role supplies video frames only; no second soundtrack is mixed.
 Compilation selects each video's and audio's exact scene-window source
 timestamps rather than feeding the entire movie to H3.
 
-## Import pre-cut video with prompts and soundtrack
+## Import prompts, pre-cut pictures and the original soundtrack
 
-Choose **Import clip pack** and select a ZIP containing one JSON manifest and its referenced video files. This explicitly uploads the pack to ComfyUI; ordinary movie imports continue to link the selected original through Timeline Desktop. The imported scene replaces the timeline, prompts, take selections and media placements in one Undo-able edit. The Studio node identity and output width/height remain unchanged. Model, sampler and Image Conveyor connections remain in the graph.
+Use **Import…** to read a full ZIP, a prompts-only ZIP, a media-only ZIP, a JSON file, a text/Markdown file, pasted text, a connected State Manager Text Box or a selected saved State Manager preset. Reading State Manager is read-only: it does not change its preset, graph wiring or source text. Connected Text Box reads show the stored text before any intervening wildcard/transformation node executes.
 
-The manifest uses this structure (filenames are relative to the JSON file inside the ZIP):
+Select **Global prompt**, **Chunk prompts**, **Video / pictures** and **Soundtrack** independently. Missing referenced files are reported and do not block available prompts. A full ZIP can be used for text only; unselected media is not registered. Archives may contain a manifest, lists, timed documents or `chunk_1.txt` / `clip_1.md` files and an optional `global_prompt.txt` in the same folder. Choose the desired document when the archive contains alternatives.
 
-```json
-{
-  "global_prefix": "Identity and style shared by every chunk.",
-  "audio_filename": "original_audio.m4a",
-  "segments": [
-    {"chunk": 1, "start_seconds": 0, "end_seconds": 7,
-     "duration_seconds": 7, "filename": "chunk_01.mp4", "prompt": "First action."},
-    {"chunk": 2, "start_seconds": 7, "end_seconds": 11.96,
-     "duration_seconds": 4.96, "filename": "chunk_02.mp4", "prompt": "Second action."}
-  ]
-}
+**Merge into current scene** is the default. Prompts map onto the current scene origin and chunk grid. Only covered prompt spans are overwritten; gaps and uncovered chunks retain their existing action text. Off-grid ranges become editable inner sections. Text-only merge preserves media assets, reference tracks and takes. Hand-typed and imported chunk actions share one editable region store; older chunk editor prompts migrate automatically. Previously accepted takes may become stale if their effective prompt changes.
+
+**Replace scene** is available when pictures or soundtrack are selected. The preview shows the replacement scene's origin, inferred chunk grid and duration. Media-only replacement preserves prompt content. The soundtrack control chooses replacement of current guide/final routes or an intentional addition to the mix.
+
+Prompt times can be **seconds from scene start** or **seconds from movie start**. The default uses scene times, automatically recognizing clearly absolute movie timestamps only when every timed entry fits the absolute scene and none fits its local span. The preview states the origin used. Ordinal chunk numbers always start at the current scene's first chunk. Fractional times are rounded to the nearest 24-fps frame with a visible note; they are never silently snapped to chunk boundaries.
+
+Supported examples (bodies can follow a header on the same line or subsequent lines):
+
+```text
+Shared identity and style for every chunk
+[00:00-00:07] First action
+[7s to 14s] Second action
 ```
 
-Intervals must be contiguous from zero, with a uniform 4–15 second chunk length and an optional shorter last picture. Their absolute endpoints are rounded onto the 24 fps output grid. Picture streams retain their actual source PTS origins; the importer does not change playback speed. `duration_seconds` is optional and must agree with the interval when present. `chunk` is a descriptive label; array order and timestamps define the actual schedule. An empty prompt is allowed. Review images, text notes and other unreferenced files are ignored.
+Other headers include `[0-7s]`, `[0.0-7.0 sec]`, `[0:07.5 to 0:14]`, `0-7s:`, `[Chunk 1]`, `Chunk 1:`, `[Clip 1]` and Markdown `## Chunk 1`. JSON accepts a string list, `{ "global": "Identity", "chunks": ["A", "B"] }`, numbered chunk objects or the clip-pack manifest with `global_prefix`, timed `segments` and `audio_filename`. Text separated by `---` forms an ordinal list. Plain text imports as a global prompt. Numeric prose and tag lists remain prompt text. Malformed timed/chunk headers display the offending line and block prompt import; the standalone sampler's permissive fallback is unchanged.
 
-`audio_filename` is optional when the manifest directory contains exactly one standalone audio file. That continuous soundtrack supplies both H3 driving conditioning and final output. Embedded audio on the picture clips is disabled to prevent a second copy from mixing in. If no standalone soundtrack exists, each picture's embedded audio is used when available. The source pictures supply automatic video guidance in Recreate mode; the per-chunk prompts and global prefix populate editable fields. A pack is limited to 16 GiB uploaded, 32 GiB unpacked and 8,192 members.
+**Preview mapping** shows global text, selected media, chunk sections, rounding, gaps and surplus entries before **Apply import**. Changing the source, options or timeline invalidates the preview. Apply commits the candidate in one Undo step; Cancel leaves the active project untouched. Staged source files expire after 24 hours. Previewing selected media may populate the immutable media cache without adding it to the project.
 
-The **Global prompt** field above the chunk cards is prepended to every chunk, including authored overrides and workflows with connected `sequence_prompt`. A valid Timeline script's text before the first outer section is also shared. Editing a chunk replaces its action body while preserving those shared instructions. Changing the global field invalidates matching stored generations through the effective prompt hash.
+A confirmed prompt import makes Studio authoritative. The still-connected `sequence_prompt` is ignored until **Use connected prompts again** is selected in the chunk workspace. Edit the shared identity once in **Global prompt**; it is prepended to every chunk action. The ownership banner stays visible. Unsupported extended headers on an unimported connected source warn in cards and runtime reports; import them to adopt the strict mapping.
 
-The sampler's **Driving Audio** output carries the chosen original soundtrack for its job. Updated example workflows connect it to the V3.4 assembler's matching input; existing workflows also carry the soundtrack inside the assembly plan, so an unconnected optional AUDIO socket alone does not imply missing audio. The assembler's **audio** output must feed Video Combine or Save Take. Connecting decoded generated audio directly to Video Combine bypasses source-audio selection. The status report identifies the selected original soundtrack or explains when incomplete authored audio leaves generated audio active.
+The original soundtrack is routed as **both** driving conditioning and final output. Keep Timeline Sampler **Driving Audio** connected to **Assemble Continuum Chunks → driving_audio**, and route the assembler audio to Video Combine. Selecting it bypasses generated audio for final assembly, including the shorter last source window. Source audio is transported on the same frame clock as picture guidance. GPU generation and perceptual lip-sync still require acceptance testing on the actual model/workflow.
 
-Natural retained output includes native model overhang for downstream refinement; its original PCM is followed by silence. Finalize or export at the authored duration for delivery. A shorter last picture sets the assembly target to that shorter source window. Final-frame anchoring adjusts video without splicing or moving preserved original PCM. These timestamp and PCM guarantees do not establish how accurately H3 follows mouth motion; assess lip-sync on a generated audiovisual result.
-
-Import notes report every boundary rounded onto the 24 fps grid and warn if the standalone soundtrack ends before the picture span. Those notes remain available above the chunk cards. Identical Studio global text and connected Timeline preamble are prepended once. A post-refinement **Finalize Duration V3.4** also restores the assembly-plan soundtrack and preserves its PCM clock through final-frame anchoring.
-
-Fixed connected text and opaque fallback text are shared instructions too; List entries and timed section action bodies remain replaceable by chunk overrides. Prompt fields persist on each input event, including while focused during keyboard queueing. Failed imports can leave unreferenced content-addressed media registered in the server store; retries reuse those bytes, and the active project is not partially changed. Import receipts describe the import-time state and are cleared when restoring or recreating the original scene.
+Install the desktop artifact matching the frontend/backend **v20** contract. No merge or release is implied by this draft PR.

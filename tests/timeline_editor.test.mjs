@@ -1170,8 +1170,7 @@ test("changing the connected sampler chunk duration reflows selected authored ch
   const newFirst=Math.floor(p.selection[0]/192);
   assert.deepEqual(selectedChunkPage(p).chunks.map((c)=>c.index),
     [newFirst,newFirst+1]);
-  const prompts=p.tracks.filter((t)=>t.role==="prompt")
-    .flatMap((t)=>t.clips).sort((a,b)=>a.start-b.start);
+  const prompts=p.prompts.regions.slice().sort((a,b)=>a.start-b.start);
   assert.deepEqual(prompts.map((c)=>[c.start,c.end,c.text]),[
     [14784,14976,"chunk A"],[14976,15168,"chunk B"],
   ]);

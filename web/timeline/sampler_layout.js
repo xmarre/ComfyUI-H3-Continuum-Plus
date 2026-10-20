@@ -141,6 +141,15 @@ export function changeTiming(p, name, value) {
           migrated[String(newIndex)]=selected;
         }
       }
+      const nextRegions=(p.prompts?.regions||[]).map(r=>({...r}));
+      for(const r of nextRegions) {
+        if(!Number.isInteger(r.chunk_index)||r.chunk_index<oldFirst||r.chunk_index>=oldFirst+oldCount)continue;
+        r.chunk_index=newFirst+r.chunk_index-oldFirst;
+        r.start=origin+r.chunk_index*nextSize;r.end=r.start+nextSize;
+      }
+      const ordered=[...nextRegions].sort((a,b)=>a.start-b.start);
+      if(ordered.some((r,i)=>i&&ordered[i-1].end>r.start))
+        throw Error("Changing chunk duration overlaps timed prompt sections. Adjust their timing first.");
       for (const t of p.tracks || [])
         for (const c of t.clips || []) {
           if (!c.chunk_prompt && !c.chunk_workspace) continue;
@@ -158,6 +167,7 @@ export function changeTiming(p, name, value) {
           // Preserve authored source_in and speed: only output placement and
           // the source-out inferred from its new duration change.
         }
+      if(p.prompts?.regions)p.prompts.regions=nextRegions;
       if (migrated) p.conveyor_reference_slots=migrated;
       p.chunk_frames = nextSize;
       p.selection[0] = origin + newFirst * nextSize;

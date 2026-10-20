@@ -164,3 +164,94 @@ def test_state_manager_adoption_ignores_connected_text_even_after_identity_edit(
 def test_replace_is_not_offered_for_prompt_only_import():
     with pytest.raises(ValueError,match='only when media is selected'):
         apply_components(blank_project(),parse_prompt_source('Identity'),[],{'global':True},'replace')
+
+
+def test_global_import_replaces_legacy_fixed_identity_before_later_edits():
+    p=blank_project()
+    p['prompts']={'global':'Old field','mode':'Fixed','script':'Imported identity'}
+    out,_=apply_components(p,parse_prompt_source('Imported identity\nChunk 1:\nAction'),[],{'global':True,'chunks':True})
+    out['prompts']['global']='Edited identity'
+    assert compile_window(out,0)['prompt']=='Edited identity\nAction'
+
+
+def test_global_import_preserves_uncovered_timeline_action_without_old_preamble():
+    p=blank_project()
+    p['prompts']={'global':'','mode':'Timeline','script':'Old identity\n[0-7s]\nOld A\n[7-14s]\nOld B'}
+    out,_=apply_components(p,parse_prompt_source('New identity\nChunk 1:\nNew A'),[],{'global':True,'chunks':True})
+    assert compile_window(out,0)['prompt']=='New identity\nNew A'
+    assert compile_window(out,1)['prompt']=='New identity\nOld B'
+
+
+def test_prompt_text_archive_combines_numbered_files_and_global(tmp_path):
+    importer,assets=sources(tmp_path)
+    path=tmp_path/'prompts.zip'
+    with zipfile.ZipFile(path,'w') as z:
+        z.writestr('global_prompt.txt','Identity')
+        z.writestr('chunk_02.txt','B')
+        z.writestr('chunk_01.txt','A')
+    token=importer.register_source(path,'prompts.zip')['token']
+    result=importer.preview(blank_project(),token=token)
+    assert [compile_window(result['project'],i)['prompt'] for i in range(2)]==['Identity\nA','Identity\nB']
+    assert not assets.calls
+
+
+def test_media_selection_does_not_require_a_malformed_unselected_prompt(tmp_path):
+    importer,assets=sources(tmp_path)
+    path=tmp_path/'mixed.zip'
+    with zipfile.ZipFile(path,'w') as z:
+        z.writestr('prompts.txt','Identity\n[7s to broken]\nAction')
+        z.writestr('original_audio.m4a',b'audio')
+    token=importer.register_source(path,'mixed.zip')['token']
+    result=importer.preview(blank_project(),token=token,selected={'soundtrack':True})
+    assert result['prompt_error'] and result['project']['prompts']==blank_project()['prompts']
+    assert assets.calls==['original_audio.m4a']
+    with pytest.raises(ValueError,match='Line 2:'):
+        importer.preview(blank_project(),token=token,selected={'chunks':True})
+
+
+def test_unbalanced_timed_header_is_an_error():
+    with pytest.raises(ValueError,match='unbalanced'):
+        parse_prompt_source('[0-7s\nA')
+
+
+@pytest.mark.parametrize('source',[
+    'Identity\n[0-7s] A\n[7-14s] B',
+    'Identity\n0-7s: A\n7-14s: B',
+    'Identity\nChunk 1: A\nChunk 2: B',
+    'Identity\n[Chunk 1] A\n[Chunk 2] B',
+])
+def test_inline_headers(source):
+    document=parse_prompt_source(source)
+    assert document['global']=='Identity'
+    assert [e['text'] for e in document['entries']]==['A','B']
+
+
+@pytest.mark.parametrize('text',['[1girl, red dress, dancing]','2 dancers - both in long dresses:','3-4 people walk to the door'])
+def test_numeric_prose_is_not_a_header(text):
+    assert parse_prompt_source(text)['global']==text
+
+
+def test_partial_import_migrates_typed_chunk_prompt_without_hidden_text():
+    p=blank_project()
+    p['tracks']=[{'id':'typed','role':'prompt','chunk_workspace':True,'clips':[
+        {'id':'old','start':0,'end':168,'text':'Typed A','override':True,'chunk_prompt':True,'chunk_index':0}]}]
+    result,_=apply_components(p,parse_prompt_source('[2-5s] Imported B'),[],{'chunks':True})
+    assert not result['tracks']
+    assert [(r['start'],r['end'],r['text']) for r in result['prompts']['regions']]==[(0,48,'Typed A'),(48,120,'Imported B'),(120,168,'Typed A')]
+    assert [s['text'] for s in compile_window(result,0)['segments']]==['Typed A','Imported B','Typed A']
+
+
+def test_explicit_movie_and_scene_time_origins():
+    p=blank_project();p.update(chunk_origin_frame=2400,duration_frames=2736,selection=[2400,2736])
+    doc=parse_prompt_source('[100-107s] A')
+    result,mapping=apply_components(p,doc,[],{'chunks':True})
+    assert mapping['time_origin']=='movie'
+    assert result['prompts']['regions'][0]['start']==2400
+    _,mapping=apply_components(p,doc,[],{'chunks':True},time_origin='scene')
+    assert not mapping['regions'] and mapping['surplus']
+
+
+def test_unimported_connected_extended_headers_warn_without_blocking():
+    from ComfyUI_H3_Continuum_Join.timeline.prompt_import import connected_import_warning
+    assert 'Fixed fallback' in connected_import_warning('[00:00-00:07] A')
+    assert not connected_import_warning('ordinary prose')

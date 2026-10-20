@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a unified selective importer for ZIP/JSON/text/paste/media and read-only State Manager Text Box or saved preset sources, with component detection, merge/replace, scene/movie timestamp origins, strict header diagnostics and preview-before-apply in one Undo step.
+- Use one editable chunk prompt region store for imported and typed actions; migrate legacy chunk prompts, preserve uncovered spans, and make imported Studio ownership explicit with a connected-source relink action.
+- Warn about unsupported unimported connected prompt headers. Advance desktop/frontend/backend compatibility to v20.
+
 - Import pre-cut clip packs with JSON global/chunk prompts, exact source PTS mapping and a continuous original soundtrack routed to H3 driving conditioning and final assembly.
 - Expose a global prompt above chunk cards; retain it and Timeline script preambles through connected prompt sources and authored chunk overrides.
 - Respect a shorter final source window in exact assembly. Preserve source PCM without final-frame anchor splicing in V3.4 driving-audio exact assembly and post-refinement finalization. Connect sampler Driving Audio to the assembler in Timeline examples. Advance desktop/frontend/backend compatibility to v19.

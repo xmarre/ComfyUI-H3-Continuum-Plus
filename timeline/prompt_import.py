@@ -10,7 +10,26 @@ from .model import rational
 _CLOCK = r"\d+(?::\d{1,2}){0,2}(?:\.\d+)?"
 _TIME = re.compile(rf"^\s*\[?\s*(?P<a>{_CLOCK})\s*(?:seconds?|secs?|s)?\s*(?:[-–—]|\bto\b)\s*(?P<b>{_CLOCK})\s*(?:seconds?|secs?|s)?\s*\]?\s*:?\s*$", re.I)
 _CHUNK = re.compile(r"^\s*(?:#{1,6}\s*)?\[?\s*(?:chunk|clip)\s+(\d+)\s*\]?\s*:?\s*$", re.I)
-_LIKE = re.compile(r"^\s*(?:#{1,6}\s*)?(?:\[\s*(?:\d|chunk\b|clip\b)|(?:chunk|clip)\s+\S+\s*:|\d[^\n]*?(?:[-–—]|\bto\b)[^\n]*?(?:\]|s\s*:))", re.I)
+# Classify only explicit header syntax. Numeric prose and tag lists are prompts.
+_LIKE = re.compile(r"^\s*(?:#{1,6}\s*)?(?:\[\s*(?:(?:chunk|clip)\b|\d[\w:.]*\s*(?:s(?:ec(?:ond)?s?)?\s*)?(?:[-–—]|\bto\b))|(?:chunk|clip)\s+\S+\s*:|\d[\d:.]*\s*(?:s\s*)?(?:[-–—]|\bto\b)[^\n]*:)" , re.I)
+
+
+def header(line):
+    """Return (time match, chunk match, inline body), or no header."""
+    value=re.sub(r"^\s*#{1,6}\s*", "", line).strip()
+    if value.startswith('['):
+        close=value.find(']')
+        if close<0:
+            return None,None,''
+        head,body=value[:close+1],value[close+1:].lstrip().removeprefix(':').lstrip()
+    else:
+        # A colon after the complete interval/ordinal separates inline text;
+        # clock colons are consumed as part of the interval.
+        match=re.match(rf"^((?:{_CLOCK}\s*(?:seconds?|secs?|s)?\s*(?:[-–—]|\bto\b)\s*{_CLOCK}\s*(?:seconds?|secs?|s)?|(?:chunk|clip)\s+\d+))\s*:\s*(.*)$", value, re.I)
+        head,body=(match[1],match[2]) if match else (value,'')
+    timed,chunk=_TIME.fullmatch(head),_CHUNK.fullmatch(head)
+    return timed,chunk,body
+
 
 
 def clock(text):
@@ -38,7 +57,7 @@ def parse_prompt_source(source):
         lines=text.splitlines()
         headers=[]
         for n,line in enumerate(lines):
-            timed,chunk=_TIME.fullmatch(line),_CHUNK.fullmatch(line)
+            timed,chunk,inline=header(line)
             if timed:
                 try:
                     a,b=clock(timed['a']),clock(timed['b'])
@@ -46,19 +65,19 @@ def parse_prompt_source(source):
                         raise ValueError('End must be after start')
                 except ValueError as exc:
                     raise ValueError(f'Line {n+1}: {line}\n{exc}') from exc
-                headers.append((n,{'start_seconds':str(a),'end_seconds':str(b)}))
+                headers.append((n,{'start_seconds':str(a),'end_seconds':str(b)},inline))
             elif chunk:
                 index=int(chunk[1])
                 if index<1:
                     raise ValueError(f'Line {n+1}: chunk numbers start at 1: {line}')
-                headers.append((n,{'chunk':index}))
+                headers.append((n,{'chunk':index},inline))
             elif _LIKE.match(line):
-                raise ValueError(f'Line {n+1}: unsupported or malformed prompt header: {line}')
+                raise ValueError(f'Line {n+1}: '+('unbalanced' if line.lstrip().startswith('[') and ']' not in line else 'unsupported or malformed')+f' prompt header: {line}')
         if headers:
             entries=[]
-            for i,(n,entry) in enumerate(headers):
+            for i,(n,entry,inline) in enumerate(headers):
                 stop=headers[i+1][0] if i+1<len(headers) else len(lines)
-                entries.append({**entry,'text':'\n'.join(lines[n+1:stop]).strip(),'line':n+1})
+                entries.append({**entry,'text':'\n'.join(([inline] if inline else [])+lines[n+1:stop]).strip(),'line':n+1})
             result={'global':'\n'.join(lines[:headers[0][0]]).strip(),'global_present':bool(headers[0][0]),'entries':entries,'format':'headers'}
         elif re.search(r'^\s*---+\s*$',text,re.M):
             values=re.split(r'^\s*---+\s*$',text,flags=re.M)
@@ -130,3 +149,16 @@ def _entry(value,index):
     if value.get('filename') is not None:
         entry['filename']=value['filename']
     return entry
+
+
+def connected_import_warning(text):
+    """Keep native fallback permissive, but make extended import syntax visible."""
+    from ..v2.prompts import detect_prompt_mode
+    from ..constants import PROMPT_MODE_TIMELINE
+    try:
+        document=parse_prompt_source(text)
+    except (ValueError, TypeError) as exc:
+        return f"Connected prompt import syntax needs attention: {exc}. Use Import to inspect and adopt it."
+    if document['entries'] and document['format']=='headers' and detect_prompt_mode(text)!=PROMPT_MODE_TIMELINE:
+        return "Connected prompt headers are not recognized by the native sampler and may use Fixed fallback. Use Import → Read connected Text Box to preview and adopt the timed/chunk mapping."
+    return ''

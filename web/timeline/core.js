@@ -221,7 +221,7 @@ export function restoreOriginalMovie(p, assetId=null) {
   p.duration_frames=duration;
   p.scene_original_asset_id=asset.id;
   p.chunk_origin_frame=0;
-  if(p.prompts) p.prompts.origin_frame=0;
+  if(p.prompts){p.prompts.origin_frame=0;delete p.prompts.regions;}
   p.tracks=[];
   const track=makeTrack("retained","Original movie");
   p.tracks.push(track);

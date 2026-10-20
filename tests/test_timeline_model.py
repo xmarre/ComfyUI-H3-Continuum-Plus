@@ -301,7 +301,8 @@ def test_external_sequence_prompt_preserves_explicit_chunk_prompts_only():
     assert compile_window(merged, 1)["prompt"] == "<Picture 1> sees @Bob\nprecise second chunk"
     assert compile_window(merged, 2)["prompt"] == "@Alice sees <Picture 1>\nexternal three"
     assert p["prompts"]["script"] == "inherited project script"
-    assert len(p["tracks"][-1]["clips"]) == 2
+    assert len(p["tracks"][-1]["clips"]) == 1
+    assert p["prompts"]["regions"][0]["text"] == "precise second chunk"
 
     # A take sampled with the combined prompt must not immediately become
     # falsely stale when its inputs are rechecked against the saved project.
@@ -312,7 +313,7 @@ def test_external_sequence_prompt_preserves_explicit_chunk_prompts_only():
         "prompt_override": source,
     }
     assert not stale_take(p, record, [record])
-    p["tracks"][-1]["clips"][1]["text"] = "new second chunk prompt"
+    p["prompts"]["regions"][0]["text"] = "new second chunk prompt"
     assert stale_take(p, record, [record])
 
 

@@ -343,6 +343,7 @@ def register_routes():
             document_index=data.get("document_index", 0), selected=data.get("selected"),
             target=data.get("target", "merge"), provenance=data.get("provenance"),
             soundtrack_mode=data.get("soundtrack_mode", "replace"),
+            time_origin=data.get("time_origin", "auto"),
         )
         return web.json_response(preview)
 

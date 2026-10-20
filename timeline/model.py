@@ -187,6 +187,8 @@ def validate(project):
     if a < origin:
         raise ValueError("Render selection cannot precede the active scene start")
     p.setdefault("prompts", {"global": "", "script": "", "mode": "Fixed"})
+    from .prompt_regions import migrate_chunk_prompts
+    migrate_chunk_prompts(p)
     regions = p["prompts"].get("regions", [])
     if not isinstance(regions, list) or len(regions) > 65536:
         raise ValueError("Invalid imported prompt regions")
@@ -292,7 +294,12 @@ def with_external_prompt_source(project, prompts):
     ownership = p.get("prompt_source", {}).get("mode")
     if ownership == "studio":
         return p
+    from .prompt_regions import migrate_chunk_prompts
+    migrate_chunk_prompts(p)
+    regions = p.get("prompts", {}).get("regions", [])
     p["prompts"] = copy.deepcopy(prompts)
+    if ownership != "connected" and regions:
+        p["prompts"]["regions"] = regions
     # Connected text replaces the script, while Studio's global field remains
     # live. Reapply it here for both sampling and stale-take verification.
     p["prompts"]["global"] = "" if ownership == "connected" else project.get("prompts", {}).get("global", "")
@@ -452,7 +459,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
                     and Fraction(section_start, 24) < rational(s["end"])
                 ]
                 preamble = timeline_preamble(script)
-                if preamble.strip() != global_text.strip():
+                if preamble.strip() and preamble.strip() != global_text.strip():
                     shared_text += "\n" + preamble
                 base = shared_text
                 if exact:
@@ -509,7 +516,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
     imported = [
         (max(start, r["start"]), min(end, r["end"]), r["text"], True)
         for r in prompts.get("regions", [])
-        if r["start"] < end and start < r["end"]
+        if not r.get("muted") and r["start"] < end and start < r["end"]
     ]
     authored = "\n".join([global_text, script, *(t[2] for t in [*timed, *imported])])
 

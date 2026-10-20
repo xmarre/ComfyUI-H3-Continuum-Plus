@@ -50,6 +50,11 @@ export class ImportDialog {
       el("option",{value:"replace",text:"Replace current soundtrack"}),
       el("option",{value:"add",text:"Add soundtrack to current mix"}));
     this.soundMode.addEventListener("change",()=>this.changed());
+    this.timeOrigin=el("select",{"aria-label":"Prompt timestamp origin"},
+      el("option",{value:"auto",text:"Scene times (auto-detect clear movie timestamps)"}),
+      el("option",{value:"scene",text:"Seconds from scene start"}),
+      el("option",{value:"movie",text:"Seconds from movie start"}));
+    this.timeOrigin.addEventListener("change",()=>this.changed());
     this.details=el("div",{class:"h3ts-import-preview"});
     this.apply=button("Apply import",()=>this.guard(async()=>{
       applyImportPreview(editor,this.preview,this.previewVersion);
@@ -64,7 +69,7 @@ export class ImportDialog {
         button("Read connected Text Box",()=>this.guard(()=>this.readState(false))),this.manager,
         button("Read selected preset",()=>this.guard(()=>this.readState(true)))),
       this.text,inspectButton,this.document,this.components,
-      el("label",{},"Target ",this.target),el("label",{},"Soundtrack ",this.soundMode),
+      el("label",{},"Target ",this.target),el("label",{},"Soundtrack ",this.soundMode),el("label",{},"Prompt times ",this.timeOrigin),
       el("p",{text:"Confirmed prompt imports use the Studio fields. The connected sequence_prompt stays wired and is ignored until you explicitly choose Use connected prompts again."}),
       this.status,this.error,this.details,
       el("footer",{},button("Preview mapping",()=>this.guard(()=>this.showPreview())),this.apply,button("Cancel",()=>this.close())));
@@ -76,6 +81,8 @@ export class ImportDialog {
   async guard(fn){try{await fn();}catch(e){if(!this.abort.signal.aborted&&e.name!=="AbortError"){this.error.textContent=e.message;this.apply.disabled=true;}}}
   async discardSource(){const token=this.token;this.token=null;if(token)await request(this.editor,"/imports/source/"+token,{method:"DELETE"}).catch(()=>{});}
   async loadFile(file){
+    this.loading=true;
+    try {
     if(!file)return;
     this.changed();const epoch=this.epoch;
     this.status.textContent="Reading import source…";
@@ -88,6 +95,7 @@ export class ImportDialog {
     this.document.hidden=!source.documents.length;
     this.document.value="0";this.text.value="";this.text.disabled=true;
     this.selected=null;await this.inspect();
+    } finally {this.loading=false;}
   }
   async readState(preset){
     this.changed();const epoch=this.epoch;
@@ -95,12 +103,14 @@ export class ImportDialog {
     const manager=this.sources.managers.find(n=>String(n.id)===this.manager.value);
     const source=preset?await selectedPresetSource(this.editor.api,manager,this.sources.textBox):connectedTextSource(graph,sampler);
     if(epoch!==this.epoch||this.abort.signal.aborted)return;
-    await this.discardSource();this.text.disabled=false;this.text.value=source.text;this.provenance=source.provenance;
+    await this.discardSource();
+    if(epoch!==this.epoch||this.abort.signal.aborted)return;
+    this.text.disabled=false;this.text.value=source.text;this.provenance=source.provenance;
     this.document.hidden=true;this.selected=null;this.changed();await this.inspect();
   }
   payload(selected=this.selected){return {project:this.editor.p,token:this.token,text:this.token?undefined:this.text.value,
     document_index:Number(this.document.value)||0,selected,target:this.target.value,
-    soundtrack_mode:this.soundMode.value,provenance:this.provenance};}
+    soundtrack_mode:this.soundMode.value,time_origin:this.timeOrigin.value,provenance:this.provenance};}
   async inspect(){
     const epoch=this.epoch;
     const result=await request(this.editor,"/imports/preview",{method:"POST",body:JSON.stringify({...this.payload({global:false,chunks:false,video:false,soundtrack:false}),target:"merge"}),signal:this.abort.signal});
@@ -120,6 +130,7 @@ export class ImportDialog {
   }
   updateTarget(){const media=!!(this.selected?.video||this.selected?.soundtrack);this.target.options[1].disabled=!media;if(!media)this.target.value="merge";this.soundMode.disabled=!this.selected?.soundtrack;}
   async showPreview(){
+    if(this.loading)throw Error("Wait for the new source to finish loading before previewing.");
     if(!this.available)await this.inspect();
     if(!Object.values(this.selected||{}).some(Boolean))throw Error("Select at least one available component");
     this.changed();const epoch=this.epoch,version=this.editor.editVersion;

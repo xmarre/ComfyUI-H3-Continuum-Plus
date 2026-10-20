@@ -8,6 +8,7 @@ import {
 } from "./chunk_workspace.js";
 import { selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
+import { connectedTextSource } from "./import_state.js";
 import { importedRegions, setImportedRegion } from "./import_regions.js";
 import { traceReferenceSocket, collectReferenceProvenance, conveyorState, shelfImagePath, conveyorShelfAvailable } from "./conveyor_source.js";
 
@@ -216,6 +217,13 @@ export function samplerInputDescription(editor) {
   const externalPrompt = editor.p.prompt_source?.mode!=="studio" && (linked("sequence_prompt") ||
     (typeof widget("sequence_prompt") === "string" &&
       !!widget("sequence_prompt").trim()));
+  let promptDiagnostic="";
+  if(externalPrompt) {
+    let text=widget("sequence_prompt");
+    try {text=connectedTextSource(sampler.graph,sampler).text;}catch{}
+    if(typeof text==="string" && /^\s*(?:\[.*(?:\d:\d|\bto\b).*\]|(?:chunk|clip)\s+\d+\s*:|\d[^\n]*s\s*:)/im.test(text))
+      promptDiagnostic="Connected headers may use native Fixed fallback. Import → Read connected Text Box previews and adopts their timing.";
+  }
   if (externalPrompt) overrides.push("sequence_prompt supplies inherited prompts; Studio global prompt and script preamble apply to every chunk, including chunk overrides");
   if (linked("driving_audio")) overrides.push("driving_audio overrides timeline guide audio");
   if (linked("reference_video_1")) overrides.push("persistent video reference applies where no scoped guide");
@@ -225,7 +233,7 @@ export function samplerInputDescription(editor) {
     sampler,
     persistent, supplied, overrides, persistentPictureSockets: pinned.length,
     connectedReferenceSlots, availableReferenceSlots, project: editor.p,
-    promptOverridden: externalPrompt,
+    promptOverridden: externalPrompt, promptDiagnostic,
     audioOverridden: linked("driving_audio"),
     settings: [
       ["Chunks",String(selectionChunks(editor.p))],
@@ -370,6 +378,7 @@ function conveyorReferenceControls(editor,index,sources) {
 }
 
 function compiledLine(node, window, inputs, ownPrompt = "", chunkIndex = window?.index) {
+  if(inputs.promptDiagnostic){node.textContent="WARNING: "+inputs.promptDiagnostic;return;}
   if (!window) {
     if (!Number.isInteger(chunkIndex)) {
       node.textContent="Waiting for backend input inspection…";
@@ -593,9 +602,6 @@ export function renderChunkWorkspace(editor) {
     // Show muted media as well so the user can reactivate it. The compiled
     // conditioning path continues to use active-only clip filtering.
     const items = overlappingChunkClips(p,chunk.index,null,true);
-    const ownPrompt = items.find(({clip,track})=>
-      track.role==="prompt" && clip.chunk_prompt && clip.start===chunk.start &&
-      clip.end===chunk.end);
     const card=el("section",{class:"h3ts-chunk-card",
       "data-chunk-index":chunk.index});
     const sub=chunk.selectedStart!==chunk.start || chunk.selectedEnd!==chunk.end
@@ -615,7 +621,7 @@ export function renderChunkWorkspace(editor) {
       placeholder:"Write this chunk's action; shared identity, global prompt and preamble remain",
       rows:"3",
     });
-    prompt.value=ownPrompt?.clip.text || "";
+    prompt.value="";
     prompt.disabled=p.prompt_source?.mode==="connected";
     prompt.addEventListener("input",()=>editor.editPrompt((next)=>
       setChunkPrompt(next,chunk.index,prompt.value),"chunk:"+chunk.index));
@@ -624,9 +630,9 @@ export function renderChunkWorkspace(editor) {
       for(const region of imported) {
         const field=el("textarea",{"aria-label":"Imported prompt for chunk "+(chunk.index+1)+" at frame "+region.start,rows:"3"});
         field.value=region.text;
-        field.disabled=p.prompt_source?.mode==="connected";
+        field.disabled=p.prompt_source?.mode==="connected"||!!region.locked;
         field.addEventListener("input",()=>editor.editPrompt(project=>
-          setImportedRegion(project,region.start,region.end,field.value),"import:"+region.start+":"+region.end));
+          setImportedRegion(project,region.start,region.end,field.value,{...region,text:field.value}),"import:"+region.start+":"+region.end));
         field.addEventListener("blur",()=>{editor.promptEditKey=null;});
         card.append(control("1 · Prompt · "+frameTime(region.start)+"–"+frameTime(region.end),field));
       }
@@ -634,7 +640,7 @@ export function renderChunkWorkspace(editor) {
     const preview=el("div",{class:"h3ts-chunk-compiled",
       "data-compiled-chunk":chunk.index});
     compiledLine(preview,editor.compiledWindows?.get(chunk.index),sampler,
-      ownPrompt?.clip.text || "", chunk.index);
+      imported.filter(r=>!r.muted).map(r=>r.text).join("\n"), chunk.index);
     card.append(preview);
     card.append(conveyorReferenceControls(editor,chunk.index,referenceSources));
     const video=sectionForRole(editor,chunk.index,"video_guide");

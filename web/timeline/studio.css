@@ -1193,3 +1193,5 @@
 .h3ts-import td:first-child { width: 5%; }
 .h3ts-import td:nth-child(2) { width: 20%; }
 .h3ts-prompt-source { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 8px 12px; }
+
+.h3ts-import th:first-child{min-width:55px;white-space:nowrap}.h3ts-import footer{position:sticky;bottom:0;background:#222;padding:12px 0}

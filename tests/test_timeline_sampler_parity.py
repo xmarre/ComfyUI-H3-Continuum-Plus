@@ -557,7 +557,6 @@ def test_imported_state_manager_fields_own_runtime_prompt_and_stale_hashes(runti
     p,_=apply_components(p,parse_prompt_source('Identity\nChunk 1:\nA\nChunk 2:\nB\nChunk 3:\nC'),[],
         {'global':True,'chunks':True},provenance={'kind':'state-manager-text-box'})
     p['prompts']['global']='Edited identity'
-    p['prompts']['script']=''
     args.update(timeline=compile_project(p),sequence_prompt='Identity',run_storage='Off')
     result=nodes.H3ContinuumTimelineSampler().sample(**args)
     assert len(calls)==3

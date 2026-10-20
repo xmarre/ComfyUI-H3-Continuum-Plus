@@ -1,3 +1,4 @@
+import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
 export const NATIVE_PATH_CONTRACT = "h3-timeline-unified-import-v20";
@@ -94,7 +95,7 @@ export class TimelineEditor {
       ...(node.properties.h3_timeline_view || {}),
     };
     delete project.ui;
-    this.history = new History(project);
+    this.history = new History(migrateChunkPrompts(project));
     this.serverRevision = this.p.revision || 0;
     this.selected = view.selected || [];
     this.clipboard = [];
@@ -385,7 +386,7 @@ export class TimelineEditor {
   async reload() {
     this.stopPlayback();
     const p = await request(this.api, "/project/" + this.p.project_id);
-    this.history = new History(p);
+    this.history = new History(migrateChunkPrompts(p));
     this.promptEditKey = null;
     this.serverRevision = p.revision;
     this.selected = [];
@@ -2369,7 +2370,7 @@ export class TimelineEditor {
         expected_revision: this.serverRevision,
       }),
     });
-    this.history = new History(p);
+    this.history = new History(migrateChunkPrompts(p));
     this.promptEditKey = null;
     this.serverRevision = p.revision;
     this.persistWidget();
