@@ -282,7 +282,9 @@ def register_routes():
     @endpoint("post", "/import-pack")
     async def ingest_pack(request):
         """Explicit ZIP upload; ordinary movie imports retain native linking."""
-        from .bundle import MAX_ARCHIVE_BYTES, import_bundle
+        from .bundle import MAX_ARCHIVE_BYTES
+        from .import_source import ImportSources
+        from .model import blank_project
 
         store = project_store()
         temporary = store.assets.upload_path()
@@ -294,12 +296,62 @@ def register_routes():
                     if size > MAX_ARCHIVE_BYTES:
                         raise ValueError("Clip pack exceeds the 16 GiB upload limit")
                     file.write(chunk)
-            scene = await _media_cpu_cancellable(
-                request, import_bundle, temporary, store.assets, {},
+            sources = ImportSources(store)
+            registered = await _media_cpu_cancellable(
+                request, sources.register_source, temporary, "pack.zip",
             )
-            return web.json_response(scene)
+            try:
+                preview = await _media_cpu_cancellable(
+                    request, sources.preview, blank_project(), token=registered["token"], target="replace",
+                )
+                return web.json_response(preview["project"])
+            finally:
+                sources.remove(registered["token"])
         finally:
             temporary.unlink(missing_ok=True)
+
+    @endpoint("post", "/imports/source")
+    async def import_source(request):
+        from .bundle import MAX_ARCHIVE_BYTES
+        from .import_source import ImportSources
+
+        sources = ImportSources(project_store())
+        temporary = sources.store.assets.upload_path()
+        size = 0
+        try:
+            with temporary.open("xb") as output:
+                async for block in request.content.iter_chunked(1024 * 1024):
+                    size += len(block)
+                    if size > MAX_ARCHIVE_BYTES:
+                        raise ValueError("Import exceeds the 16 GiB upload limit")
+                    output.write(block)
+            result = await _media_cpu_cancellable(
+                request, sources.register_source, temporary, request.query.get("name", "source.zip"),
+            )
+            return web.json_response(result)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @endpoint("post", "/imports/preview")
+    async def preview_import(request):
+        from .import_source import ImportSources
+
+        data = await request.json()
+        preview = await _media_cpu_cancellable(
+            request, ImportSources(project_store()).preview, data["project"],
+            token=data.get("token"), text=data.get("text"),
+            document_index=data.get("document_index", 0), selected=data.get("selected"),
+            target=data.get("target", "merge"), provenance=data.get("provenance"),
+            soundtrack_mode=data.get("soundtrack_mode", "replace"),
+        )
+        return web.json_response(preview)
+
+    @endpoint("delete", "/imports/source/{token}")
+    async def discard_import(request):
+        from .import_source import ImportSources
+
+        ImportSources(project_store()).remove(request.match_info["token"])
+        return web.json_response({"discarded": True})
 
     @endpoint("get", "/media/{asset_id}")
     async def media(request):

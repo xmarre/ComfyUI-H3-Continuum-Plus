@@ -506,6 +506,9 @@ class H3ContinuumTimelineSampler:
             chunks=len(job["windows"]),
             chunk_seconds=p["chunk_frames"] / 24,
         )
+        studio_prompt_owned = p.get("prompt_source", {}).get("mode") == "studio"
+        if studio_prompt_owned:
+            sequence_prompt = None
         if sequence_prompt is not None:
             from fractions import Fraction
             from ..constants import PROMPT_MODE_LIST, PROMPT_MODE_TIMELINE
@@ -943,6 +946,8 @@ class H3ContinuumTimelineSampler:
         )
         if reasons:
             report += "\nSession auto reuse disabled: " + "; ".join(reasons)
+        if studio_prompt_owned:
+            report += "\nPrompt source: imported Studio fields; connected sequence_prompt is ignored until explicitly re-linked."
         if anchor_note:
             report += "\n" + anchor_note
         if seed_note:

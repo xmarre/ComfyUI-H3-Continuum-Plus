@@ -187,6 +187,19 @@ def validate(project):
     if a < origin:
         raise ValueError("Render selection cannot precede the active scene start")
     p.setdefault("prompts", {"global": "", "script": "", "mode": "Fixed"})
+    regions = p["prompts"].get("regions", [])
+    if not isinstance(regions, list) or len(regions) > 65536:
+        raise ValueError("Invalid imported prompt regions")
+    for region in regions:
+        if not isinstance(region, dict) or not isinstance(region.get("text"), str):
+            raise ValueError("Imported prompt regions require text")
+        if integer(region.get("start"), "prompt start") >= integer(region.get("end"), "prompt end", 1):
+            raise ValueError("Imported prompt region must have positive duration")
+    ordered = sorted(regions, key=lambda r: (r["start"], r["end"]))
+    if any(a["end"] > b["start"] for a, b in zip(ordered, ordered[1:])):
+        raise ValueError("Imported prompt regions overlap")
+    if p.get("prompt_source", {}).get("mode") not in {None, "studio", "connected"}:
+        raise ValueError("Unknown Studio prompt source mode")
     p.setdefault("takes", [])
     p.setdefault("markers", [])
     for marker in p["markers"]:
@@ -276,20 +289,23 @@ def with_external_prompt_source(project, prompts):
     chunk. The same transformation is used for sampling and stale-take checks.
     """
     p = copy.deepcopy(project)
+    ownership = p.get("prompt_source", {}).get("mode")
+    if ownership == "studio":
+        return p
     p["prompts"] = copy.deepcopy(prompts)
     # Connected text replaces the script, while Studio's global field remains
     # live. Reapply it here for both sampling and stale-take verification.
-    p["prompts"]["global"] = project.get("prompts", {}).get("global", "")
+    p["prompts"]["global"] = "" if ownership == "connected" else project.get("prompts", {}).get("global", "")
     p["tracks"] = [
         {
             **t,
-            "clips": [c for c in t["clips"] if c.get("chunk_prompt")],
+            "clips": [c for c in t["clips"] if c.get("chunk_prompt") and ownership != "connected"],
         }
         if t["role"] == "prompt"
         else t
         for t in p["tracks"]
         if t["role"] != "prompt"
-        or any(c.get("chunk_prompt") for c in t["clips"])
+        or (ownership != "connected" and any(c.get("chunk_prompt") for c in t["clips"]))
     ]
     return p
 
@@ -490,19 +506,24 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
     for i in inputs:
         if i["role"] == "prompt":
             timed.append((*i["range"], i["text"], i["override"]))
-    authored = "\n".join([global_text, script, *(t[2] for t in timed)])
+    imported = [
+        (max(start, r["start"]), min(end, r["end"]), r["text"], True)
+        for r in prompts.get("regions", [])
+        if r["start"] < end and start < r["end"]
+    ]
+    authored = "\n".join([global_text, script, *(t[2] for t in [*timed, *imported])])
 
     def resolve(value):
         return re.sub(r"@([\w-]+)", lambda m: aliases.get(m[1], m[0]), value).strip()
 
     segments = None
-    if timed:
+    if timed or imported:
         # A strict contiguous partition of the window. An override replaces the
         # inherited script text inside its own span; the global prompt remains.
-        cuts = sorted({start, end, *(x for a, b, *_ in timed for x in (a, b))})
+        cuts = sorted({start, end, *(x for a, b, *_ in [*timed, *imported] for x in (a, b))})
         segments = []
         for a, b in zip(cuts, cuts[1:]):
-            active = [t for t in timed if t[0] < b and a < t[1]]
+            active = [t for t in imported if t[0] < b and a < t[1]] or [t for t in timed if t[0] < b and a < t[1]]
             head = shared_text if any(t[3] for t in active) else base
             body = resolve("\n".join([head, *(t[2] for t in active)]))
             if segments and (not body or body == segments[-1]["text"]):
@@ -524,6 +545,11 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             ]
         )
     )
+    if imported and segments:
+        text = "\n".join(
+            f"{seconds_text(s['range'][0] - start)}-{seconds_text(s['range'][1] - start)}s:\n{s['text']}"
+            for s in segments
+        )
     warnings = []
     known = {
         str(x.get("alias"))

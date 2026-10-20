@@ -2,6 +2,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:timeline": "node --test tests/timeline_editor.test.mjs"
+    "test:timeline": "node --test tests/timeline*.test.mjs"
   }
 }

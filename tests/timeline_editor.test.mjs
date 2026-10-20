@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { TimelineEditor } from "../web/timeline/editor.js";
+import { applyImportPreview } from "../web/timeline/import_dialog.js";
 import {
   selectedChunkPage, chunkWindow, overlappingChunkClips,
   setChunkPrompt, addChunkMedia, updateChunkSource, removeChunkClip,
@@ -2117,43 +2118,23 @@ test("scene window paging is source-relative, not a new clip for each chunk",()=
     [x.start,x.end]),[[17568,17736]]);
 });
 
-test("clip pack replaces a scene in one undo step and retains node identity and canvas",async()=>{
+test("confirmed import is one Undo step and preserves the previewed scene",()=>{
   const original={project_id:"existing",revision:12,width:1344,height:768,
-    duration_frames:2000,accepted:{0:"old take"},tracks:[],prompts:{global:"old"}};
-  const scene={project_id:"new",revision:0,width:768,height:512,
-    duration_frames:287,selection:[0,287],chunk_frames:168,
-    operation:"recreate",prompts:{global:"pack identity"},tracks:[]};
+    duration_frames:2000,selection:[0,2000],tracks:[],prompts:{global:"old"}};
   const history=new History(original);
-  const calls=[];
-  const editor={history,editVersion:3,abort:new AbortController(),
-    selected:["old"],playhead:1000,chunkPage:2,
-    get p(){return history.value;},
-    message(){},stopPlayback(){},fitSelectedRange(){},
-    edit(fn){history.commit(fn);},
-    api:{async fetchApi(url,options){calls.push([url,options]);
-      return {ok:true,json:async()=>scene};}},
-  };
-  const file={name:"pack.zip"};
-  await TimelineEditor.prototype.importPack.call(editor,file);
-  assert.equal(calls[0][0],"/h3_continuum/timeline/import-pack");
-  assert.equal(calls[0][1].body,file);
-  assert.equal(editor.p.project_id,"existing");
-  assert.equal(editor.p.revision,12);
-  assert.equal(editor.p.width,1344);
-  assert.equal(editor.p.prompts.global,"pack identity");
-  assert.equal(editor.p.accepted,undefined);
+  const editor={history,editVersion:3,selected:["old"],playhead:1000,chunkPage:2,
+    edit(fn){history.commit(fn);},message(){}};
+  const after={...original,prompts:{global:"imported"},duration_frames:287};
+  applyImportPreview(editor,{project:after,target:"replace",source_ownership:"Studio"},3);
+  assert.deepEqual(history.value,after);
   assert.equal(editor.playhead,0);
-  history.undo();
-  assert.deepEqual(editor.p,original);
+  history.undo();assert.deepEqual(history.value,original);
 });
 
-test("pack import cannot overwrite edits made during server registration",async()=>{
+test("an import preview cannot overwrite later timeline edits",()=>{
   let apply=0;
-  const editor={editVersion:1,abort:new AbortController(),message(){},
-    edit(){apply++;},api:{async fetchApi(){editor.editVersion++;
-      return {ok:true,json:async()=>({})};}}};
-  await assert.rejects(TimelineEditor.prototype.importPack.call(editor,{name:"pack.zip"}),
-    /timeline changed during import/);
+  const editor={editVersion:2,edit(){apply++;}};
+  assert.throws(()=>applyImportPreview(editor,{project:{}},1),/timeline changed after preview/);
   assert.equal(apply,0);
 });
 

@@ -2,8 +2,8 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 // Query-versioned import prevents a stale editor module after a Patcher update.
 // The desktop additionally verifies the actual server and frontend bytes.
-import { TimelineEditor } from "./timeline/editor.js?v=h3-timeline-clip-pack-prompts-v19";
-const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-clip-pack-prompts-v19";
+import { TimelineEditor } from "./timeline/editor.js?v=h3-timeline-unified-import-v20";
+const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-unified-import-v20";
 import { uid } from "./timeline/core.js";
 import {
   migrateSamplerWorkflow,
@@ -58,7 +58,7 @@ function independent(node) {
 }
 const style = document.createElement("link");
 style.rel = "stylesheet";
-style.href = new URL("./timeline/studio.css?v=h3-timeline-clip-pack-prompts-v19", import.meta.url).href;
+style.href = new URL("./timeline/studio.css?v=h3-timeline-unified-import-v20", import.meta.url).href;
 document.head.append(style);
 app.registerExtension({
   name: "H3Continuum.TimelineStudio",

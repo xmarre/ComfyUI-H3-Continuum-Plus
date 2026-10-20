@@ -547,3 +547,22 @@ def test_embedded_movie_soundtrack_reaches_h3_and_assembler(runtime, monkeypatch
     assert any(route == "guide" for *_, route in seen)
     assert (0, 360, 240, "final") in seen
     assert "generated H3 audio bypassed" in result[4]
+
+
+def test_imported_state_manager_fields_own_runtime_prompt_and_stale_hashes(runtime):
+    from ComfyUI_H3_Continuum_Join.timeline.prompt_import import parse_prompt_source
+    from ComfyUI_H3_Continuum_Join.timeline.import_project import apply_components
+    args,calls,_,_,_=runtime
+    p=args['timeline']['project']
+    p,_=apply_components(p,parse_prompt_source('Identity\nChunk 1:\nA\nChunk 2:\nB\nChunk 3:\nC'),[],
+        {'global':True,'chunks':True},provenance={'kind':'state-manager-text-box'})
+    p['prompts']['global']='Edited identity'
+    p['prompts']['script']=''
+    args.update(timeline=compile_project(p),sequence_prompt='Identity',run_storage='Off')
+    result=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls)==3
+    assert all(text.count('Edited identity')==1 and '\nIdentity' not in text for text,_ in args['clip'].inputs)
+    assert 'connected sequence_prompt is ignored' in result[4]
+    assert not nodes.stale_take(p,result[3],[result[3]])
+    p['prompts']['global']='Changed again'
+    assert nodes.stale_take(p,result[3],[result[3]])

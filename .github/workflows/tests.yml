@@ -112,7 +112,7 @@ jobs:
           node --check desktop/timeline-native/main.cjs
           node --check desktop/timeline-native/preload.cjs
           node --check desktop/timeline-native/native_link.cjs
-          node --test tests/timeline_editor.test.mjs
+          node --test tests/timeline*.test.mjs
 
       - name: Install media test tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg

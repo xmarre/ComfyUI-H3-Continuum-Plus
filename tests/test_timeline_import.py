@@ -1,0 +1,166 @@
+"""Unified import contracts: formats, selective application and scene clocks."""
+import copy
+import json
+import zipfile
+
+import pytest
+
+from ComfyUI_H3_Continuum_Join.timeline.prompt_import import parse_prompt_source
+from ComfyUI_H3_Continuum_Join.timeline.import_project import apply_components
+from ComfyUI_H3_Continuum_Join.timeline.import_source import ImportSources
+from ComfyUI_H3_Continuum_Join.timeline.model import blank_project, compile_window, validate, with_external_prompt_source
+from ComfyUI_H3_Continuum_Join.timeline.media import ProjectStore
+from tests.test_timeline_bundle import Assets
+
+
+FORMATS=[
+    'Identity\n[0-7s]\nA\n[7-14s]\nB',
+    'Identity\n[0-7 sec]\nA\n[7-14 sec]\nB',
+    'Identity\n[0.0-7.0s]\nA\n[7.0-14.0s]\nB',
+    'Identity\n[00:00-00:07]\nA\n[00:07 to 00:14]\nB',
+    'Identity\n[0s to 7s]\nA\n[7s to 14s]\nB',
+    'Identity\n0-7s:\nA\n7-14s:\nB',
+    'Identity\n[Chunk 1]\nA\n[Chunk 2]\nB',
+    'Identity\n[Clip 1]\nA\n[Clip 2]\nB',
+    'Identity\nChunk 1:\nA\nChunk 2:\nB',
+    'Identity\n## Chunk 1\nA\n## Chunk 2\nB',
+    '["A","B"]', 'A\n---\nB',
+    {'global':'Identity','chunks':['A','B']},
+    {'global':'Identity','chunks':{'1':'A','2':'B'}},
+    {'global_prefix':'Identity','segments':[
+        {'start_seconds':0,'end_seconds':7,'prompt':'A'},
+        {'start_seconds':7,'end_seconds':14,'prompt':'B'}]},
+]
+
+
+@pytest.mark.parametrize('source',FORMATS)
+def test_all_formats_compile_the_same_global_and_chunks(source):
+    p=blank_project()
+    p.update(chunk_origin_frame=2400,duration_frames=2736,selection=[2400,2736])
+    p['prompts']['global']='Identity'
+    doc=parse_prompt_source(source)
+    result,mapping=apply_components(p,doc,[],{'global':doc['global_present'],'chunks':True})
+    assert [compile_window(result,i)['prompt'] for i in range(2)]==['Identity\nA','Identity\nB']
+    assert not mapping['surplus']
+    assert p['tracks']==result['tracks']
+
+
+def test_fractional_clock_and_mismatch_become_inner_sections_with_surplus():
+    p=blank_project()
+    p.update(chunk_origin_frame=2400,duration_frames=2904,selection=[2400,2904])
+    doc=parse_prompt_source('Identity\n[0-5s]\nA\n[5s to 7.5s]\nB\n[0:07.5 to 0:25]\nC')
+    out,m=apply_components(p,doc,[],{'global':True,'chunks':True})
+    assert [(s['range'],s['text']) for s in compile_window(out,0)['segments']]==[
+        ([2400,2520],'Identity\nA'),([2520,2568],'Identity\nB')]
+    assert m['notes'] and m['surplus'][-1]['range']==[2580,3000]
+    assert m['surplus'][-1]['applied_range']==[2580,2904]
+    assert '[0-5s]' not in compile_window(out,0)['prompt']
+
+
+def test_merge_leaves_uncovered_legacy_chunks_and_all_media_and_takes_unchanged():
+    p=blank_project()
+    p['tracks']=[{'id':'prompts','role':'prompt','clips':[
+        {'id':'a','start':0,'end':168,'text':'old A','override':True},
+        {'id':'b','start':168,'end':336,'text':'old B','override':True}]}]
+    p['takes']=[{'id':'history'}]
+    p['prompts']['global']='Identity'
+    p=validate(p)
+    before=copy.deepcopy(p)
+    out,m=apply_components(p,parse_prompt_source('Chunk 2:\nnew B'),[],{'chunks':True})
+    assert out['tracks']==before['tracks']
+    assert out['assets']==before['assets']
+    assert out['takes']==before['takes']
+    assert compile_window(out,0)['prompt']=='Identity\nold A'
+    assert compile_window(out,1)['prompt']=='Identity\nnew B'
+    assert m['uncovered']==[1,3]
+    assert p==before
+
+
+@pytest.mark.parametrize('source',[
+    'Identity\n[00:xx-00:07]\nA',
+    'Identity\n[7s to nope]\nA',
+    'Identity\n[7s to 3s]\nA',
+    'Identity\n[00:00-00:99]\nA',
+])
+def test_malformed_timed_header_is_visible_and_never_fixed(source):
+    with pytest.raises(ValueError,match='Line 2:'):
+        parse_prompt_source(source)
+
+
+def fixture_zip(tmp_path,missing=False,media_only=False):
+    f=tmp_path/'source.zip'
+    with zipfile.ZipFile(f,'w') as z:
+        if not media_only:
+            z.writestr('prompts.json',json.dumps({'global_prefix':'Identity','segments':[
+                {'filename':'chunk_01.mp4','start_seconds':0,'end_seconds':7,'prompt':'A'},
+                {'filename':'chunk_02.mp4','start_seconds':7,'end_seconds':11.96,'prompt':'B'}]}))
+        if not missing:
+            z.writestr('chunk_01.mp4',b'picture one')
+            z.writestr('chunk_02.mp4',b'picture two')
+            z.writestr('original_audio.m4a',b'audio')
+    return f
+
+
+def sources(tmp_path):
+    store=ProjectStore(tmp_path/'store')
+    fake=Assets(tmp_path)
+    store.assets=fake
+    return ImportSources(store),fake
+
+
+@pytest.mark.parametrize('missing',[False,True])
+def test_prompts_only_from_full_or_missing_media_zip_registers_no_media(tmp_path,missing):
+    importer,assets=sources(tmp_path)
+    source=importer.register_source(fixture_zip(tmp_path,missing=missing),'source.zip')
+    p=blank_project()
+    p['takes']=[{'id':'old'}]
+    before=copy.deepcopy(p)
+    preview=importer.preview(p,token=source['token'],selected={'global':True,'chunks':True})
+    assert not assets.calls
+    for key in ['tracks','assets','takes']:
+        assert preview['project'][key]==before[key]
+    assert compile_window(preview['project'],0)['prompt']=='Identity\nA'
+    assert p==before
+    if missing:
+        assert any('Missing media' in n for n in preview['notes'])
+
+
+def test_media_only_keeps_prompts_and_original_take_records_in_merge(tmp_path):
+    importer,assets=sources(tmp_path)
+    token=importer.register_source(fixture_zip(tmp_path,media_only=True),'media.zip')['token']
+    p=blank_project()
+    p['prompts']={'global':'Keep identity','mode':'List','script':'["Keep action"]'}
+    p['takes']=[{'id':'existing'}]
+    out=importer.preview(p,token=token,selected={'video':True,'soundtrack':True})['project']
+    assert out['prompts']==p['prompts']
+    assert out['takes']==p['takes']
+    assert len(out['assets'])==3
+    assert out['tracks'][-1]['clips'][0]['audio_role']=='both'
+    assert all(c['audio_role']=='neither' for c in out['tracks'][0]['clips'])
+
+
+def test_soundtrack_only_from_full_pack_keeps_videos_and_prompts(tmp_path):
+    importer,assets=sources(tmp_path)
+    token=importer.register_source(fixture_zip(tmp_path),'full.zip')['token']
+    p=blank_project()
+    out=importer.preview(p,token=token,selected={'soundtrack':True})['project']
+    assert assets.calls==['original_audio.m4a']
+    assert out['prompts']==p['prompts']
+    assert len(out['tracks'])==1 and out['tracks'][0]['role']=='audio'
+
+
+def test_state_manager_adoption_ignores_connected_text_even_after_identity_edit():
+    p=blank_project()
+    out,_=apply_components(p,parse_prompt_source('Identity\n[0-7s]\nA'),[],
+        {'global':True,'chunks':True},provenance={'kind':'state-manager-text-box'})
+    out['prompts']['global']='Edited identity'
+    compiled=compile_window(with_external_prompt_source(out,{'global':'','mode':'Fixed','script':'Identity'}),0)['prompt']
+    assert compiled=='Edited identity\nA'
+    out['prompt_source']={'mode':'connected'}
+    compiled=compile_window(with_external_prompt_source(out,{'global':'','mode':'Fixed','script':'Identity'}),0)['prompt']
+    assert compiled=='Identity'
+
+
+def test_replace_is_not_offered_for_prompt_only_import():
+    with pytest.raises(ValueError,match='only when media is selected'):
+        apply_components(blank_project(),parse_prompt_source('Identity'),[],{'global':True},'replace')

@@ -1,6 +1,6 @@
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-clip-pack-prompts-v19";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-unified-import-v20";
 import {
   History,
   clone,
@@ -26,10 +26,11 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-clip-pack-prompts-v19";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-unified-import-v20";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
-import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-clip-pack-prompts-v19";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-unified-import-v20";
 import { selectedChunkPage } from "./chunk_workspace.js";
+import { ImportDialog } from "./import_dialog.js?v=h3-timeline-unified-import-v20";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
   "retained",
@@ -420,10 +421,10 @@ export class TimelineEditor {
         {},
         el("strong", { text: "CONTINUUM / TIMELINE STUDIO" }),
         this.title,
-        button("Import media", () => file.click()),
+        button("Link original media", () => file.click()),
         file,
-        button("Import clip pack", () => { pack.value=""; pack.click(); },
-          "Import a ZIP with pre-cut video, JSON prompts and original soundtrack; replaces the timeline as one Undo-able edit"),
+        button("Import…", () => this.openImport(),
+          "Preview and selectively import ZIP, JSON, text, media or State Manager prompts"),
         pack,
         button("Save", () => this.guard(() => this.save())),
         button("Reload", () => this.guard(() => this.reload())),
@@ -855,9 +856,9 @@ export class TimelineEditor {
   }
   async importFiles(files) {
     for (const file of files) {
-      if (file.name.toLowerCase().endsWith(".zip")) {
+      if (/\.(zip|json|txt|md)$/i.test(file.name)) {
         await this.importPack(file);
-        continue;
+        break;
       }
       const asset = await this.resolveOriginal(file);
       this.addImportedAsset(asset);
@@ -868,31 +869,13 @@ export class TimelineEditor {
       );
     }
   }
+  openImport(file = null) {
+    this.importDialog?.close();
+    this.importDialog = new ImportDialog(this, file);
+    return this.importDialog;
+  }
   async importPack(file) {
-    if (!file) return;
-    const version = this.editVersion;
-    this.message("Importing clip pack · registering pictures, prompts and soundtrack…");
-    const scene = await request(this.api, "/import-pack", {
-      method: "POST", body: file, signal: this.abort.signal,
-      headers: {"Content-Type":"application/zip"},
-    });
-    if (this.abort.signal.aborted) return;
-    if (version !== this.editVersion)
-      throw new Error("The timeline changed during import. Import the pack again to apply it.");
-    this.stopPlayback();
-    this.edit((p) => {
-      const keep = Object.fromEntries(["project_id","revision","width","height"]
-        .filter(key=>key in p).map(key=>[key,p[key]]));
-      for (const key of Object.keys(p)) delete p[key];
-      Object.assign(p, scene, keep);
-      this.selected=[];
-      this.playhead=0;
-      this.chunkPage=0;
-      this.sceneDraft=null;
-    });
-    this.fitSelectedRange();
-    this.message("Clip pack imported · global + chunk prompts · original soundtrack drives H3 and final audio · Undo available" +
-      (scene.import_notes?.length ? " · " + scene.import_notes.join(" ") : ""));
+    return this.openImport(file);
   }
   addImportedAsset(a) {
     this.edit((p) => {
