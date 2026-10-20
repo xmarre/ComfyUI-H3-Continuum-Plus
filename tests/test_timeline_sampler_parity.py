@@ -530,9 +530,16 @@ def test_embedded_movie_soundtrack_reaches_h3_and_assembler(runtime, monkeypatch
     )
     selected = result[-1]
     assert selected["sample_rate"] == 240
-    assert tuple(selected["waveform"].shape) == (1, 2, 3600)
-    assert torch.allclose(selected["waveform"], torch.full_like(
-        selected["waveform"], .25))
+    authored_samples = 3600
+    native_samples = (
+        result[3]["output_range"][1] - result[3]["output_range"][0]
+    ) * 10
+    assert tuple(selected["waveform"].shape) == (1, 2, native_samples)
+    assert torch.allclose(
+        selected["waveform"][..., :authored_samples],
+        torch.full_like(selected["waveform"][..., :authored_samples], .25),
+    )
+    assert torch.count_nonzero(selected["waveform"][..., authored_samples:]) == 0
     assert torch.equal(
         result[2][_DRIVING_AUDIO_PLAN_KEY]["waveform"],
         selected["waveform"],

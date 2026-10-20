@@ -257,9 +257,12 @@ confirmation and supports Undo. It does not delete registered source files
 or saved take payloads. When several movies are registered, select the
 intended original clip first.
 
-If an authored original/final soundtrack covers the entire sampled job, the
-Timeline sampler supplies that PCM to the V3.4 assembler, which bypasses the
-generated audio. Partially covered final tracks do not erase uncovered output
+If an authored original/final soundtrack covers the entire intended movie
+scene, the Timeline sampler supplies that PCM to the V3.4 assembler, which
+bypasses the generated audio. Native H3 may produce extra frames beyond the
+requested scene; their audio is silence, not invented dialogue. Use exact
+duration assembly when the output must end precisely with the original
+soundtrack. Partially covered final tracks do not erase uncovered output
 with silence. Native H3 Driving Audio conditions the visuals, but lip-sync
 accuracy remains model-dependent and requires GPU validation.
 
