@@ -231,7 +231,10 @@ and final soundtrack. Moving, trimming or splitting the video therefore moves
 its audio at the same source PTS. Older projects with a separate original
 soundtrack track are supported: **Start scene** routes the retained video's
 embedded audio as H3 guidance while leaving the original final track in place
-to avoid doubling the audio. A connected sampler `driving_audio` input still
+to avoid doubling the audio. A video added directly to a Video guidance lane likewise supplies its embedded
+audio as guide and final by default. If identical source audio is already
+routed by the original clip or a legacy soundtrack, only the missing audio
+role is added, preventing duplicate playback. A connected sampler `driving_audio` input still
 takes priority over Timeline Studio guide lanes.
 
 Set **Selected chunks** and **Seconds / chunk**, seek to the desired scene

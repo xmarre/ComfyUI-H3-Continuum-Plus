@@ -1898,3 +1898,29 @@ test("video guidance inherits its soundtrack unless the same original audio alre
       speed:"1",audio_role:"final"}]}]};
   assert.equal(addChunkMedia(legacy,0,"video_guide",id).audio_role,"guide");
 });
+
+test("starting a scene routes original video, H3 audio guidance and final sound automatically",()=>{
+  const id="f".repeat(64),asset={id,name:"film",kind:"video",
+    duration:"1200",video:{start_time:"0"},audio:{start_time:"0"}};
+  const original=makeTrack("retained","Original movie");
+  const p={duration_frames:30000,chunk_frames:168,selection:[0,336],
+    operation:"generate",assets:[asset],prompts:{global:"",mode:"Fixed",script:""},
+    tracks:[original]};
+  const clip=placeAsset(p,asset,original,0,30000);
+  clip.source_in="10";
+  const editor={p,playhead:14955,selected:[],
+    edit(fn){fn(this.p);},jumpToFrame(frame){this.playhead=frame;},
+    message(msg){this.lastMessage=msg;}};
+  TimelineEditor.prototype.startScene.call(editor,14955);
+  assert.deepEqual(p.selection,[14955,15291]);
+  assert.equal(p.chunk_origin_frame,14955);
+  assert.equal(p.tracks.find(t=>t.role==="retained").clips[0].end,30000);
+  assert.equal(clip.audio_role,"both");
+  const guided=p.tracks.flatMap(t=>t.role==="video_guide"?t.clips:[]);
+  assert.equal(guided.length,1);
+  assert.equal(guided[0].audio_role,"neither");
+  assert.equal(guided[0].source_in,clip.source_in);
+  assert.equal(guided[0].start,0);
+  assert.equal(guided[0].end,30000);
+  assert.match(editor.lastMessage,/soundtrack remain whole/);
+});

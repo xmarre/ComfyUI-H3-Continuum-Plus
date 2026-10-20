@@ -489,3 +489,54 @@ def test_scene_clock_survives_later_render_selection(runtime):
     assert "third line" in prompts[0] and "first line" not in prompts[0]
     assert "fourth line" in prompts[1] and "second line" not in prompts[1]
 
+
+def test_embedded_movie_soundtrack_reaches_h3_and_assembler(runtime, monkeypatch):
+    """Video-embedded PCM is both driving conditioning and preserved final audio."""
+    import numpy as np
+    from ComfyUI_H3_Continuum_Join.timeline import runtime as routed
+
+    args, calls, _, store, _ = runtime
+    p = args["timeline"]["project"]
+    asset_id = "e" * 64
+    p["assets"] = [{
+        "id": asset_id, "kind": "video",
+        "video": {"start_time": "0"},
+        "audio": {"start_time": "0", "sample_rate": 240},
+    }]
+    p["tracks"] = [{
+        "id": "source", "role": "retained", "clips": [{
+            "id": "movie", "asset_id": asset_id,
+            "start": 0, "end": 360, "source_in": "0", "speed": "1",
+            "audio_role": "both", "padding": "hold",
+            "audio_padding": "silence",
+        }],
+    }]
+    args["timeline"] = compile_project(p)
+    monkeypatch.setattr(store.assets, "verify", lambda *a, **k: "fixture.mkv")
+    seen = []
+
+    def source_pcm(project, assets, a, b, rate, route, **kwargs):
+        seen.append((a, b, rate, route))
+        return np.full((2, round((b - a) * rate / 24)), .25,
+                       dtype=np.float32)
+
+    monkeypatch.setattr(routed, "mix_audio", source_pcm)
+    result = nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls) == 3
+    assert all(
+        any("audio_latent" in k
+            for k in c["conditioning"][0][1]["minimax_keyframes"])
+        for c in calls
+    )
+    selected = result[-1]
+    assert selected["sample_rate"] == 240
+    assert tuple(selected["waveform"].shape) == (1, 2, 3600)
+    assert torch.allclose(selected["waveform"], torch.full_like(
+        selected["waveform"], .25))
+    assert torch.equal(
+        result[2][_DRIVING_AUDIO_PLAN_KEY]["waveform"],
+        selected["waveform"],
+    )
+    assert any(route == "guide" for *_, route in seen)
+    assert (0, 360, 240, "final") in seen
+    assert "generated H3 audio bypassed" in result[4]
