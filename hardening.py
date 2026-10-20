@@ -82,6 +82,15 @@ def validate_assembly_plan_contract(plan: Mapping[str, Any]) -> None:
 
     target_frames = _strict_int("assembly_plan.target_frames", plan.get("target_frames"), 1)
     expected_target = int(round(len(chunks) * chunk_seconds * fps))
+    if "timeline_requested_frames" in plan:
+        requested = _strict_int(
+            "assembly_plan.timeline_requested_frames", plan["timeline_requested_frames"], 1
+        )
+        # Studio may end on a shorter final source window. Native latent and
+        # decode-group lengths stay intact; only final duration is shortened.
+        if not expected_target - chunk_seconds * fps < requested <= expected_target:
+            raise ValueError("timeline_requested_frames must end inside the final logical chunk")
+        expected_target = requested
     if target_frames != expected_target:
         raise ValueError(
             "assembly_plan.target_frames does not match chunks * chunk_seconds * fps"

@@ -296,3 +296,15 @@ def test_v34_assembly_plan_audio_wins_when_direct_input_is_generated_audio(
     assert torch.equal(output_audio["waveform"], original["waveform"])
     assert output_audio["waveform"].data_ptr() != original["waveform"].data_ptr()
     assert "selected from assembly plan" in report
+
+
+def test_legacy_exact_direct_driving_audio_keeps_prefix_with_final_anchor(monkeypatch):
+    images=torch.zeros((243,8,8,3))
+    driving={'sample_rate':48000,'waveform':torch.linspace(-1,1,243*2000)[None,None]}
+    generated={'sample_rate':48000,'waveform':torch.zeros((1,1,243*2000))}
+    monkeypatch.setattr(H3ContinuumAssembleSeamExperimental,'assemble',
+        lambda self,*args,**kwargs:(images[:240],generated,'base'))
+    _,audio,_=H3ContinuumAssembleSeamV34().assemble(
+        images=[],audio=[],assembly_plan={'target_frames':240,'preserve_final_frame':True},
+        timeline_mode=None,exact_total_duration=True,driving_audio=driving)
+    assert torch.equal(audio['waveform'],driving['waveform'][...,:240*2000])

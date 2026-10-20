@@ -206,3 +206,45 @@ def test_post_stitch_finalizer_rejects_already_compacted_video(timeline_mode):
             _plan(),
             timeline_mode=timeline_mode,
         )
+
+
+def test_short_last_source_window_crops_final_duration_and_original_pcm(monkeypatch):
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import limit_assembly_to_authored_window
+    from ComfyUI_H3_Continuum_Join.v3.plan import validate_assembly_plan
+    plan = _plan()
+    chunks = [dict(c) for c in plan['chunks']]
+    limit_assembly_to_authored_window(plan, {'range':[1000,1220]})
+    assert plan['chunks'] == chunks
+    assert plan['target_frames'] == 220
+    assert plan['timeline_requested_frames'] == 220
+    validate_assembly_plan(plan)
+    images = torch.zeros((243,8,8,3))
+    original = _audio(220)
+    # Source PCM ends at the authored boundary; native overhang is silent.
+    natural = {'sample_rate':original['sample_rate'],
+               'waveform':torch.nn.functional.pad(original['waveform'],(0,23*2000))}
+    plan['_h3_continuum_driving_audio_v1'] = natural
+    monkeypatch.setattr(H3ContinuumAssembleSeamExperimental, 'assemble',
+        lambda self, *args, **kwargs: (images, _audio(243), 'generated'))
+    out, audio, _ = H3ContinuumAssembleSeamV34().assemble(
+        images=[],audio=[],assembly_plan=plan,timeline_mode=V34_TIMELINE_SAFE)
+    assert len(out) == 220
+    assert torch.equal(audio['waveform'], original['waveform'])
+    plan['timeline_requested_frames'] = 120
+    plan['target_frames'] = 120
+    with pytest.raises(ValueError,match='final logical chunk'):
+        validate_assembly_plan(plan)
+
+
+def test_post_refinement_finalizer_keeps_original_pcm_without_anchor_splice():
+    plan = _plan()
+    original = _audio(240)
+    natural = {'sample_rate':48000,
+        'waveform':torch.nn.functional.pad(original['waveform'],(0,3*2000))}
+    plan['_h3_continuum_driving_audio_v1'] = natural
+    images = torch.zeros((243,8,8,3))
+    out, audio, report = H3ContinuumFinalizeDurationV34().finalize(
+        images, _audio(243), plan, timeline_mode=V34_TIMELINE_SAFE)
+    assert len(out) == 240
+    assert torch.equal(audio['waveform'],original['waveform'])
+    assert 'original PCM clock retained' in report

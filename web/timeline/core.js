@@ -1,0 +1,552 @@
+// Pure editing operations shared by the editor and executable frontend tests.
+export const clone = (value) => JSON.parse(JSON.stringify(value));
+export const uid = () =>
+  globalThis.crypto.randomUUID
+    ? globalThis.crypto.randomUUID().replaceAll("-", "")
+    : Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (v) =>
+        v.toString(16).padStart(2, "0"),
+      ).join("");
+export function ratio(value) {
+  const [a, b = 1] = String(value).split("/").map(Number);
+  return a / b;
+}
+export function sourceAt(clip, frame) {
+  return (
+    ratio(clip.source_in || 0) +
+    ((frame - clip.start) * ratio(clip.speed || 1)) / 24
+  );
+}
+/** A still in the main viewer should have at least the displayed pixel density.
+ * Filmstrip derivatives remain 240x136; never enlarge that image for inspection.
+ */
+export function viewerFrameDimensions(asset, viewportWidth, viewportHeight, dpr = 1) {
+  const source = asset?.video || {};
+  const sw = Math.max(1, Number(source.width) || 1024);
+  const sh = Math.max(1, Number(source.height) || 576);
+  const density = Math.min(2, Math.max(1, Number(dpr) || 1));
+  const availableW = Math.max(16, (Number(viewportWidth) || 1024) * density);
+  const availableH = Math.max(16, (Number(viewportHeight) || 576) * density);
+  const scale = Math.min(1, 2048 / sw, 1152 / sh, availableW / sw, availableH / sh);
+  return [
+    Math.max(16, Math.min(2048, Math.round(sw * scale))),
+    Math.max(16, Math.min(1152, Math.round(sh * scale))),
+  ];
+}
+
+/** Only draw the visible surface of arbitrarily long clips. */
+export function visibleClipGeometry(x, width, viewportLeft, viewportRight, margin = 12) {
+  const left = Math.max(x, viewportLeft - margin);
+  const right = Math.min(x + width, viewportRight + margin);
+  if (right <= left) return null;
+  return {
+    left,
+    width: Math.max(4, right - left),
+    offset: left - x,
+    showStartTrim: left <= x,
+    showEndTrim: right >= x + width,
+  };
+}
+
+export function snap(frame, points, threshold = 3) {
+  const near = points
+    .filter((p) => Math.abs(p - frame) <= threshold)
+    .sort((a, b) => Math.abs(a - frame) - Math.abs(b - frame));
+  return Math.max(0, Math.round(near[0] ?? frame));
+}
+export function selectedClips(p, ids) {
+  return p.tracks.flatMap((t) =>
+    t.locked
+      ? []
+      : t.clips.filter((c) => ids.includes(c.id)).map((c) => [t, c]),
+  );
+}
+/**
+ * Render action target: a highlighted output clip takes precedence over the
+ * previously typed global [in,out) range. The clip's timeline timestamps
+ * remain absolute; its source_in/speed continue to determine input PTS.
+ *
+ * Multiple separately placed clips are ambiguous: never export the first
+ * range silently or merge widely separated footage into a long movie.
+ */
+export function exportTarget(p, selectedIds = []) {
+  const ids = new Set(selectedIds);
+  const candidates = (p.tracks || []).flatMap((track) => {
+    if (track.muted) return [];
+    if (!["retained", "generated", "audio"].includes(track.role)) return [];
+    return track.clips
+      .filter((clip) => ids.has(clip.id) && !clip.muted &&
+        (track.role !== "audio" ||
+         ["final", "both"].includes(clip.audio_role)))
+      .map((clip) => ({ clip, track }));
+  });
+  if (candidates.length) {
+    const first = candidates[0].clip;
+    if (candidates.some(({ clip }) =>
+      clip.start !== first.start || clip.end !== first.end)) {
+      throw new Error(
+        "Selected clips have different timeline ranges. " +
+        "Select one clip or set Render [in,out) explicitly."
+      );
+    }
+    const start = first.start, stop = first.end;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(stop) ||
+        start < 0 || stop <= start || stop > p.duration_frames) {
+      throw new Error("Selected clip has an invalid timeline range");
+    }
+    return {
+      start, stop, kind: "clip",
+      clipIds: candidates.map(({ clip }) => clip.id),
+      sourceIn: first.source_in,
+    };
+  }
+  const [start, stop] = p.selection;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(stop) ||
+      start < 0 || stop <= start || stop > p.duration_frames) {
+    throw new Error("Invalid Render [in,out) selection");
+  }
+  return { start, stop, kind: "range", clipIds: [] };
+}
+
+/**
+ * Route the selected retained source directly to H3 temporal video guidance.
+ * This uses the registered asset and its source PTS, not an exported re-encode.
+ * Repeating the action refreshes the guide rather than duplicating it.
+ */
+export function routeClipToGuidance(p, ids) {
+  const sources = selectedClips(p, ids)
+    .filter(([track]) => track.role === "retained");
+  if (sources.length !== 1)
+    throw new Error("Select exactly one retained video clip to guide H3");
+  const [, source] = sources[0];
+  const asset = p.assets.find((a) => a.id === source.asset_id);
+  if (!asset?.video)
+    throw new Error("Selected source has no video stream");
+  let lane = p.tracks.find((t) =>
+    t.role === "video_guide" && !t.muted && !t.locked &&
+    t.clips.some((c) => c.guidance_source_clip_id === source.id));
+  let guide = lane?.clips.find((c) =>
+    c.guidance_source_clip_id === source.id);
+  if (!lane) {
+    // Use a separate, visible guide lane so existing hand-authored guidance
+    // cannot silently mask the new clip via bottom-to-top compositing order.
+    lane = makeTrack("video_guide", "H3 video guidance");
+    p.tracks.push(lane);
+  }
+  const copy = {
+    ...clone(source),
+    id: guide?.id || uid(),
+    guidance_source_clip_id: source.id,
+    audio_role: "neither",
+    guide_disabled: false,
+  };
+  if (guide) Object.assign(guide, copy);
+  else lane.clips.push(copy);
+  // Guidance is composited bottom-to-top; a later guide lane must not mask
+  // the explicit user selection when the action is repeated.
+  p.tracks.splice(p.tracks.indexOf(lane), 1);
+  p.tracks.push(lane);
+  p.selection = [source.start, source.end];
+  return copy;
+}
+
+// A merge is valid only when original source timing and all authored controls
+// remain identical. No hidden interpolation across gaps or muted sections.
+export function mergeAdjacentClips(p, ids) {
+  const chosen = new Set(ids);
+  let merged=0;
+  const canonical = c=>JSON.stringify(Object.entries(c)
+    .filter(([k])=>!["id","start","end","source_in"].includes(k))
+    .sort(([a],[b])=>a.localeCompare(b)));
+  for(const track of p.tracks) {
+    if(track.locked) continue;
+    const ordered=[...track.clips].sort((a,b)=>a.start-b.start||a.end-b.end);
+    for(let i=0;i+1<ordered.length;) {
+      const a=ordered[i], b=ordered[i+1];
+      const valid=(chosen.has(a.id)||chosen.has(b.id)) &&
+        a.end===b.start && a.asset_id===b.asset_id &&
+        !a.chunk_prompt && !b.chunk_prompt &&
+        !a.chunk_workspace && !b.chunk_workspace &&
+        ratio(a.speed??1)===ratio(b.speed??1) &&
+        Math.abs(sourceAt(a,b.start)-ratio(b.source_in??0))<1e-7 &&
+        ![a,b].some(c=>ratio(c.fade_in??0)!==0||ratio(c.fade_out??0)!==0) &&
+        canonical(a)===canonical(b);
+      if(!valid){i++;continue;}
+      a.end=b.end;
+      track.clips=track.clips.filter(c=>c.id!==b.id);
+      chosen.add(a.id);
+      ordered.splice(i+1,1);
+      merged++;
+    }
+  }
+  if(!merged)throw Error("No matching adjacent split pieces: source PTS, mute state, fades or other settings differ. Use Create scene from playhead or Restore uncut original to discard all cuts.");
+  return merged;
+}
+
+// Virtual scene chunks intersect existing uncut footage/audio during sampling.
+export function setSceneStart(p, frame, count) {
+  frame=Math.round(frame);count=Math.round(count);
+  if(!Number.isSafeInteger(frame)||frame<0||frame>=p.duration_frames)
+    throw Error("Scene start must be inside the movie");
+  if(!Number.isSafeInteger(count)||count<1||count>65536)
+    throw Error("Scene chunk count must be 1–65536");
+  const end=frame+count*p.chunk_frames;
+  if(!Number.isSafeInteger(end)||end>p.duration_frames)
+    throw Error("Scene exceeds movie duration; reduce chunks or move the start earlier");
+  p.chunk_origin_frame=frame;
+  p.selection=[frame,end];
+  // Project-authored [0-7s] sections follow the same scene clock as the
+  // optional connected State Manager script.
+  if(p.prompts) p.prompts.origin_frame=frame;
+  for(const track of p.tracks)
+    track.clips=track.clips.filter(c=>!c.chunk_prompt&&!c.chunk_workspace);
+  p.tracks=p.tracks.filter(t=>t.clips.length||!t.chunk_workspace);
+  delete p.conveyor_reference_slots;
+  // The take files remain available; old indices cannot be re-used safely.
+  delete p.accepted;
+  delete p.accepted_windows;
+  return p.selection;
+}
+
+// Non-destructive to the original file and stored take payloads; removes edits
+// and acceptance in the current timeline project only.
+export function restoreOriginalMovie(p, assetId=null) {
+  const options=p.assets.filter(a=>a.video);
+  const chosen = assetId || p.scene_original_asset_id || null;
+  const asset=chosen?options.find(a=>a.id===chosen):
+    options.length===1?options[0]:null;
+  if(!asset)throw Error("Select one original movie to reset");
+  const duration=Math.round(ratio(asset.duration)*24);
+  if(!Number.isSafeInteger(duration)||duration<1)
+    throw Error("Invalid original movie duration");
+  p.duration_frames=duration;
+  p.scene_original_asset_id=asset.id;
+  p.chunk_origin_frame=0;
+  if(p.prompts) p.prompts.origin_frame=0;
+  p.tracks=[];
+  const track=makeTrack("retained","Original movie");
+  p.tracks.push(track);
+  const clip=placeAsset(p,asset,track,0,duration);
+  p.selection=[0,Math.min(duration,3*p.chunk_frames)];
+  p.markers=[];
+  delete p.accepted;
+  delete p.accepted_windows;
+  delete p.conveyor_reference_slots;
+  delete p.queued_batch_id;
+  delete p.import_notes;
+  return clip;
+}
+
+/**
+ * Resolve the original asset, never a currently cut piece's source_in.
+ * An explicitly selected retained video takes priority. Ambiguous sources
+ * must be resolved by selection rather than guessing from track order.
+ */
+export function originalSceneAssetId(p, selectedIds=[]) {
+  const videos = new Set((p.assets||[]).filter(a=>a.video).map(a=>a.id));
+  const selected = new Set(selectedClips(p,selectedIds)
+    .filter(([track,clip])=>track.role==="retained" && videos.has(clip.asset_id))
+    .map(([,clip])=>clip.asset_id));
+  if(selected.size===1)return [...selected][0];
+  if(selected.size>1)throw Error("Select one original movie, not clips from multiple videos");
+  if(p.scene_original_asset_id && videos.has(p.scene_original_asset_id))
+    return p.scene_original_asset_id;
+  const placed = new Set((p.tracks||[])
+    .filter(t=>t.role==="retained")
+    .flatMap(t=>t.clips||[])
+    .filter(c=>videos.has(c.asset_id))
+    .map(c=>c.asset_id));
+  if(placed.size===1)return [...placed][0];
+  if(placed.size>1)throw Error("Select which original video to use for the new scene");
+  if(videos.size===1)return [...videos][0];
+  throw Error("Select an original video on the timeline before starting a scene");
+}
+
+/**
+ * The scene-first operation intentionally starts from pristine registered
+ * source media. Old mute splits, trims, guide lanes and cut audio cannot bleed
+ * into a new scene, and all mutations form one Undo-capable history step.
+ * The movie's source timestamps remain absolute; only chunk boundaries and
+ * project selection use the new scene clock.
+ */
+export function createSceneFromOriginal(p, frame, count, assetId) {
+  const asset = p.assets.find(a=>a.id===assetId && a.video);
+  if(!asset)throw Error("Scene source video is missing or was not registered");
+  frame=Number(frame);count=Number(count);
+  if(!Number.isSafeInteger(frame)||frame<0)
+    throw Error("Scene start frame must be a nonnegative integer");
+  if(!Number.isSafeInteger(count)||count<1||count>65536)
+    throw Error("Scene chunk count must be between 1 and 65536");
+  const duration=Math.round(ratio(asset.duration)*24);
+  const end=frame+count*p.chunk_frames;
+  if(!Number.isSafeInteger(duration)||duration<1||!Number.isSafeInteger(end)||
+     end>duration)
+    throw Error("The selected scene exceeds the original movie duration");
+  const source=restoreOriginalMovie(p,assetId);
+  setSceneStart(p,frame,count);
+  if(p.operation!=="recreate") {
+    // The guide is a visible virtual copy, so legacy Recreate can still use
+    // its established implicit source-guide behavior without duplication.
+    const selection=p.selection.slice();
+    routeClipToGuidance(p,[source.id]);
+    p.selection=selection;
+  }
+  return {source,selection:p.selection.slice(),movieFrames:duration};
+}
+
+export function split(p, ids, frame) {
+  for (const [track, c] of selectedClips(p, ids)) {
+    if (frame <= c.start || frame >= c.end) continue;
+    const right = {
+      ...clone(c),
+      id: uid(),
+      start: frame,
+      source_in: String(sourceAt(c, frame)),
+    };
+    c.end = frame;
+    track.clips.push(right);
+  }
+}
+export function trim(p, ids, edge, frame, ripple = false) {
+  for (const [, c] of selectedClips(p, ids)) {
+    const old = clone(c);
+    if (edge === "start") {
+      c.start = Math.min(c.end - 1, Math.max(0, frame));
+      c.source_in = String(sourceAt(old, c.start));
+    } else c.end = Math.max(c.start + 1, Math.min(p.duration_frames, frame));
+    if (ripple) {
+      const delta = c.end - c.start - (old.end - old.start);
+      if (edge === "start") {
+        c.start = old.start;
+        c.end = old.end + delta;
+      }
+      if (delta < 0) {
+        const start = edge === "start" ? old.start : c.end;
+        rippleCut(p, start, start - delta, c.id);
+      } else if (delta > 0)
+        rippleInsert(p, edge === "start" ? old.start : old.end, delta, c.id);
+    }
+  }
+}
+export function move(p, ids, delta, slip = false) {
+  const chosen = selectedClips(p, ids);
+  if (!chosen.length) return;
+  delta = Math.round(delta);
+  if (!slip)
+    delta = Math.max(delta, -Math.min(...chosen.map(([, c]) => c.start)));
+  for (const [, c] of chosen) {
+    if (slip) c.source_in = String(sourceAt(c, c.start + delta));
+    else {
+      c.start += delta;
+      c.end += delta;
+    }
+  }
+  p.duration_frames = Math.max(
+    p.duration_frames,
+    ...p.tracks.flatMap((t) => t.clips.map((c) => c.end)),
+  );
+}
+export function remove(p, ids, ripple = false) {
+  const removed = [];
+  for (const track of p.tracks) {
+    if (track.locked) continue;
+    removed.push(...track.clips.filter((c) => ids.includes(c.id)));
+    track.clips = track.clips.filter((c) => !ids.includes(c.id));
+  }
+  if (!ripple) return;
+  const intervals = [];
+  for (const c of removed.sort((a, b) => a.start - b.start)) {
+    const last = intervals.at(-1);
+    if (last && c.start <= last[1]) last[1] = Math.max(last[1], c.end);
+    else intervals.push([c.start, c.end]);
+  }
+  // Close each removed span on every unlocked lane, latest span first.
+  for (const [start, end] of intervals.reverse()) rippleCut(p, start, end);
+}
+function rippleCut(p, start, end, skipId) {
+  const cut = end - start;
+  const at = (f) => (f <= start ? f : Math.max(start, f - cut));
+  for (const track of p.tracks)
+    if (!track.locked)
+      track.clips = track.clips.flatMap((c) => {
+        if (c.id === skipId) return [c];
+        if (c.end <= start) return [c];
+        if (c.start >= end)
+          return [{ ...c, start: c.start - cut, end: c.end - cut }];
+        const result = [];
+        if (c.start < start) result.push({ ...c, end: start });
+        if (c.end > end)
+          result.push({
+            ...c,
+            id: result.length ? uid() : c.id,
+            start,
+            end: c.end - cut,
+            source_in: String(sourceAt(c, end)),
+          });
+        return result;
+      });
+  p.duration_frames = Math.max(
+    1,
+    p.duration_frames - cut,
+    ...p.tracks.flatMap((t) => t.clips.map((c) => c.end)),
+  );
+  if (p.selection) {
+    const a = Math.min(at(p.selection[0]), p.duration_frames - 1);
+    p.selection = [
+      a,
+      Math.max(a + 1, Math.min(at(p.selection[1]), p.duration_frames)),
+    ];
+  }
+  if (p.markers)
+    p.markers = p.markers.flatMap((m) => {
+      const stop = m.end ?? m.frame + 1;
+      if (m.frame >= start && stop <= end) return [];
+      const frame = at(m.frame),
+        after = at(stop);
+      return after > frame
+        ? [{ ...m, frame, ...(m.end == null ? {} : { end: after }) }]
+        : [];
+    });
+}
+function rippleInsert(p, frame, count, skipId) {
+  for (const track of p.tracks)
+    if (!track.locked)
+      track.clips = track.clips.flatMap((c) => {
+        if (c.id === skipId || c.end <= frame) return [c];
+        if (c.start >= frame)
+          return [{ ...c, start: c.start + count, end: c.end + count }];
+        return [
+          { ...c, end: frame },
+          {
+            ...c,
+            id: uid(),
+            start: frame + count,
+            end: c.end + count,
+            source_in: String(sourceAt(c, frame)),
+          },
+        ];
+      });
+  p.duration_frames += count;
+  if (p.selection)
+    p.selection = p.selection.map((f) => (f >= frame ? f + count : f));
+  for (const marker of p.markers || []) {
+    if (marker.frame >= frame) marker.frame += count;
+    if (marker.end >= frame) marker.end += count;
+  }
+}
+export function paste(p, clipboard, frame) {
+  if (!clipboard.length) return [];
+  const origin = Math.min(...clipboard.map(([, c]) => c.start));
+  const ids = [];
+  for (const [trackId, c] of clipboard) {
+    const t = p.tracks.find((x) => x.id === trackId);
+    if (!t || t.locked) continue;
+    const next = {
+      ...clone(c),
+      id: uid(),
+      start: frame + c.start - origin,
+      end: frame + c.end - origin,
+    };
+    t.clips.push(next);
+    ids.push(next.id);
+    p.duration_frames = Math.max(p.duration_frames, next.end);
+  }
+  return ids;
+}
+export class History {
+  constructor(project) {
+    this.value = clone(project);
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+  commit(fn) {
+    const candidate = clone(this.value);
+    fn(candidate);
+    this.undoStack.push(clone(this.value));
+    if (this.undoStack.length > 100) this.undoStack.shift();
+    this.value = candidate;
+    this.redoStack = [];
+  }
+  undo() {
+    if (this.undoStack.length) {
+      this.redoStack.push(this.value);
+      this.value = this.undoStack.pop();
+    }
+  }
+  redo() {
+    if (this.redoStack.length) {
+      this.undoStack.push(this.value);
+      this.value = this.redoStack.pop();
+    }
+  }
+}
+export function makeTrack(role, name = role) {
+  return {
+    id: uid(),
+    role,
+    name,
+    clips: [],
+    locked: false,
+    muted: false,
+    hidden: false,
+  };
+}
+/**
+ * Reuse an existing continuous, matching soundtrack before assigning audio
+ * to another video clip. This prevents duplicate playback when a video guide
+ * is cut from an original clip that already supplies its own audio.
+ */
+export function videoSoundtrackRole(p, clip, assetOverride=null) {
+  const asset=assetOverride||p.assets?.find(a=>a.id===clip.asset_id);
+  if(!asset?.video || !asset?.audio) return "neither";
+  let hasGuide=false,hasFinal=false;
+  for(const track of p.tracks||[]) {
+    if(track.muted) continue;
+    for(const other of track.clips||[]) {
+      if(other.id===clip.id || other.muted || other.asset_id!==clip.asset_id ||
+         other.start>=clip.end || other.end<=clip.start ||
+         !["guide","final","both"].includes(other.audio_role)) continue;
+      const common=Math.max(clip.start,other.start);
+      if(Math.abs(sourceAt(other,common)-sourceAt(clip,common))>1e-6 ||
+         Math.abs(ratio(other.speed??1)-ratio(clip.speed??1))>1e-9)
+        continue;
+      hasGuide ||= other.audio_role==="guide" || other.audio_role==="both";
+      hasFinal ||= other.audio_role==="final" || other.audio_role==="both";
+    }
+  }
+  if(hasGuide) return hasFinal?"neither":"final";
+  return hasFinal?"guide":"both";
+}
+
+export function placeAsset(p, asset, track, frame, duration) {
+  if (track.locked) throw new Error("Unlock this track before placing media");
+  if (track.role === "image_reference" && asset.kind !== "image")
+    throw new Error(
+      "Image reference sets require a still image; use a Video guidance track for movie footage",
+    );
+  const end = frame + Math.max(1, duration);
+  const c = {
+    id: uid(),
+    asset_id: asset.id,
+    start: frame,
+    end,
+    source_in: String(
+      ratio((asset.video || asset.audio || {}).start_time || 0),
+    ),
+    speed: "1",
+    // Audio streams commonly end a few milliseconds before their video.
+    padding: track.role === "audio" ? "silence" : "error",
+    // A video's original soundtrack follows its own clip and source PTS:
+    // cutting or moving the video cannot desynchronize its audio.
+    audio_role: track.role === "audio" ? "final" : "neither",
+    // Audio may end milliseconds ahead of video. Only PCM is padded.
+    ...(["retained","video_guide"].includes(track.role) && asset.video && asset.audio ?
+      { audio_padding: "silence" } : {}),
+    alias: asset.alias || "",
+    name: asset.name,
+  };
+  if(["retained","video_guide"].includes(track.role))
+    c.audio_role=videoSoundtrackRole(p,c,asset);
+  track.clips.push(c);
+  p.duration_frames = Math.max(p.duration_frames, end);
+  return c;
+}
