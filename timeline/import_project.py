@@ -295,6 +295,22 @@ def apply_components(
             "mode": "studio",
             "imported_from": provenance or {"kind": "file"},
         }
+    if (
+        target == "replace"
+        and not selected.get("chunks")
+        and p.get("prompts", {}).get("regions")
+    ):
+        if p["chunk_frames"] != current["chunk_frames"] or p.get(
+            "chunk_origin_frame", 0
+        ) != current.get("chunk_origin_frame", 0):
+            mapping["notes"].append(
+                "Media-only replacement retains existing prompt sections at their original movie frames; they are not reflowed onto the new chunk grid. Review their ranges below or Undo."
+            )
+        for region in p["prompts"]["regions"]:
+            if region["end"] > p["duration_frames"]:
+                mapping["notes"].append(
+                    f"Retained prompt frames [{region['start']}, {region['end']}) extend beyond the replacement scene and remain stored for reuse."
+                )
     p["import_notes"] = mapping["notes"]
     validate(p)
     return p, mapping

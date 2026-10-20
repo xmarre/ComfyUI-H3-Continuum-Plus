@@ -37,3 +37,19 @@ export function migrateChunkPrompts(project) {
   }
   return project;
 }
+
+// Include inherited gaps so partial imports never hide an authoring surface.
+export function editablePromptSections(project,start,end) {
+  const result=[];let cursor=start;
+  for(const r of importedRegions(project,start,end).sort((a,b)=>a.start-b.start)) {
+    if(cursor<r.start)result.push({start:cursor,end:r.start,text:"",inherited:true});
+    result.push(r);cursor=r.end;
+  }
+  if(cursor<end)result.push({start:cursor,end,text:"",inherited:true});
+  return result;
+}
+
+export function editPromptSection(project,section,text) {
+  const metadata={...section,text:String(text)};delete metadata.inherited;
+  return setImportedRegion(project,section.start,section.end,String(text).trim()?String(text):null,metadata);
+}

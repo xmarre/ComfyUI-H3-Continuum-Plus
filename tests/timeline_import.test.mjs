@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {promptSourceNodes,connectedTextSource,selectedPresetSource} from "../web/timeline/import_state.js";
-import {importedRegions,setImportedRegion,migrateChunkPrompts} from "../web/timeline/import_regions.js";
+import {importedRegions,setImportedRegion,migrateChunkPrompts,editablePromptSections,editPromptSection} from "../web/timeline/import_regions.js";
 import {History} from "../web/timeline/core.js";
 import {applyImportPreview} from "../web/timeline/import_dialog.js";
 
@@ -68,4 +68,16 @@ test("a saved preset never silently substitutes another connected Text Box slot"
   const {manager,text}=graphFixture();
   const api={async fetchApi(){return {ok:true,json:async()=>({characters:[{id:"char",prompts:[{id:"preset",text_boxes:[{role:"positive",slot:"default",text:"Wrong identity"}]}]}]})};}};
   await assert.rejects(selectedPresetSource(api,manager,text),/matching the connected role and slot/);
+});
+
+test("uncovered parts of a partially imported chunk can be authored and clearing restores inheritance",()=>{
+  const p={prompts:{regions:[{id:"b",start:48,end:120,text:"B"}]}};
+  let sections=editablePromptSections(p,0,168);
+  assert.deepEqual(sections.map(r=>[r.start,r.end,!!r.inherited]),[[0,48,true],[48,120,false],[120,168,true]]);
+  editPromptSection(p,sections[0],"New first action");
+  assert.deepEqual(importedRegions(p,0,168).map(r=>r.text),["New first action","B"]);
+  sections=editablePromptSections(p,0,168);
+  editPromptSection(p,sections[1],"  ");
+  assert.deepEqual(importedRegions(p,0,168).map(r=>r.text),["New first action"]);
+  assert.equal(editablePromptSections(p,0,168)[1].inherited,true);
 });

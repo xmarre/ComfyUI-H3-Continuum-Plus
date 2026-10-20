@@ -22,6 +22,12 @@ _LIKE = re.compile(
     re.IGNORECASE,
 )
 
+# A numeric range followed by a noun is ordinary prose, even inside brackets.
+_NUMERIC_PROSE = re.compile(
+    r"^\s*\[?\s*\d+(?:\.\d+)?\s*(?:[-–—]|\bto\b)\s*\d+(?:\.\d+)?\s+(?!(?:s|secs?|seconds?)\b)[A-Za-z]",
+    re.IGNORECASE,
+)
+
 
 def header(line):
     """Return (time match, chunk match, inline body), or no header."""
@@ -88,7 +94,7 @@ def parse_prompt_source(source):
                 if index < 1:
                     raise ValueError(f"Line {n + 1}: chunk numbers start at 1: {line}")
                 headers.append((n, {"chunk": index}, inline))
-            elif _LIKE.match(line):
+            elif _LIKE.match(line) and not _NUMERIC_PROSE.match(line):
                 raise ValueError(
                     f"Line {n + 1}: "
                     + (

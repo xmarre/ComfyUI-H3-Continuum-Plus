@@ -149,7 +149,7 @@ export class ImportDialog {
       el("td",{text:row.range.join("–")+" / "+row.seconds.join("–")}),
       el("td",{text:this.selected.chunks?(row.parts.map(p=>"["+p.range.join("–")+") "+p.text).join("\n")||"Uncovered · existing prompt retained"):"Chunk prompts not selected · existing prompt retained"})));
     table.append(body);this.details.append(table);
-    for(const [title,value] of [["Selected media",result.media],["Uncovered chunks",result.mapping.uncovered],["Gaps",result.mapping.gaps],["Surplus entries (outside current scene)",result.mapping.surplus],["Timing / import notes",result.notes]])
+    for(const [title,value] of [["Prompt sections after import",result.project.prompts?.regions||[]],["Selected media",result.media],["Uncovered chunks",result.mapping.uncovered],["Gaps",result.mapping.gaps],["Surplus entries (outside current scene)",result.mapping.surplus],["Timing / import notes",result.notes]])
       this.details.append(el("details",{open:""},el("summary",{text:title+" · "+value.length}),el("pre",{text:JSON.stringify(value,null,2)})));
     this.apply.disabled=version!==this.editor.editVersion;
     this.status.textContent="Preview ready · Apply import confirms these changes.";

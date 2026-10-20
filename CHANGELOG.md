@@ -4,6 +4,7 @@
 
 - Add a unified selective importer for ZIP/JSON/text/paste/media and read-only State Manager Text Box or saved preset sources, with component detection, merge/replace, scene/movie timestamp origins, strict header diagnostics and preview-before-apply in one Undo step.
 - Use one editable chunk prompt region store for imported and typed actions; migrate legacy chunk prompts, preserve uncovered spans, and make imported Studio ownership explicit with a connected-source relink action.
+- Make uncovered imported-chunk spans editable and clear either typed/imported actions back to inheritance. Pin full-chunk migration hash stability; unusual partial legacy chunk clips may invalidate existing takes because their nominal segment transport is normalized. Report retained prompt timing when media-only replacement changes the grid.
 - Warn about unsupported unimported connected prompt headers. Advance desktop/frontend/backend compatibility to v20.
 
 - Import pre-cut clip packs with JSON global/chunk prompts, exact source PTS mapping and a continuous original soundtrack routed to H3 driving conditioning and final assembly.

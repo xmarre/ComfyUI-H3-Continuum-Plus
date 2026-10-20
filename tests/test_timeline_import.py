@@ -455,3 +455,86 @@ def test_embedded_soundtrack_replace_disables_old_routes_and_does_not_overlap():
         (0, 168),
         (168, 504),
     ]
+
+
+@pytest.mark.parametrize(
+    "text", ["[1-2 girls, red dress]", "10 to 12 dancers appear: they spin"]
+)
+def test_numeric_ranges_with_nouns_are_prose(text):
+    assert parse_prompt_source(text)["global"] == text
+    doc = parse_prompt_source("[0-7s] Action\n" + text)
+    assert doc["entries"][0]["text"] == "Action\n" + text
+
+
+def test_migration_preserves_generation_hash_and_take_validity():
+    from ComfyUI_H3_Continuum_Join.timeline.nodes import stale_take
+
+    p = blank_project()
+    p["prompts"]["global"] = "Identity"
+    p["tracks"] = [
+        {
+            "id": "chunk-lane",
+            "role": "prompt",
+            "clips": [
+                {
+                    "id": "old",
+                    "start": 0,
+                    "end": 168,
+                    "text": "Action",
+                    "override": True,
+                    "chunk_prompt": True,
+                    "chunk_index": 0,
+                    "audio_role": "neither",
+                }
+            ],
+        }
+    ]
+    p["tracks"][0]["clips"][0].update(source_in="0", speed="1", padding="error")
+    p["tracks"][0]["clips"].append(
+        {
+            **p["tracks"][0]["clips"][0],
+            "id": "second",
+            "start": 168,
+            "end": 336,
+            "chunk_index": 1,
+            "text": "Second action",
+        }
+    )
+    before = [compile_window(p, i)["generation_hash"] for i in range(3)]
+    record = {"id": "c" * 32, "indices": [0, 1, 2], "input_hashes": before}
+    migrated = validate(p)
+    assert migrated["prompts"]["regions"][0]["text"] == "Action"
+    assert [compile_window(migrated, i)["generation_hash"] for i in range(3)] == before
+    assert not stale_take(migrated, record, [record])
+
+
+def test_media_only_replacement_reports_retained_prompt_grid_mismatch():
+    p = blank_project()
+    p["prompts"]["regions"] = [
+        {"id": "a", "start": 168, "end": 336, "text": "A", "chunk_index": 1}
+    ]
+    asset = {
+        "id": "a" * 64,
+        "kind": "video",
+        "video": {"start_time": "0"},
+        "audio": None,
+    }
+    result, mapping = apply_components(
+        p,
+        parse_prompt_source(""),
+        [
+            {
+                "component": "video",
+                "asset": asset,
+                "start": 0,
+                "end": 192,
+                "source_in": "0",
+            }
+        ],
+        {"video": True},
+        target="replace",
+    )
+    assert result["chunk_frames"] == 192
+    assert result["prompts"]["regions"] == p["prompts"]["regions"]
+    assert any("not reflowed" in note for note in mapping["notes"])
+    assert any("extend beyond" in note for note in mapping["notes"])

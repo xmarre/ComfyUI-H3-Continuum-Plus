@@ -9,7 +9,7 @@ import {
 import { selectionChunks } from "./sampler_layout.js";
 import { sourceAt } from "./core.js";
 import { connectedTextSource } from "./import_state.js";
-import { importedRegions, setImportedRegion } from "./import_regions.js";
+import { importedRegions, editablePromptSections, editPromptSection } from "./import_regions.js";
 import { traceReferenceSocket, collectReferenceProvenance, conveyorState, shelfImagePath, conveyorShelfAvailable } from "./conveyor_source.js";
 
 function el(tag, props = {}, ...children) {
@@ -627,14 +627,15 @@ export function renderChunkWorkspace(editor) {
       setChunkPrompt(next,chunk.index,prompt.value),"chunk:"+chunk.index));
     prompt.addEventListener("blur",()=>{editor.promptEditKey=null;});
     if(imported.length) {
-      for(const region of imported) {
+      for(const region of editablePromptSections(p,chunk.start,chunk.end)) {
         const field=el("textarea",{"aria-label":"Imported prompt for chunk "+(chunk.index+1)+" at frame "+region.start,rows:"3"});
         field.value=region.text;
+        field.placeholder=region.inherited?"Inherited prompt · write an action for this uncovered section":"Clear to restore the inherited prompt";
         field.disabled=p.prompt_source?.mode==="connected"||!!region.locked;
         field.addEventListener("input",()=>editor.editPrompt(project=>
-          setImportedRegion(project,region.start,region.end,field.value,{...region,text:field.value}),"import:"+region.start+":"+region.end));
+          editPromptSection(project,region,field.value),"import:"+region.start+":"+region.end));
         field.addEventListener("blur",()=>{editor.promptEditKey=null;});
-        card.append(control("1 · Prompt · "+frameTime(region.start)+"–"+frameTime(region.end),field));
+        card.append(control("1 · "+(region.inherited?"Uncovered prompt":"Prompt")+" · "+frameTime(region.start)+"–"+frameTime(region.end),field));
       }
     } else card.append(control("1 · Per-chunk H3 prompt",prompt));
     const preview=el("div",{class:"h3ts-chunk-compiled",
