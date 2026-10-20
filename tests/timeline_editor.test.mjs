@@ -1997,3 +1997,11 @@ test("new scene accepts exact draft duration independently of old selection cuts
   assert.throws(()=>TimelineEditor.prototype.startScene.call(editor,17393,2,3.5),/between 4 and 15/);
   assert.equal(JSON.stringify(p),before);
 });
+
+test("playhead movement updates the displayed scene-start preview",()=>{
+  const editor={p:{chunk_frames:168,chunk_origin_frame:0},
+    playhead:220,updated:false,
+    updateScenePreview(){this.updated=true;}};
+  TimelineEditor.prototype.drawPlayhead.call(editor);
+  assert.equal(editor.updated,true);
+});

@@ -1812,6 +1812,7 @@ export class TimelineEditor {
         ` · scene chunk ${this.playhead<(this.p.chunk_origin_frame||0)?
         "before start":Math.floor((this.playhead-(this.p.chunk_origin_frame||0)) /
         this.p.chunk_frames)+1}`;
+    this.updateScenePreview?.();
   }
   setZoom(z) {
     this.zoom = Math.max(0.1, Math.min(1000, z));

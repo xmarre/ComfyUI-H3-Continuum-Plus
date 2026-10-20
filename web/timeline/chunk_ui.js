@@ -476,6 +476,10 @@ export function renderChunkWorkspace(editor) {
       "Undo all timeline cuts and muted sound clips; source files and saved takes remain"),
     exact);
   update();
+  // Scene preview is tied to the actual playhead, not the last value at which
+  // the chunk panel happened to render. Seeking never silently moves the
+  // requested start behind an outdated UI label.
+  editor.updateScenePreview=update;
   heading.append(controls,summary);
   host.append(heading);
   const viewTools=el("details",{class:"h3ts-scene-view-tools"});
