@@ -2156,3 +2156,17 @@ test("pack import cannot overwrite edits made during server registration",async(
     /timeline changed during import/);
   assert.equal(apply,0);
 });
+
+test("prompt input persists immediately without rebuilding the focused textareas",()=>{
+  const history=new History({prompts:{global:"old"}});
+  let persisted,inspections=0;
+  const editor={history,editVersion:0,
+    get p(){return history.value;},
+    persistWidget(){persisted=JSON.stringify(this.p);},
+    chunkBoard:null,scheduleChunkCompile(){inspections++;},
+    render(){throw Error("must keep focused DOM");}};
+  TimelineEditor.prototype.editPrompt.call(editor,p=>p.prompts.global="current identity");
+  assert.equal(JSON.parse(persisted).prompts.global,"current identity");
+  assert.equal(editor.editVersion,1);
+  assert.equal(inspections,1);
+});

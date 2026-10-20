@@ -232,6 +232,7 @@ export function restoreOriginalMovie(p, assetId=null) {
   delete p.accepted_windows;
   delete p.conveyor_reference_slots;
   delete p.queued_batch_id;
+  delete p.import_notes;
   return clip;
 }
 

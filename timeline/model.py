@@ -477,10 +477,16 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
                     ]
                     base += "\n" + (preceding[-1] if preceding else sections[0])["body"]
             else:
-                base += "\n" + script
+                if script.strip() != global_text.strip():
+                    shared_text += "\n" + script
+                base = shared_text
         except (ValueError, TypeError, IndexError, KeyError):
             # Same permissive opaque fallback as existing prompt plans.
-            base += "\n" + script
+            shared_text = global_text
+            timed = []
+            if script.strip() != global_text.strip():
+                shared_text += "\n" + script
+            base = shared_text
     for i in inputs:
         if i["role"] == "prompt":
             timed.append((*i["range"], i["text"], i["override"]))

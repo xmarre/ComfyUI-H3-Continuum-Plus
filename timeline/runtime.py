@@ -10,10 +10,12 @@ import torch
 from .media import mix_audio
 
 
-def limit_assembly_to_authored_window(assembly, job):
+def limit_assembly_to_authored_window(assembly, job, output_start=None):
     """Keep native decode topology and record a short final picture's target."""
-    requested = job["range"][1] - job["range"][0]
-    if requested < assembly["target_frames"]:
+    requested = job["range"][1] - (
+        job["range"][0] if output_start is None else output_start
+    )
+    if 0 < requested < assembly["target_frames"]:
         assembly["timeline_requested_frames"] = requested
         assembly["target_frames"] = requested
     return assembly
@@ -214,6 +216,26 @@ class TimelineInputs:
             "waveform": torch.from_numpy(pcm.copy())[None],
             "sample_rate": sample_rate,
         }
+
+    def final_output_audio(self, start_frame, end_frame, sample_rate):
+        """Preserve contiguous source PCM across natural multi-job boundaries.
+
+        Native overhang inside the selected scene belongs to the next movie
+        timestamps. Only frames beyond that scene's endpoint receive silence.
+        """
+        from .model import sample_boundary
+        import torch.nn.functional as F
+
+        source_end = min(
+            end_frame, self.project["selection"][1], self.project["duration_frames"]
+        )
+        audio = self.final_audio(start_frame, source_end, sample_rate)
+        if audio is None:
+            return None
+        padding = sample_boundary(end_frame, sample_rate) - sample_boundary(source_end, sample_rate)
+        if padding > 0:
+            audio["waveform"] = F.pad(audio["waveform"], (0, padding))
+        return audio
 
     def invocation_plan(self, original, index):
         """Native Timeline source for a window with timed prompt regions.

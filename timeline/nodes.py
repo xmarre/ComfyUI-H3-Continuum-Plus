@@ -614,7 +614,7 @@ class H3ContinuumTimelineSampler:
                     )
             external_project = with_external_prompt_source(
                 p, {
-                    "global": "",
+                    "global": p["prompts"].get("global", ""),
                     "mode": external["mode"],
                     "script": source["original_text"],
                     "origin_frame": origin_frame,
@@ -925,7 +925,7 @@ class H3ContinuumTimelineSampler:
         )
         from .runtime import limit_assembly_to_authored_window
 
-        limit_assembly_to_authored_window(assembly, job)
+        limit_assembly_to_authored_window(assembly, job, provider.offset)
         videos = [{"samples": e["video"]} for e in decode]
         audios = [{"samples": e["audio"]} for e in decode]
         if emit_refine_state:
@@ -971,7 +971,6 @@ class H3ContinuumTimelineSampler:
             # that native overhang would incorrectly discard a complete source
             # soundtrack, especially at the very end of a movie.
             from ..v3.driving_nodes import _DRIVING_AUDIO_PLAN_KEY, _copy_audio
-            from .model import sample_boundary
 
             rate = int(p.get("audio_sample_rate") or next(
                 (a["audio"]["sample_rate"] for a in p["assets"]
@@ -979,28 +978,11 @@ class H3ContinuumTimelineSampler:
                 48000,
             ))
             natural_start, natural_end = record["output_range"]
-            authored_end = natural_start + job["range"][1] - job["range"][0]
-            selected_audio = provider.final_audio(
-                natural_start, authored_end, rate
+            authored_end = min(natural_end, p["selection"][1], p["duration_frames"])
+            selected_audio = provider.final_output_audio(
+                natural_start, natural_end, rate
             )
             if selected_audio is not None:
-                # Keep all requested source PCM unchanged. Extra native video
-                # frames receive silence instead of newly generated speech.
-                # The V3.4 exact-duration mode can crop that overhang later.
-                import torch.nn.functional as F
-
-                excess_samples = (
-                    sample_boundary(natural_end, rate)
-                    - sample_boundary(authored_end, rate)
-                )
-                if excess_samples > 0:
-                    selected_audio["waveform"] = F.pad(
-                        selected_audio["waveform"], (0, excess_samples)
-                    )
-                elif excess_samples < 0:
-                    selected_audio["waveform"] = selected_audio["waveform"][
-                        ..., :excess_samples
-                    ]
                 selected_audio = _copy_audio(selected_audio)
                 assembly[_DRIVING_AUDIO_PLAN_KEY] = _copy_audio(selected_audio)
                 report += (

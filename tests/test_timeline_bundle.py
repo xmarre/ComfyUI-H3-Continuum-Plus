@@ -172,3 +172,23 @@ def test_pack_limits_and_bad_zip_do_not_register_bytes(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='Unreadable clip pack'):
         import_bundle(path, assets, {})
     assert not assets.calls
+
+
+def test_late_media_failure_leaves_project_unchanged_and_cleans_temporaries(tmp_path):
+    assets=Assets(tmp_path)
+    adopt=assets.adopt
+    def mismatch(path, checksum, name, *, cancel):
+        a=adopt(path,checksum,name,cancel=cancel)
+        if name=='chunk_02.mp4':
+            a['duration']='2'
+        return a
+    assets.adopt=mismatch
+    current=blank_project()
+    before=copy.deepcopy(current)
+    with pytest.raises(ValueError,match='picture duration disagrees'):
+        import_bundle(pack(tmp_path),assets,current)
+    assert current==before
+    # Already adopted content-addressed bytes are retained for safe reuse;
+    # deleting them could remove an asset concurrently used by another project.
+    assert assets.calls==['chunk_01.mp4','chunk_02.mp4']
+    assert [x.name for x in tmp_path.iterdir()]==['pack.zip']

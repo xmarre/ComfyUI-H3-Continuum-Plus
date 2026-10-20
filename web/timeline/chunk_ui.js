@@ -391,7 +391,7 @@ function compiledLine(node, window, inputs, ownPrompt = "", chunkIndex = window?
   }
   const prompt = inputs.promptOverridden
     ? (ownPrompt
-      ? "Chunk prompt overrides connected sequence_prompt: "+ownPrompt
+      ? "Chunk action + shared connected instructions (resolved at runtime): "+ownPrompt
       : "Connected sequence_prompt supplies this chunk's prompt (runtime source)")
     : "Compiled prompt: "+(window.prompt || "(empty)");
   const selection = selectedConveyorSlots(inputs.project, window.index);
@@ -486,14 +486,14 @@ export function renderChunkWorkspace(editor) {
   heading.append(controls,summary);
   host.append(heading);
   if(p.import_notes?.length) host.append(el("details",{class:"h3ts-import-notes"},
-    el("summary",{text:"Clip-pack timing and soundtrack notes ("+p.import_notes.length+")"}),
+    el("summary",{text:"Clip-pack import receipt · timing and soundtrack ("+p.import_notes.length+")"}),
     ...p.import_notes.map(text=>el("p",{text}))));
   const globalPrompt=el("textarea",{
     class:"h3ts-global-prompt",rows:"3","aria-label":"Global prompt for every chunk",
     placeholder:"Identity, style and instructions shared by every chunk",
   });
   globalPrompt.value=p.prompts?.global || "";
-  globalPrompt.addEventListener("change",()=>editor.edit(project=>{
+  globalPrompt.addEventListener("input",()=>editor.editPrompt(project=>{
     project.prompts ||= {mode:"Fixed",script:""};
     project.prompts.global=globalPrompt.value;
   }));
@@ -598,11 +598,11 @@ export function renderChunkWorkspace(editor) {
         " · "+(chunk.end-chunk.start)+" frames"+sub})));
     const prompt = el("textarea",{
       "aria-label":"Prompt for chunk "+(chunk.index+1),
-      placeholder:"Write prompt for this chunk; replaces inherited script (global prompt remains)",
+      placeholder:"Write this chunk's action; shared identity, global prompt and preamble remain",
       rows:"3",
     });
     prompt.value=ownPrompt?.clip.text || "";
-    prompt.addEventListener("change",()=>editor.edit((next)=>
+    prompt.addEventListener("input",()=>editor.editPrompt((next)=>
       setChunkPrompt(next,chunk.index,prompt.value)));
     card.append(control("1 · Per-chunk H3 prompt",prompt));
     const preview=el("div",{class:"h3ts-chunk-compiled",

@@ -621,3 +621,40 @@ def test_video_guidance_soundtrack_can_supply_complete_final_audio(monkeypatch):
     assert audio["sample_rate"]==24000
     assert tuple(audio["waveform"].shape)==(1,2,168000)
     assert calls==[(0,168,"final")]
+
+
+def test_final_audio_spans_natural_job_join_and_pads_only_after_scene(monkeypatch):
+    import numpy as np
+    from types import SimpleNamespace
+    from ComfyUI_H3_Continuum_Join.timeline import runtime as routed
+    from ComfyUI_H3_Continuum_Join.timeline.model import sample_boundary
+    p=blank_project()
+    p.update(duration_frames=5159,selection=[0,5159])
+    aid='a'*64
+    p['assets']=[{'id':aid,'kind':'audio','audio':{'sample_rate':44100}}]
+    p['tracks']=[{'id':'audio','role':'audio','clips':[{
+        'id':'soundtrack','asset_id':aid,'start':0,'end':5159,'audio_role':'both'}]}]
+    p=validate(p)
+    jobs=compile_project(p)['jobs']
+    calls=[]
+    def pcm(project,assets,a,b,rate,route):
+        calls.append((a,b,route))
+        start,stop=sample_boundary(a,rate),sample_boundary(b,rate)
+        return np.broadcast_to(np.arange(start,stop,dtype=np.float32)[None],(2,stop-start)).copy()
+    monkeypatch.setattr(routed,'mix_audio',pcm)
+    first=TimelineInputs(p,jobs[0],SimpleNamespace(assets=object()))
+    last=TimelineInputs(p,jobs[1],SimpleNamespace(assets=object()))
+    # A native job end need not coincide with the nominal 2688-frame cut.
+    actual_join=2691
+    last.set_offset(actual_join)
+    left=first.final_output_audio(0,actual_join,44100)
+    right=last.final_output_audio(actual_join,5165,44100)
+    assert left is not None and right is not None
+    source=np.concatenate([left['waveform'][0].numpy(),right['waveform'][0].numpy()],axis=-1)
+    boundary=sample_boundary(5159,44100)
+    assert np.array_equal(source[0,:boundary],np.arange(boundary,dtype=np.float32))
+    assert np.count_nonzero(source[:,boundary:])==0
+    assert calls==[(0,2691,'final'),(2691,5159,'final')]
+    assembly={'target_frames':2520}
+    routed.limit_assembly_to_authored_window(assembly,jobs[1],actual_join)
+    assert assembly['target_frames']==5159-2691

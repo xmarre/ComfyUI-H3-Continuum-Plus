@@ -491,3 +491,15 @@ def test_identical_studio_global_and_connected_preamble_are_prepended_once():
     merged = with_external_prompt_source(p, {'mode':'Timeline',
         'script':'Shared identity\n[0-7s]\nAction'})
     assert compile_window(merged,0)['prompt'] == 'Shared identity\nAction'
+
+
+@pytest.mark.parametrize('mode,script', [
+    ('Fixed','Shared identity'), ('Timeline','Shared identity\n[broken timed syntax'),
+])
+def test_fixed_and_opaque_connected_text_remain_shared_with_chunk_override(mode,script):
+    p=blank_project()
+    p['prompts']['global']='Studio global'
+    p['tracks']=[{'id':'prompt','role':'prompt','clips':[{
+        'id':'action','start':0,'end':168,'text':'Action','override':True,'chunk_prompt':True}]}]
+    merged=with_external_prompt_source(validate(p),{'mode':mode,'script':script})
+    assert compile_window(merged,0)['prompt']=='Studio global\n'+script+'\nAction'

@@ -198,6 +198,16 @@ export class TimelineEditor {
     this.persistWidget();
     this.render();
   }
+  editPrompt(fn) {
+    // Persist every input event without replacing the focused textarea.
+    // Graph serialization and keyboard queueing must see the current text.
+    this.editVersion++;
+    this.history.commit(fn);
+    this.persistWidget();
+    this.compiledWindows=null;
+    updateChunkCompiledLines(this);
+    this.scheduleChunkCompile();
+  }
   editChunkReferences(fn) {
     // The reference checkbox edits only input routing. Do not stop an active
     // source preview, rebuild the movie track DOM, or restart decodes.
@@ -912,7 +922,8 @@ export class TimelineEditor {
         "aria-label": label,
       });
       if (type === "textarea") i.value = value;
-      i.onchange = () => this.edit(fn.bind(null, i.value));
+      if(type === "textarea") i.oninput = () => this.editPrompt(fn.bind(null, i.value));
+      else i.onchange = () => this.edit(fn.bind(null, i.value));
       this.inspector.append(el("label", {}, label, i));
     };
     if (pairs.length === 1) {
