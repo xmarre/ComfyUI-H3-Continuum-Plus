@@ -178,7 +178,7 @@ export function mergeAdjacentClips(p, ids) {
       merged++;
     }
   }
-  if(!merged)throw Error("No matching adjacent split pieces: source time or clip settings differ");
+  if(!merged)throw Error("No matching adjacent split pieces: source PTS, mute state, fades or other settings differ. Use Create scene from playhead or Restore uncut original to discard all cuts.");
   return merged;
 }
 

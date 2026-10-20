@@ -1912,8 +1912,10 @@ export class TimelineEditor {
     });
     this.sceneDraft=null;
     this.chunkPage=0;
-    renderChunkWorkspace(this);
-    this.scheduleChunkCompile();
+    if(this.chunkBoard) {
+      renderChunkWorkspace(this);
+      this.scheduleChunkCompile();
+    }
     this.jumpToFrame(frame);
     this.fitSelectedRange();
     this.message("New scene: "+time(frame)+" · "+total+" automatic H3 chunks. "+
@@ -1928,8 +1930,10 @@ export class TimelineEditor {
     this.edit(p=>{restoreOriginalMovie(p,assetId);this.selected=[];});
     this.sceneDraft=null;
     this.chunkPage=0;
-    renderChunkWorkspace(this);
-    this.scheduleChunkCompile();
+    if(this.chunkBoard) {
+      renderChunkWorkspace(this);
+      this.scheduleChunkCompile();
+    }
     this.jumpToFrame(0);
     this.fitFullMovie();
     this.message("Uncut original video and synchronized soundtrack restored. "+
