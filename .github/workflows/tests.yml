@@ -41,7 +41,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python -m pip install -r requirements.txt numpy safetensors pytest ruff 'packaging==25.0' 'tomli==2.2.1; python_version < "3.11"'
+          python -m pip install -r requirements.txt numpy pillow safetensors pytest ruff 'packaging==25.0' 'tomli==2.2.1; python_version < "3.11"'
 
       - name: Validate project metadata and release archive
         shell: bash
@@ -106,6 +106,16 @@ jobs:
         run: |
           node --check web/project_id.js
           node --check web/v34_ui.js
+          node --check web/timeline_studio.js
+          node --check web/timeline/core.js
+          node --check web/timeline/editor.js
+          node --check desktop/timeline-native/main.cjs
+          node --check desktop/timeline-native/preload.cjs
+          node --check desktop/timeline-native/native_link.cjs
+          node --test tests/timeline*.test.mjs
+
+      - name: Install media test tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Compile Python
         run: python -m compileall -q .
