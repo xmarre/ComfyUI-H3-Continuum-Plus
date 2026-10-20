@@ -6,7 +6,7 @@ runs for every chunk without intermediate VAE decoding, and decoding/assembly
 happens after the sampling phase.
 """
 from __future__ import annotations
-import copy, hashlib, logging, time
+import copy, hashlib, json, logging, time
 from typing import Any
 import torch
 from ..compatibility import accelerator_summary, check_comfy_h3_runtime
@@ -910,6 +910,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         include_last=bool(last_frame is not None and geometry.is_final)
         invocation_references = reference_assets
         invocation_video_source = reference_video_source
+        invocation_video_origin = "persistent_socket" if reference_video_source is not None else "none"
         invocation_voice_source = reference_audio_source
         invocation_voice_assets = reference_audio_assets
         invocation_video_assets = reference_video_assets
@@ -925,9 +926,16 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
             )
             if scoped_video_source is not None:
                 invocation_video_source, invocation_video_assets = scoped_video_source, scoped_video_assets
+                invocation_video_origin = "timeline_window"
             if scoped_voice_source is not None:
                 invocation_voice_source, invocation_voice_assets = scoped_voice_source, scoped_voice_assets
             del scoped_references, scoped_video_source, scoped_video_assets, scoped_voice_source, scoped_voice_assets
+            LOG.info("H3 Timeline video routing receipt=%s", json.dumps(
+                timeline_inputs.video_routing_receipt(
+                    sequence_index, invocation_video_source, invocation_video_assets,
+                    invocation_video_origin,
+                ), sort_keys=True,
+            ))
         if masked_timeline_references:
             from ..reference import validate_reference_prompts
             warning = validate_reference_prompts(

@@ -410,6 +410,22 @@ class TimelineInputs:
     def can_prefetch(self, index):
         return not (self.windows[index]["video"] or self.windows[index]["voice"])
 
+    def video_routing_receipt(self, index, source, assets, origin):
+        """Describe the selected guide without copying or hashing media again."""
+        return {
+            "chunk": index + 1,
+            "logical_range": self.windows[index]["range"],
+            "origin": origin,
+            "source_windows": self.windows[index]["video"]
+            if origin == "timeline_window" else [],
+            "input_shape": list(source.source_shape) if source is not None else None,
+            "encoded_frames": source.frame_count if source is not None else 0,
+            "source_sha256": source.source_sha256 if source is not None else None,
+            "reference_hash": source.combined_hash if source is not None else None,
+            "latent_shape": list(assets.block["latent"].shape)
+            if assets is not None else None,
+        }
+
     def annotate(self, descriptor, index, *, record=True):
         w = self.windows[index]
         presentation = dict(descriptor.presentation_contract)

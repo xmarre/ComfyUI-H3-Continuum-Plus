@@ -467,6 +467,15 @@ video-guide role supplies video frames only; no second soundtrack is mixed.
 Compilation selects each video's and audio's exact scene-window source
 timestamps rather than feeding the entire movie to H3.
 
+Each sampled chunk logs `H3 Timeline video routing receipt` with its logical
+range, selected source timestamps, encoded frame count, latent shape and content
+hash. `timeline_window` identifies a scoped guide; `persistent_socket` identifies
+the connected Video Reference used where no scoped guide is active. Equal guide
+shapes across chunks do not imply equal content: compare source windows and
+hashes. The receipt uses existing metadata and does not decode or hash video
+again. Reference-video tokens are processed alongside generated tokens during
+model evaluation, so bounded source windows still add sampling work.
+
 ## Import prompts, pre-cut pictures and the original soundtrack
 
 Use **Import…** to read a full ZIP, a prompts-only ZIP, a media-only ZIP, a JSON file, a text/Markdown file, pasted text, a connected State Manager Text Box or a selected saved State Manager preset. Reading State Manager is read-only: it does not change its preset, graph wiring or source text. Connected Text Box reads show the stored text before any intervening wildcard/transformation node executes.

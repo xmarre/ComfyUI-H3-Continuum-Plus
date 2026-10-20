@@ -17,8 +17,9 @@ from ComfyUI_H3_Continuum_Join.timeline.compose import export_project
 
 
 @pytest.fixture
-def movie(tmp_path):
+def movie(tmp_path, request):
     file = tmp_path / "source.mkv"
+    duration = getattr(request, "param", 14)
     subprocess.run(
         [
             "ffmpeg",
@@ -27,11 +28,11 @@ def movie(tmp_path):
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=s=64x64:r=25:d=14",
+            f"testsrc2=s=64x64:r=25:d={duration}",
             "-f",
             "lavfi",
             "-i",
-            "sine=frequency=440:sample_rate=44100:duration=14",
+            f"sine=frequency=440:sample_rate=44100:duration={duration}",
             "-c:v",
             "ffv1",
             "-c:a",
@@ -289,6 +290,7 @@ def test_two_hour_video_only_decodes_the_selected_short_window(tmp_path, monkeyp
     assert 1 < len(decoded) < 64  # requested window plus bounded GOP seek context
 
 
+@pytest.mark.parametrize("movie", [21], indirect=True)
 def test_real_video_reference_materialization_has_exact_logical_windows(
     movie, tmp_path
 ):
@@ -302,7 +304,7 @@ def test_real_video_reference_materialization_has_exact_logical_windows(
         asset = store.assets.register(file, "source.mkv")
     p = blank_project()
     p.update(
-        width=64, height=64, duration_frames=336, selection=[0, 336], assets=[asset]
+        width=64, height=64, duration_frames=504, selection=[0, 504], assets=[asset]
     )
     p["tracks"] = [
         {
@@ -313,7 +315,7 @@ def test_real_video_reference_materialization_has_exact_logical_windows(
                     "id": "v",
                     "asset_id": asset["id"],
                     "start": 0,
-                    "end": 336,
+                    "end": 504,
                     "source_in": "0",
                     "speed": "1",
                     "padding": "error",
@@ -333,8 +335,18 @@ def test_real_video_reference_materialization_has_exact_logical_windows(
             return torch.zeros(1, 24, video_latent_t(frames.shape[0]), 4, 4)
 
     vae = VAE()
-    for index in (0, 1):
-        provider.materialize(index, video_vae=vae, audio_vae=None, width=64, height=64)
+    receipts = []
+    for index in (0, 1, 2):
+        _, source, assets, _, _ = provider.materialize(
+            index, video_vae=vae, audio_vae=None, width=64, height=64
+        )
+        receipts.append(provider.video_routing_receipt(index, source, assets, "timeline_window"))
+    assert len({r["source_sha256"] for r in receipts}) == 3
+    assert [r["source_windows"][0]["source"] for r in receipts] == [
+        ["0", "7"], ["7", "14"], ["14", "21"]
+    ]
+    assert [r["encoded_frames"] for r in receipts] == [175] * 3
+    assert [r["latent_shape"][2] for r in receipts] == [52] * 3
     for index, frames in enumerate(vae.inputs):
         assert frames.shape[0] == 175
         expected = video_frames(
