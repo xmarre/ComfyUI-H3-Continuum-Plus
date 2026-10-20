@@ -7,7 +7,7 @@ import {
   inheritConveyorSlots,
 } from "./chunk_workspace.js";
 import { selectionChunks } from "./sampler_layout.js";
-import { sourceAt } from "./core.js";
+import { sourceAt, setFinalAudioSource } from "./core.js";
 import { connectedTextSource } from "./import_state.js";
 import { importedRegions, editablePromptSections, editPromptSection } from "./import_regions.js";
 import { traceReferenceSocket, collectReferenceProvenance, conveyorState, shelfImagePath, conveyorShelfAvailable } from "./conveyor_source.js";
@@ -508,6 +508,13 @@ export function renderChunkWorkspace(editor) {
   if(p.import_notes?.length) host.append(el("details",{class:"h3ts-import-notes"},
     el("summary",{text:"Clip-pack import receipt · timing and soundtrack ("+p.import_notes.length+")"}),
     ...p.import_notes.map(text=>el("p",{text}))));
+  const outputAudio=el("select",{"aria-label":"Final audio for new takes"},
+    el("option",{value:"original",text:"Original soundtrack"}),
+    el("option",{value:"generated",text:"Generated H3 audio"}));
+  outputAudio.value=p.final_audio_source||"original";
+  outputAudio.addEventListener("change",()=>editor.edit(project=>setFinalAudioSource(project,outputAudio.value)));
+  host.append(control("Final audio for new takes",outputAudio),el("small",{
+    text:"Audio guidance is unchanged. Original uses a complete routed source soundtrack, otherwise generated audio. Saved takes keep their audio; queue and save a new take after changing this choice."}));
   const globalPrompt=el("textarea",{
     class:"h3ts-global-prompt",rows:"3","aria-label":"Global prompt for every chunk",
     placeholder:"Identity, style and instructions shared by every chunk",

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {promptSourceNodes,connectedTextSource,selectedPresetSource} from "../web/timeline/import_state.js";
 import {importedRegions,setImportedRegion,migrateChunkPrompts,editablePromptSections,editPromptSection} from "../web/timeline/import_regions.js";
-import {History} from "../web/timeline/core.js";
+import {History,setFinalAudioSource} from "../web/timeline/core.js";
 import {applyImportPreview} from "../web/timeline/import_dialog.js";
 
 function graphFixture(){
@@ -80,4 +80,13 @@ test("uncovered parts of a partially imported chunk can be authored and clearing
   editPromptSection(p,sections[1],"  ");
   assert.deepEqual(importedRegions(p,0,168).map(r=>r.text),["New first action"]);
   assert.equal(editablePromptSections(p,0,168)[1].inherited,true);
+});
+
+test("output audio choice is Undoable and preserves guidance and existing takes",()=>{
+  const p={tracks:[{role:"retained",clips:[{audio_role:"both"}]}],takes:[{id:"old",final_audio_source:"original"}]};
+  const history=new History(p);
+  history.commit(next=>setFinalAudioSource(next,"generated"));
+  assert.equal(history.value.final_audio_source,"generated");
+  assert.deepEqual(history.value.tracks,p.tracks);assert.deepEqual(history.value.takes,p.takes);
+  history.undo();assert.deepEqual(history.value,p);
 });

@@ -495,4 +495,15 @@ A confirmed prompt import makes Studio authoritative. The still-connected `seque
 
 The original soundtrack is routed as **both** driving conditioning and final output. Keep Timeline Sampler **Driving Audio** connected to **Assemble Continuum Chunks → driving_audio**, and route the assembler audio to Video Combine. Selecting it bypasses generated audio for final assembly, including the shorter last source window. Source audio is transported on the same frame clock as picture guidance. GPU generation and perceptual lip-sync still require acceptance testing on the actual model/workflow.
 
-Install the desktop artifact matching the frontend/backend **v20** contract. No merge or release is implied by this draft PR.
+Install the desktop artifact matching the frontend/backend **v21** contract. No merge or release is implied by this draft PR.
+
+## Choose original or generated output audio
+
+In **Scene setup → Final audio for new takes**, choose:
+
+- **Original soundtrack** (default): preserve a complete original/authored final soundtrack, or the sampler's connected Driving Audio. If no complete final source covers the job, retain generated audio and report that fallback.
+- **Generated H3 audio**: use the audio decoded from H3's output latents. Original PCM replacement is disabled in the assembler, including an explicitly wired Driving Audio socket. Driving conditioning and per-clip guide/reference routing remain unchanged; conditioned H3 audio may still resemble the source.
+
+This is an output choice, independent of the guide audio supplied to H3. The choice is recorded with each new take and shown in its review card. **Queue and save a new take after changing it**; existing saved takes retain their audio. On accepting a generated-audio take, its audio replaces the source soundtrack only within that take's timeline span. Original footage outside the accepted span retains its soundtrack. Original-mode takes retain the existing authored-track/fallback mixing rules. Muting the take restores the underlying source audio.
+
+Continue connecting the assembler audio output to Video Combine. Use the matching v21 frontend/backend and desktop build.

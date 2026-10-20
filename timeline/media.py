@@ -700,10 +700,22 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel,
         "reference": {"reference"},
     }[route]
     active = active_clips(p, start, end)
+    preferred_generated = [c for _, c in active
+                           if c.get("audio_fallback")
+                           and c.get("final_audio_source") == "generated"
+                           and c["audio_role"] in {"final", "both"}]
     for _, c in active:
         if c["audio_role"] not in routes:
             continue
         left, right = max(start, c["start"]), min(end, c["end"])
+        if route == "final" and not c.get("audio_fallback"):
+            covered = left
+            for cut in sorted(preferred_generated, key=lambda x: x["start"]):
+                if cut["start"] > covered:
+                    break
+                covered = max(covered, cut["end"])
+            if covered >= right:
+                continue
         sa, sb = source_time(c, left), source_time(c, right)
         speed = rational(c["speed"])
         if preview:
@@ -737,7 +749,7 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel,
             pcm = np.pad(pcm, ((0, 0), (0, n - pcm.shape[1])))
         absolute = np.arange(sample_boundary(left, rate), sample_boundary(right, rate))
         envelope = np.ones(n)
-        if route == "final" and c.get("audio_fallback"):
+        if route == "final" and c.get("audio_fallback") and c.get("final_audio_source") != "generated":
             for authored_track, authored in active:
                 if (
                     authored_track["role"] != "generated"
@@ -752,6 +764,10 @@ def mix_audio(p, assets, start, end, rate, route, *, cancel=check_cancel,
                         (absolute >= sample_boundary(authored["start"], rate))
                         & (absolute < sample_boundary(authored["end"], rate))
                     ] = 0
+        if route == "final" and not c.get("audio_fallback"):
+            for cut in preferred_generated:
+                envelope[(absolute >= sample_boundary(cut["start"], rate))
+                         & (absolute < sample_boundary(cut["end"], rate))] = 0
         for fade, distance in (
             (c.get("fade_in", 0), absolute - sample_boundary(c["start"], rate)),
             (c.get("fade_out", 0), sample_boundary(c["end"], rate) - absolute),

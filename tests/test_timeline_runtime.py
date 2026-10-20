@@ -658,3 +658,30 @@ def test_final_audio_spans_natural_job_join_and_pads_only_after_scene(monkeypatc
     assembly={'target_frames':2520}
     routed.limit_assembly_to_authored_window(assembly,jobs[1],actual_join)
     assert assembly['target_frames']==5159-2691
+
+
+def test_output_audio_choice_changes_final_hash_without_changing_sampling_inputs():
+    from ComfyUI_H3_Continuum_Join.timeline.model import blank_project, compile_window
+    p=blank_project()
+    original=compile_window(p,0)
+    p['final_audio_source']='generated'
+    generated=compile_window(p,0)
+    assert original['generation_hash']==generated['generation_hash']
+    assert original['final_hash']!=generated['final_hash']
+
+
+def test_preserving_original_audio_does_not_read_an_accepted_generated_take(monkeypatch):
+    import numpy as np
+    from ComfyUI_H3_Continuum_Join.timeline import runtime as routed
+    p=blank_project();source,take='a'*64,'b'*64
+    p['assets']=[{'id':source,'audio':{'sample_rate':24}},{'id':take,'audio':{'sample_rate':24}}]
+    c={'id':'source','asset_id':source,'start':0,'end':504,'source_in':'0','speed':'1','padding':'error','audio_role':'both'}
+    p['tracks']=[{'id':'source','role':'retained','clips':[c]},{'id':'take','role':'generated','clips':[{**c,'id':'take','asset_id':take,'audio_role':'final','audio_fallback':True,'final_audio_source':'generated'}]}]
+    def mix(project,assets,a,b,rate,route):
+        assert all(t['role']!='generated' for t in project['tracks'])
+        assert all(not clip.get('audio_fallback') for t in project['tracks'] for clip in t['clips'])
+        return np.ones((2,round((b-a)*rate/24)),dtype=np.float32)
+    monkeypatch.setattr(routed,'mix_audio',mix)
+    provider=TimelineInputs(p,compile_project(p)['jobs'][0],object())
+    provider.store=SimpleNamespace(assets=object())
+    assert provider.final_audio(0,168,24)['waveform'].shape[-1]==168

@@ -572,3 +572,32 @@ def test_connected_extended_prompt_headers_warn_in_job_report(runtime):
     args.update(sequence_prompt='Identity\n[00:00-00:07] First action',run_storage='Off')
     result=nodes.H3ContinuumTimelineSampler().sample(**args)
     assert 'native sampler' in result[4] and 'Fixed fallback' in result[4]
+
+
+@pytest.mark.parametrize('source_kind',['connected','embedded'])
+def test_generated_audio_choice_keeps_driving_conditioning_without_final_replacement(runtime,monkeypatch,source_kind):
+    import numpy as np
+    from ComfyUI_H3_Continuum_Join.timeline import runtime as routed
+    from ComfyUI_H3_Continuum_Join.v3.driving_nodes import _FINAL_AUDIO_SOURCE_PLAN_KEY
+    args,calls,_,store,_=runtime
+    p=args['timeline']['project'];p['final_audio_source']='generated'
+    if source_kind=='connected':
+        args['driving_audio']={'waveform':torch.ones(1,2,3600),'sample_rate':240}
+    else:
+        asset='e'*64
+        p['assets']=[{'id':asset,'kind':'video','video':{},'audio':{'sample_rate':240}}]
+        p['tracks']=[{'id':'source','role':'retained','clips':[{'id':'movie','asset_id':asset,'start':0,'end':360,'source_in':'0','speed':'1','padding':'hold','audio_role':'both'}]}]
+        monkeypatch.setattr(store.assets,'verify',lambda *a,**k:'fixture.mkv')
+        def mix(project,assets,a,b,rate,route,**kwargs):
+            assert route=='guide'
+            return np.ones((2,round((b-a)*rate/24)),dtype=np.float32)
+        monkeypatch.setattr(routed,'mix_audio',mix)
+    args['timeline']=compile_project(p)
+    result=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls)==3
+    assert result[-1] is None
+    assert result[2][_FINAL_AUDIO_SOURCE_PLAN_KEY]=='generated'
+    assert _DRIVING_AUDIO_PLAN_KEY not in result[2]
+    assert result[3]['final_audio_source']=='generated'
+    assert 'generated H3 audio selected' in result[4]
+    assert all(any('audio_latent' in k for k in c['conditioning'][0][1]['minimax_keyframes']) for c in calls)

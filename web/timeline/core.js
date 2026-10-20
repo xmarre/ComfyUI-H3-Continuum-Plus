@@ -550,3 +550,8 @@ export function placeAsset(p, asset, track, frame, duration) {
   p.duration_frames = Math.max(p.duration_frames, end);
   return c;
 }
+
+export function setFinalAudioSource(project,value) {
+  if(!["original","generated"].includes(value))throw Error("Choose original or generated audio");
+  project.final_audio_source=value;
+}

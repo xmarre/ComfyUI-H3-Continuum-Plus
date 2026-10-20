@@ -1,7 +1,7 @@
 import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-unified-import-v20";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-audio-choice-v21";
 import {
   History,
   clone,
@@ -27,11 +27,11 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-unified-import-v20";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-audio-choice-v21";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
-import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-unified-import-v20";
+import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-audio-choice-v21";
 import { selectedChunkPage } from "./chunk_workspace.js";
-import { ImportDialog } from "./import_dialog.js?v=h3-timeline-unified-import-v20";
+import { ImportDialog } from "./import_dialog.js?v=h3-timeline-audio-choice-v21";
 const BASE = "/h3_continuum/timeline";
 const ROLES = [
   "retained",
@@ -2320,7 +2320,7 @@ export class TimelineEditor {
         { class: "h3ts-take" },
         el("strong", { text: r.id.slice(0, 8) }),
         el("p", {
-          text: `${time(r.range[0])}–${time(r.range[1])} · ${r.stale ? "STALE" : r.status}${rejected ? " · rejected" : ""}`,
+          text: `${time(r.range[0])}–${time(r.range[1])} · ${r.stale ? "STALE" : r.status} · audio: ${r.final_audio_source === "generated" ? "generated H3" : "original when available"}${rejected ? " · rejected" : ""}`,
         }),
       );
       if (r.rendition) {

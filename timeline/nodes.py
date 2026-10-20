@@ -738,6 +738,7 @@ class H3ContinuumTimelineSampler:
             "snapshot_hash": timeline["snapshot_hash"],
             "status": "sampled",
             "operation": p["operation"],
+            "final_audio_source": p.get("final_audio_source", "original"),
             "selection": p["selection"],
             "project_snapshot": p,
             "source_canvas": source_canvas,
@@ -960,8 +961,13 @@ class H3ContinuumTimelineSampler:
         for w in job["windows"]:
             for warning in w.get("warnings", []):
                 report += "\nTimeline warning: " + warning
+        from ..v3.driving_nodes import _FINAL_AUDIO_SOURCE_PLAN_KEY
+        source_mode = p.get("final_audio_source", "original")
+        assembly[_FINAL_AUDIO_SOURCE_PLAN_KEY] = source_mode
         selected_audio = None
-        if driving_audio is not None and guide is not None:
+        if source_mode == "generated":
+            report += "\nFinal audio: generated H3 audio selected; source audio remains available for driving conditioning."
+        elif driving_audio is not None and guide is not None:
             from ..v3.driving_nodes import _DRIVING_AUDIO_PLAN_KEY, _copy_audio
             from ..driving_audio import prepare_driving_audio_source
 

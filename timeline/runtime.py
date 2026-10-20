@@ -197,7 +197,7 @@ class TimelineInputs:
             for track, c in active_clips(
                 self.project, start_frame, end_frame, {"retained", "audio", "video_guide"}
             )
-            if c["audio_role"] in {"final", "both"}
+            if c["audio_role"] in {"final", "both"} and not c.get("audio_fallback")
         )
         covered = start_frame
         for a, b in available:
@@ -208,8 +208,14 @@ class TimelineInputs:
                 break
         if covered < end_frame:
             return None
+        # Final source preservation must not read a previously accepted take.
+        source_project = {**self.project, "tracks": [
+            {**track, "clips": [c for c in track["clips"] if not c.get("audio_fallback")]}
+            for track in self.project["tracks"]
+            if track["role"] in {"retained", "audio", "video_guide"}
+        ]}
         pcm = mix_audio(
-            self.project, self.store.assets, start_frame, end_frame,
+            source_project, self.store.assets, start_frame, end_frame,
             sample_rate, "final",
         )
         return {

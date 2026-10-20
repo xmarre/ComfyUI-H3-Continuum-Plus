@@ -507,4 +507,4 @@ not included in this release set.
 
 See [LICENSE](LICENSE).
 
-Timeline Studio’s **Import…** supports selective ZIP/JSON/text/media and read-only State Manager prompt imports, with global identity, editable chunk sections and original soundtrack routing. See [the import guide](docs/timeline/USER_GUIDE.md#import-prompts-pre-cut-pictures-and-the-original-soundtrack). Frontend, backend and desktop must use the matching v20 contract.
+Timeline Studio’s **Import…** supports selective ZIP/JSON/text/media and read-only State Manager prompt imports, with global identity, editable chunk sections and original soundtrack routing. See [the import guide](docs/timeline/USER_GUIDE.md#import-prompts-pre-cut-pictures-and-the-original-soundtrack). Frontend, backend and desktop must use the matching v21 contract.

@@ -106,4 +106,4 @@ server is still registering an older or duplicate installation. The screen
 shows the exact local server address being checked. No recursive filesystem
 search or movie upload is performed by this validation step.
 
-Use **Import…** for selective ZIP, JSON, text, pasted prompts, media and read-only State Manager sources. Preview components and timing before applying in one Undo step. **Link original media** retains ordinary native-path movie linking. See the Timeline user guide for source ownership and merge/replace behavior. Install the desktop artifact matching the frontend/backend v20 contract.
+Use **Import…** for selective ZIP, JSON, text, pasted prompts, media and read-only State Manager sources. Preview components and timing before applying in one Undo step. **Link original media** retains ordinary native-path movie linking. See the Timeline user guide for source ownership and merge/replace behavior. Install the desktop artifact matching the frontend/backend v21 contract.

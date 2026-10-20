@@ -308,3 +308,16 @@ def test_legacy_exact_direct_driving_audio_keeps_prefix_with_final_anchor(monkey
         images=[],audio=[],assembly_plan={'target_frames':240,'preserve_final_frame':True},
         timeline_mode=None,exact_total_duration=True,driving_audio=driving)
     assert torch.equal(audio['waveform'],driving['waveform'][...,:240*2000])
+
+
+def test_explicit_generated_choice_ignores_both_preserved_and_direct_source_audio(monkeypatch):
+    from ComfyUI_H3_Continuum_Join.v3.driving_nodes import _FINAL_AUDIO_SOURCE_PLAN_KEY, _DRIVING_AUDIO_PLAN_KEY, _driving_audio_from_plan
+    images=torch.zeros((24,8,8,3))
+    generated={'waveform':torch.ones((1,2,24)),'sample_rate':24}
+    original={'waveform':torch.zeros((1,2,24)),'sample_rate':24}
+    monkeypatch.setattr(H3ContinuumAssembleSeamExperimental,'assemble',lambda self,*a,**k:(images,generated,'base report'))
+    plan={'target_frames':24,_FINAL_AUDIO_SOURCE_PLAN_KEY:'generated',_DRIVING_AUDIO_PLAN_KEY:original}
+    _,audio,report=H3ContinuumAssembleSeamV34().assemble(images=[],audio=[],assembly_plan=[plan],exact_total_duration=False,driving_audio=[original])
+    assert audio is generated
+    assert 'generated H3 audio selected' in report
+    assert _driving_audio_from_plan((),{'assembly_plan':plan}) is None

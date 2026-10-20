@@ -643,6 +643,7 @@ def register_routes():
                     # not count, they are replaced on this lane.
                     "audio_role": "final",
                     "audio_fallback": True,
+                    "final_audio_source": record.get("final_audio_source", "original"),
                 }
             )
             lane["clips"] = remaining

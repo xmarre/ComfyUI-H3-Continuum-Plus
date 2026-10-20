@@ -26,6 +26,7 @@ from .assembly import (
 from .nodes import CATEGORY as CONTINUUM_CATEGORY, H3ContinuumSamplerProduction
 
 
+_FINAL_AUDIO_SOURCE_PLAN_KEY = "_h3_continuum_final_audio_source_v1"
 _DRIVING_AUDIO_PLAN_KEY = "_h3_continuum_driving_audio_v1"
 REFINE_STATE_API = 1
 V34_CONTINUITY_STRONG = "Strong — 39 frames"
@@ -79,12 +80,17 @@ def _copy_audio(value):
     }
 
 
-def _driving_audio_from_plan(args, kwargs):
+def _assembly_plan_value(args, kwargs):
     value = kwargs.get("assembly_plan")
     if value is None and len(args) >= 3:
         value = args[2]
     value = _unwrap_single_audio_value(value)
-    if not isinstance(value, dict):
+    return value if isinstance(value, dict) else {}
+
+
+def _driving_audio_from_plan(args, kwargs):
+    value = _assembly_plan_value(args, kwargs)
+    if value.get(_FINAL_AUDIO_SOURCE_PLAN_KEY) == "generated":
         return None
     return _copy_audio(value.get(_DRIVING_AUDIO_PLAN_KEY))
 
@@ -505,7 +511,10 @@ class H3ContinuumAssembleSeamV34(H3ContinuumAssembleSeamExperimental):
                 kwargs["exact_total_duration"] = exact_value
         preserved_audio = _driving_audio_from_plan(args, kwargs)
         images, audio, report = super().assemble(*args, **kwargs)
-        selected = preserved_audio or _copy_audio(driving_audio)
+        generated_selected = _assembly_plan_value(args, kwargs).get(_FINAL_AUDIO_SOURCE_PLAN_KEY) == "generated"
+        selected = None if generated_selected else preserved_audio or _copy_audio(driving_audio)
+        if generated_selected:
+            report = str(report) + "\nFinal audio: generated H3 audio selected by Timeline Studio; source PCM replacement disabled."
         if selected is None and not audible_tail_safe:
             return images, audio, report
 

@@ -884,3 +884,27 @@ def test_video_soundtrack_pcm_can_pad_silence_without_padding_video(monkeypatch)
     guide=media.mix_audio(p,store,0,168,1000,"guide")
     assert final.shape==guide.shape==(2,7000)
     assert padded==["silence","silence"]
+
+
+def test_generated_take_audio_replaces_source_only_in_accepted_span(monkeypatch):
+    from ComfyUI_H3_Continuum_Join.timeline import media
+    source,take='a'*64,'b'*64
+    p=blank_project();p.update(duration_frames=72,selection=[0,72])
+    p['assets']=[{'id':source},{'id':take}]
+    clip={'id':'source','asset_id':source,'start':0,'end':72,'source_in':'0','speed':'1','padding':'error','audio_role':'both'}
+    p['tracks']=[{'id':'movie','role':'retained','clips':[clip]}, {'id':'take','role':'generated','clips':[{**clip,'id':'take','asset_id':take,'start':24,'end':48,'audio_role':'final','audio_fallback':True,'final_audio_source':'generated'}]}]
+    p=validate(p)
+    class Assets:
+        def verify(self,key,**kwargs):return key
+    calls=[]
+    def pcm(path,a,b,rate,**kwargs):
+        calls.append(path)
+        return np.full((2,round(float(b-a)*rate)),1 if path==source else .25,dtype=np.float32)
+    monkeypatch.setattr(media,'audio_window',pcm)
+    actual=mix_audio(p,Assets(),0,72,24,'final')
+    np.testing.assert_array_equal(actual,np.repeat([[1]*24+[.25]*24+[1]*24],2,axis=0))
+    np.testing.assert_array_equal(mix_audio(p,Assets(),0,72,24,'guide'),np.ones((2,72)))
+    p['tracks'][1]['clips'][0].update(start=0,end=72)
+    calls.clear();actual=mix_audio(p,Assets(),0,72,24,'final')
+    assert calls==[take]
+    np.testing.assert_array_equal(actual,np.full((2,72),.25))

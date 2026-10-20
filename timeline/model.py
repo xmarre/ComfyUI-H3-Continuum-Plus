@@ -63,6 +63,7 @@ def blank_project():
         "width": 768,
         "height": 512,
         "operation": "generate",
+        "final_audio_source": "original",
         "assets": [],
         "tracks": [],
         "prompts": {"global": "", "mode": "Fixed", "script": ""},
@@ -122,6 +123,8 @@ def validate(project):
             raise ValueError(f"Timeline {key} must be a multiple of 32")
     if p.get("operation") not in {"generate", "recreate", "replace"}:
         raise ValueError("Unknown timeline generation operation")
+    if p.get("final_audio_source", "original") not in {"original", "generated"}:
+        raise ValueError("Unknown timeline final audio source")
     assets = p.setdefault("assets", [])
     ids = set()
     for a in assets:
@@ -648,7 +651,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             {**semantic, "images": [i["asset_id"] for i in images]}
         ),
         "final": final,
-        "final_hash": digest(final),
+        "final_hash": digest([final, "generated"]) if p.get("final_audio_source") == "generated" else digest(final),
     }
 
 

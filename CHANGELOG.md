@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an explicit Original soundtrack / Generated H3 audio output selector for newly queued Timeline takes. Keep driving conditioning independent, record the policy per take, and prevent source PCM replacement through either assembly-plan or direct Driving Audio paths when generated output is selected.
+- Accepted generated-audio takes replace the original soundtrack within their own span, preserving source sound elsewhere. Keep existing saved takes and legacy routing unchanged. Advance the frontend/backend/desktop contract to v21.
+
 - Add a unified selective importer for ZIP/JSON/text/paste/media and read-only State Manager Text Box or saved preset sources, with component detection, merge/replace, scene/movie timestamp origins, strict header diagnostics and preview-before-apply in one Undo step.
 - Use one editable chunk prompt region store for imported and typed actions; migrate legacy chunk prompts, preserve uncovered spans, and make imported Studio ownership explicit with a connected-source relink action.
 - Make uncovered imported-chunk spans editable and clear either typed/imported actions back to inheritance. Pin full-chunk migration hash stability; unusual partial legacy chunk clips may invalidate existing takes because their nominal segment transport is normalized. Report retained prompt timing when media-only replacement changes the grid.
