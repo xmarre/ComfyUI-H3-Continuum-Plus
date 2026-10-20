@@ -435,8 +435,8 @@ export function makeTrack(role, name = role) {
  * to another video clip. This prevents duplicate playback when a video guide
  * is cut from an original clip that already supplies its own audio.
  */
-export function videoSoundtrackRole(p, clip) {
-  const asset=p.assets?.find(a=>a.id===clip.asset_id);
+export function videoSoundtrackRole(p, clip, assetOverride=null) {
+  const asset=assetOverride||p.assets?.find(a=>a.id===clip.asset_id);
   if(!asset?.video || !asset?.audio) return "neither";
   let hasGuide=false,hasFinal=false;
   for(const track of p.tracks||[]) {
@@ -485,7 +485,7 @@ export function placeAsset(p, asset, track, frame, duration) {
     name: asset.name,
   };
   if(["retained","video_guide"].includes(track.role))
-    c.audio_role=videoSoundtrackRole(p,c);
+    c.audio_role=videoSoundtrackRole(p,c,asset);
   track.clips.push(c);
   p.duration_frames = Math.max(p.duration_frames, end);
   return c;
