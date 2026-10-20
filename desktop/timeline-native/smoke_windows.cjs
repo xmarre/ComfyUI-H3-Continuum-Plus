@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { toWSLPath } = require("./native_link.cjs");
+const { NATIVE_PATH_CONTRACT } = require("./connection.cjs");
 
 // This is a Windows-only CI runner smoke: actually execute the packaged
 // Electron app, render a mock ComfyUI page, supply a real disk-backed File
@@ -30,7 +31,7 @@ async function main() {
     } else if (req.url === "/h3_continuum/timeline/runtime") {
       res.writeHead(200, {"content-type":"application/json","cache-control":"no-store"});
       res.end(JSON.stringify({
-        contract:"h3-timeline-navigation-media-v14",
+        contract:NATIVE_PATH_CONTRACT,
         transport:"native-selected-path",
         drive_scan:false,browser_movie_upload:false,
         editor_url:"/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js",
@@ -38,12 +39,12 @@ async function main() {
       }));
     } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js") {
       res.writeHead(200, {"content-type":"text/javascript"});
-      res.end('export const NATIVE_PATH_CONTRACT = "h3-timeline-navigation-media-v14";\n' +
+      res.end('export const NATIVE_PATH_CONTRACT = "' + NATIVE_PATH_CONTRACT + '";\n' +
         'native.linkFile(file, transaction);');
     } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js") {
       res.writeHead(200, {"content-type":"text/javascript"});
-      res.end('const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-navigation-media-v14";\n' +
-        'import "./timeline/editor.js?v=h3-timeline-navigation-media-v14";');
+      res.end('const H3_TIMELINE_ENTRY_CONTRACT = "' + NATIVE_PATH_CONTRACT + '";\n' +
+        'import "./timeline/editor.js?v=' + NATIVE_PATH_CONTRACT + '";');
     } else if (req.url === "/") {
       res.writeHead(200, {"content-type":"text/html; charset=utf-8"});
       res.end("<!doctype html><title>ComfyUI smoke</title><body>" +
