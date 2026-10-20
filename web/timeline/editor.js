@@ -409,6 +409,13 @@ export class TimelineEditor {
       preload: "metadata",
       playsinline: "",
     });
+    // Preload the following video and its audio without removing the current
+    // rendered frame. Single-element src swaps caused black flashes and
+    // buffering at every short preview segment boundary.
+    this.preloadVideo = el("video", {
+      preload: "auto", playsinline: "",
+    });
+    this.preloadVideo.hidden = true;
     this.image = el("img", { class: "h3ts-image", alt: "Timeline source preview" });
     this.image.hidden = true;
     // A fast cached filmstrip-sized still is shown only while the independent
@@ -422,7 +429,9 @@ export class TimelineEditor {
       class:"h3ts-preview-state",text:"",role:"status","aria-live":"polite",
     });
     this.previewStatus.hidden = true;
-    this.video.addEventListener("error", () => {
+    for (const player of [this.video, this.preloadVideo]) {
+    player.addEventListener("error", () => {
+      if (player !== this.video) return;
       if (this.closed) return;
       if (this.playWanted) {
         this.stopPlayback();
@@ -432,7 +441,8 @@ export class TimelineEditor {
       if (!this.video.hidden && this.previewAsset && !this.proxy)
         this.guard(() => this.preview(true));
     });
-    this.video.addEventListener("ended", () => {
+    player.addEventListener("ended", () => {
+      if (player !== this.video) return;
       if (!this.playWanted || this.closed || this.compositionStart == null)
         return;
       if (this.compositionEnd >= this.p.duration_frames) {
@@ -443,7 +453,8 @@ export class TimelineEditor {
       this.playhead = this.compositionEnd;
       this.guard(() => this.playSegment(this.playhead, this.playEpoch));
     });
-    this.video.addEventListener("timeupdate", () => {
+    player.addEventListener("timeupdate", () => {
+      if (player !== this.video) return;
       if (this.compositionStart != null) {
         this.playhead = Math.min(
           this.p.duration_frames - 1,
@@ -466,6 +477,7 @@ export class TimelineEditor {
         this.drawPlayhead();
       }
     });
+    }
     this.counter = el("output", { text: time(0) });
     this.compare = el(
       "select",
@@ -483,7 +495,8 @@ export class TimelineEditor {
       "section",
       { class: "h3ts-viewer" },
       el("div", { class: "h3ts-preview" },
-        this.video, this.previewPlaceholder, this.image, this.previewStatus),
+        this.video, this.preloadVideo, this.previewPlaceholder,
+        this.image, this.previewStatus),
       el(
         "nav",
         {},
@@ -1553,6 +1566,7 @@ export class TimelineEditor {
     this.nextPreview?.controller.abort();
     this.nextPreview = null;
     this.video.pause();
+    this.preloadVideo?.pause();
   }
   async fetchSegment(start, length, controller) {
     return request(this.api, "/preview", {
@@ -1576,6 +1590,21 @@ export class TimelineEditor {
     };
     next.promise.catch(() => {}); // Pausing may discard the pending prefetch.
     this.nextPreview = next;
+    // When the segment becomes available, let the browser demux and buffer its
+    // audio/video while the current player continues. Switching a fully
+    // buffered media element avoids a black reset between MP4 requests.
+    next.promise.then(result=>{
+      if(!this.preloadVideo || !this.playWanted ||
+         this.closed || this.nextPreview!==next || controller.signal.aborted)
+        return;
+      const player=this.preloadVideo;
+      if(player.dataset.source!==result.url) {
+        player.pause();
+        player.dataset.source=result.url;
+        player.src=result.url;
+        player.load?.();
+      }
+    }).catch(()=>{});
   }
   async playSegment(start, epoch) {
     if (!this.playWanted || epoch !== this.playEpoch || this.closed) return;
@@ -1596,15 +1625,32 @@ export class TimelineEditor {
         ? cached.promise : this.fetchSegment(start, 48, controller));
       if (!this.playWanted || this.closed || epoch !== this.playEpoch ||
           controller.signal.aborted) return;
-      this.video.pause();
+      const previous=this.video;
+      const target=this.preloadVideo || previous;
+      if(target.dataset.source!==result.url) {
+        target.dataset.source=result.url;
+        target.src=result.url;
+        target.load?.();
+      }
+      // Old player's final decoded frame remains visible while the next
+      // player buffers. A rejected play does not tear down the working source.
+      await target.play();
+      if(!this.playWanted || epoch!==this.playEpoch || this.closed ||
+         controller.signal.aborted) {
+        target.pause();
+        return;
+      }
+      if(target!==previous) {
+        previous.pause();
+        previous.hidden=true;
+        this.video=target;
+        this.preloadVideo=previous;
+      }
       this.previewClip = null;
-      this.video.dataset.source = result.url;
-      this.video.src = result.url;
       this.video.hidden = false;
       this.image.hidden = true;
       this.compositionStart = result.start;
       this.compositionEnd = result.end;
-      await this.video.play();
       if (this.playWanted && epoch === this.playEpoch) {
         this.message(
           "Playing · segment ready in " +

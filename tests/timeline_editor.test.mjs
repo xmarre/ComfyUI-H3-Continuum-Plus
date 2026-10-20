@@ -2017,3 +2017,42 @@ test("pointer anchored wheel zoom retains original movie frame",()=>{
   for(const k of ["ctrlKey","metaKey","shiftKey"])
     assert.equal(timelineWheelZoom(1,0,100,120,1200,159090,{[k]:true}),null);
 });
+
+test("next preview loads on standby player without resetting current video",async()=>{
+  let loads=0;
+  const active={src:"/composition/first",paused:false};
+  const standby={src:"",dataset:{},pause(){},load(){loads++;}};
+  const player={playWanted:true,closed:false,playEpoch:1,
+    p:{duration_frames:504},video:active,preloadVideo:standby,
+    fetchSegment(){return Promise.resolve({start:48,end:192,url:"/composition/next"});}};
+  TimelineEditor.prototype.prefetchSegment.call(player,48);
+  await player.nextPreview.promise;
+  await Promise.resolve();
+  assert.equal(active.src,"/composition/first");
+  assert.equal(standby.src,"/composition/next");
+  assert.equal(loads,1);
+});
+test("playback switches to buffered video only after its play starts",async()=>{
+  let resolvePlay;
+  const previous={src:"/composition/old",hidden:false,
+    pause(){this.paused=true;},paused:false};
+  const standby={src:"/composition/new",hidden:true,dataset:{source:"/composition/new"},
+    pause(){this.paused=true;},play(){return new Promise(resolve=>resolvePlay=resolve);}};
+  const player={playWanted:true,playEpoch:1,closed:false,abort:new AbortController(),
+    playhead:48,video:previous,preloadVideo:standby,image:{hidden:false},
+    p:{duration_frames:500},message(){},nextPreview:null,
+    fetchSegment(){return Promise.resolve({url:"/composition/new",start:48,end:192});},
+    prefetchSegment(){}};
+  const job=TimelineEditor.prototype.playSegment.call(player,48,1);
+  await Promise.resolve();await Promise.resolve();
+  assert.equal(player.video,previous);
+  assert.equal(previous.hidden,false);
+  resolvePlay();
+  await job;
+  assert.equal(player.video,standby);
+  assert.equal(player.preloadVideo,previous);
+  assert.equal(previous.hidden,true);
+  assert.equal(standby.hidden,false);
+  assert.equal(player.compositionStart,48);
+  assert.equal(player.compositionEnd,192);
+});
