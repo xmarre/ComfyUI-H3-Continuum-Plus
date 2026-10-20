@@ -411,3 +411,11 @@ window-close and Ctrl+Shift+Q bypass renderer beforeunload and exit the
 Electron process in the main process; tests exercise both. This does not
 establish that a severely overloaded Windows host will respond instantly in
 the real runtime, which requires an on-device stress test.
+
+## Unified import v20 (2026-10-20)
+
+Validated the supplied 31-clip audited archive through the real import service: full replacement registers 32 assets (31 picture clips plus the continuous soundtrack), ends at frame 5159 and splits into 16/15-window jobs. Text-only selection registers no media and preserves existing media/reference tracks and take records; against a three-chunk scene the preview reports 28 surplus entries. Missing-media manifests still import prompts.
+
+Chromium against real aiohttp import routes checks pasted clock/to headers, off-grid inner sections, no project mutation before confirmation, one-step Undo, visible malformed-header blocking and text-only component selection from the full archive. Python regressions cover all documented prompt forms, inline headers, numeric prose, legacy typed-action migration, partial merge preservation, explicit/automatic timestamp origins, imported source ownership, runtime/stale-take consistency and soundtrack replacement. Frontend tests cover read-only State Manager slot reads, canonical editing and stale-preview rejection.
+
+These checks establish import, routing and packaging behavior. They do not establish trained-model identity transfer, perceptual lip-sync or installation/display behavior on the user's Windows machine. PR remains draft, unmerged and unreleased pending acceptance.

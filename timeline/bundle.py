@@ -155,8 +155,8 @@ def import_bundle(path, assets, current, *, cancel=lambda: None):
                      chunk_frames=size, operation="recreate", selection=[0, prepared[-1][3]])
             p["prompts"]["global"] = prefix
             movie = {"id": uuid.uuid4().hex, "role": "retained", "name": "Imported source pictures", "clips": []}
-            prompts = {"id": uuid.uuid4().hex, "role": "prompt", "name": "Imported chunk prompts", "clips": []}
-            p["tracks"] = [movie, prompts]
+            p["prompts"]["regions"] = []
+            p["tracks"] = [movie]
             for i, (segment, name, a, b) in enumerate(prepared):
                 asset = register(name)
                 if not asset.get("video"):
@@ -173,7 +173,7 @@ def import_bundle(path, assets, current, *, cancel=lambda: None):
                     "speed": "1", "padding": "hold", "audio_padding": "silence",
                     "audio_role": "neither" if audio_name else "both" if asset.get("audio") else "neither",
                 })
-                prompts["clips"].append({
+                p["prompts"]["regions"].append({
                     "id": uuid.uuid4().hex, "start": a, "end": b,
                     "chunk_prompt": True, "chunk_index": i, "override": True,
                     "text": segment["prompt"], "audio_role": "neither",

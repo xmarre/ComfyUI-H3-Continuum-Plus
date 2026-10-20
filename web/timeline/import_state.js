@@ -59,6 +59,7 @@ export async function selectedPresetSource(api,manager,textBox=null) {
   const slot=String(widget(textBox,"state_slot")||widget(textBox,"slot")||textBox?.properties?.dora_state_text_slot||"default");
   const boxes=preset.text_boxes||[];
   let box=boxes.find(b=>b.role===role&&b.slot===slot);
+  if(!box&&textBox)throw Error("The selected preset has no Text Box matching the connected role and slot; choose the intended saved source.");
   if(!box)box=boxes.find(b=>b.role==="positive"&&b.slot==="default");
   if(!box) {
     const candidates=boxes.filter(b=>b.role==="positive");

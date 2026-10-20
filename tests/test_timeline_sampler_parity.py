@@ -565,3 +565,10 @@ def test_imported_state_manager_fields_own_runtime_prompt_and_stale_hashes(runti
     assert not nodes.stale_take(p,result[3],[result[3]])
     p['prompts']['global']='Changed again'
     assert nodes.stale_take(p,result[3],[result[3]])
+
+
+def test_connected_extended_prompt_headers_warn_in_job_report(runtime):
+    args,*_=runtime
+    args.update(sequence_prompt='Identity\n[00:00-00:07] First action',run_storage='Off')
+    result=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert 'native sampler' in result[4] and 'Fixed fallback' in result[4]

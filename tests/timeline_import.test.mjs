@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {promptSourceNodes,connectedTextSource,selectedPresetSource} from "../web/timeline/import_state.js";
-import {importedRegions,setImportedRegion} from "../web/timeline/import_regions.js";
+import {importedRegions,setImportedRegion,migrateChunkPrompts} from "../web/timeline/import_regions.js";
 import {History} from "../web/timeline/core.js";
 import {applyImportPreview} from "../web/timeline/import_dialog.js";
 
@@ -56,3 +56,16 @@ for(const target of ["merge","replace"]){
     history.redo();assert.deepEqual(history.value,after);
   });
 }
+
+test("legacy typed chunk text and imported partial text share one editable store",()=>{
+  const media={id:"media",role:"retained",clips:[{id:"video",start:0,end:336}]};
+  const p={tracks:[media,{id:"typed",role:"prompt",chunk_workspace:true,clips:[{id:"a",start:0,end:168,text:"A",chunk_prompt:true,chunk_index:0}]}]};
+  migrateChunkPrompts(p);setImportedRegion(p,48,120,"B");
+  assert.deepEqual(p.tracks,[media]);
+  assert.deepEqual(importedRegions(p,0,168).map(r=>[r.start,r.end,r.text]),[[0,48,"A"],[48,120,"B"],[120,168,"A"]]);
+});
+test("a saved preset never silently substitutes another connected Text Box slot",async()=>{
+  const {manager,text}=graphFixture();
+  const api={async fetchApi(){return {ok:true,json:async()=>({characters:[{id:"char",prompts:[{id:"preset",text_boxes:[{role:"positive",slot:"default",text:"Wrong identity"}]}]}]})};}};
+  await assert.rejects(selectedPresetSource(api,manager,text),/matching the connected role and slot/);
+});

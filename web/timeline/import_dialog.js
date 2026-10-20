@@ -98,6 +98,8 @@ export class ImportDialog {
     } finally {this.loading=false;}
   }
   async readState(preset){
+    this.loading=true;
+    try {
     this.changed();const epoch=this.epoch;
     const sampler=linkedSampler(this.editor),graph=sampler?.graph||this.editor.app?.graph;
     const manager=this.sources.managers.find(n=>String(n.id)===this.manager.value);
@@ -107,6 +109,7 @@ export class ImportDialog {
     if(epoch!==this.epoch||this.abort.signal.aborted)return;
     this.text.disabled=false;this.text.value=source.text;this.provenance=source.provenance;
     this.document.hidden=true;this.selected=null;this.changed();await this.inspect();
+    } finally {this.loading=false;}
   }
   payload(selected=this.selected){return {project:this.editor.p,token:this.token,text:this.token?undefined:this.text.value,
     document_index:Number(this.document.value)||0,selected,target:this.target.value,
