@@ -2155,6 +2155,10 @@ export class TimelineEditor {
     // leave their prompt graph byte-for-byte identical so Comfy's native cache
     // can reuse the previous Timeline result.
     delete snapshot.queued_batch_id;
+    // ProjectStore.save() increments revision on *every* queue even when no
+    // authored content changed. It is an optimistic-lock token, not a sampling
+    // input. Keep it on this.p/serverRevision, but not in the frozen H3 graph.
+    delete snapshot.revision;
     const plan = await request(this.api, "/compile", {
       method: "POST",
       body: JSON.stringify(snapshot),
