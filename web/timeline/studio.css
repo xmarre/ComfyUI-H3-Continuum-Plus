@@ -1,0 +1,1164 @@
+.h3ts {
+  box-sizing: border-box;
+  color: #e5e8ef;
+  background: #13161e;
+  border: 1px solid #434957;
+  border-radius: 12px;
+  padding: 0;
+  width: 94vw;
+  max-width: 1920px;
+  height: 92vh;
+  max-height: 1200px;
+  resize: both;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font:
+    13px/1.4 system-ui,
+    sans-serif;
+  box-shadow: 0 24px 90px #000a;
+}
+.h3ts:not([open]) {
+  display: none;
+}
+.h3ts::backdrop {
+  background: #04060bd0;
+}
+.h3ts * {
+  box-sizing: border-box;
+}
+.h3ts header {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #323845;
+}
+.h3ts header strong {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: #acd6cf;
+  white-space: nowrap;
+}
+.h3ts header input {
+  flex: 1;
+  min-width: 60px;
+}
+.h3ts button,
+.h3ts input,
+.h3ts select,
+.h3ts textarea {
+  color: inherit;
+  background: #242936;
+  border: 1px solid #40495b;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font: inherit;
+}
+.h3ts button {
+  cursor: pointer;
+  white-space: nowrap;
+}
+.h3ts button:hover {
+  background: #384259;
+}
+.h3ts button:focus-visible,
+.h3ts input:focus-visible,
+.h3ts select:focus-visible,
+.h3ts textarea:focus-visible {
+  outline: 2px solid #71d7c5;
+  outline-offset: 1px;
+}
+.h3ts main {
+  display: grid;
+  grid-template-columns: 220px minmax(240px, 1fr) 260px;
+  min-height: 240px;
+  flex: 1;
+  overflow: hidden;
+}
+.h3ts aside {
+  overflow: auto;
+  padding: 12px;
+  background: #1a1f29;
+}
+.h3ts h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 10px;
+}
+.h3ts p {
+  font-size: 12px;
+  color: #adb5c7;
+}
+.h3ts-asset,
+.h3ts-take {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #3b4352;
+  border-radius: 7px;
+  background: #212733;
+}
+.h3ts-asset strong {
+  overflow-wrap: anywhere;
+}
+.h3ts-asset small {
+  color: #b5bed1;
+}
+.h3ts-viewer {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  min-width: 0;
+}
+.h3ts-preview {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  background: #07090d;
+  overflow: hidden;
+  border-radius: 6px;
+}
+.h3ts video,
+.h3ts-image {
+  max-width: 100%;
+  max-height: 36vh;
+  min-height: 100px;
+}
+.h3ts [hidden] {
+  display: none !important;
+}
+.h3ts nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  flex-wrap: wrap;
+}
+.h3ts nav output {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.h3ts-inspector label {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 9px;
+  font-size: 11px;
+  color: #bbc5d8;
+}
+.h3ts-inspector input,
+.h3ts-inspector textarea {
+  width: 100%;
+  color: #f1f3f9;
+}
+.h3ts-inspector textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.h3ts .h3ts-tools {
+  padding: 8px 12px;
+  background: #1b212d;
+  border-top: 1px solid #394152;
+}
+.h3ts-tools label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.h3ts-tools input[type="number"] {
+  width: 86px;
+}
+.h3ts-scroll {
+  height: 32vh;
+  min-height: 150px;
+  overflow: auto;
+  background: #11151c;
+  position: relative;
+}
+.h3ts-timeline {
+  position: relative;
+  min-height: 100%;
+  padding-top: 30px;
+  padding-bottom: 30px;
+}
+.h3ts-ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30px;
+  background: #202632;
+  cursor: crosshair;
+}
+.h3ts-tick {
+  position: absolute;
+  top: 4px;
+  border-left: 1px solid #66758f;
+  padding-left: 5px;
+  color: #c2cede;
+  font-size: 10px;
+}
+.h3ts-track {
+  height: 60px;
+  border-bottom: 1px solid #343d4e;
+  position: relative;
+  background: #1a202a;
+}
+.h3ts-track:nth-child(even) {
+  background: #181d26;
+}
+.h3ts-track-name {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  width: 180px;
+  height: 100%;
+  background: #272e3c;
+  border-right: 1px solid #69778e;
+  padding: 5px;
+}
+.h3ts-track-name span {
+  display: block;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.h3ts-track-name button {
+  padding: 2px 4px;
+  font-size: 10px;
+  margin: 2px 2px 0 0;
+}
+.h3ts-clip {
+  position: absolute;
+  top: 7px;
+  height: 46px;
+  border: 1px solid #8794b4;
+  border-radius: 5px;
+  background: #34435d;
+  cursor: grab;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+.h3ts-clip span {
+  padding: 4px 8px;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 11px;
+}
+.h3ts-clip.selected {
+  outline: 2px solid #e4c475;
+  z-index: 3;
+}
+.h3ts-clip.video_guide {
+  background: #4d3e71;
+}
+.h3ts-clip.audio {
+  background: #245947;
+}
+.h3ts-clip.image_reference {
+  background: #6c4938;
+}
+.h3ts-clip.prompt {
+  background: #33565e;
+}
+.h3ts-clip.generated {
+  background: #3f5841;
+}
+.h3ts-clip i {
+  position: absolute;
+  top: 0;
+  width: 7px;
+  height: 100%;
+  background: #fff1;
+  cursor: ew-resize;
+}
+.h3ts-clip .trim-left {
+  left: 0;
+}
+.h3ts-clip .trim-right {
+  right: 0;
+}
+.h3ts-boundary {
+  position: absolute;
+  top: 30px;
+  bottom: 0;
+  width: 1px;
+  background: #ceb66866;
+  pointer-events: none;
+  z-index: 2;
+}
+.h3ts-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ee8078;
+  z-index: 4;
+  pointer-events: none;
+}
+.h3ts-marker {
+  position: absolute;
+  top: 15px;
+  z-index: 6;
+  font-size: 10px !important;
+  padding: 1px 3px !important;
+  color: #ffd397 !important;
+}
+.h3ts-hidden {
+  opacity: 0.6;
+}
+.h3ts-waveform {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 25px;
+  pointer-events: none;
+}
+.h3ts-input-route {
+  margin: 0;
+  padding: 5px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #b7c9cf;
+  background: #1b2530;
+  border-bottom: 1px solid #303c49;
+  flex-shrink: 0;
+}
+.h3ts footer label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.h3ts footer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid #384254;
+  align-items: center;
+}
+.h3ts-status {
+  flex: 1;
+  color: #b1d5c9;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.h3ts-status.error {
+  color: #ffaaa1;
+}
+.h3ts details {
+  max-height: 35vh;
+  overflow: auto;
+  padding: 5px 12px;
+  background: #11141a;
+}
+.h3ts-diagnostics {
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+.h3ts-context {
+  position: fixed;
+  display: grid;
+  gap: 3px;
+  padding: 5px;
+  background: #2a3242;
+  border: 1px solid #79849c;
+  z-index: 20;
+}
+@media (max-width: 1000px) {
+  .h3ts main {
+    grid-template-columns: 160px 1fr 210px;
+  }
+  .h3ts header strong {
+    display: none;
+  }
+  .h3ts footer {
+    flex-wrap: wrap;
+  }
+  .h3ts-tools button {
+    font-size: 11px;
+  }
+}
+
+.h3ts-track-name input {
+  width: 100%;
+  font-size: 11px;
+  padding: 1px 3px;
+}
+.h3ts-filmstrip {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.4;
+  pointer-events: none;
+}
+.h3ts-clip > span {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 3px #000;
+}
+
+.h3ts-preview {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.h3ts-preview video,
+.h3ts-preview img {
+  min-height: 0;
+  max-height: 100%;
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+}
+.h3ts-viewer > nav {
+  flex-shrink: 0;
+}
+
+.h3ts-render-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 1px solid #71d7c566;
+  background: #71d7c508;
+  pointer-events: none;
+  z-index: 1;
+}
+.h3ts-viewer {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+.h3ts-preview {
+  position: relative;
+  display: block;
+  min-height: 0;
+}
+.h3ts-preview video,
+.h3ts-preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Chunk-first composition workspace. Each card is a real logical H3 window,
+   with exact output frames rather than inferred film/source timestamps. */
+.h3ts-chunk-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  max-height: 36vh;
+  min-height: 190px;
+  background: #171e29;
+  border-top: 1px solid #4d5b70;
+  border-bottom: 1px solid #4d5b70;
+  overflow: hidden;
+}
+.h3ts-chunk-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 12px;
+  flex-wrap: wrap;
+  background: #222c3a;
+  font-size: 11px;
+}
+.h3ts-chunk-heading strong { color: #b8ebe0; letter-spacing: .04em; }
+.h3ts-chunk-control {
+  display: grid;
+  gap: 3px;
+  font-size: 11px;
+  color: #bdc8d9;
+}
+.h3ts-chunk-heading .h3ts-chunk-control { display: inline-flex; align-items: center; }
+.h3ts-chunk-heading input[type="number"] { width: 80px; }
+.h3ts-chunk-heading input[type="checkbox"] { width: 16px; height: 16px; }
+.h3ts-chunk-settings {
+  padding: 5px 12px;
+  flex: 0 0 auto;
+  max-height: 92px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.h3ts-chunk-settings p {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.h3ts-chunk-settings .h3ts-chunk-warning { color: #ffd38f; }
+.h3ts-chunk-pager {
+  display: flex;
+  align-items: center;
+  padding: 3px 12px;
+  gap: 10px;
+  font-size: 11px;
+  background: #202938;
+}
+.h3ts-chunk-cards {
+  display: flex;
+  overflow: auto;
+  min-height: 115px;
+  gap: 8px;
+  padding: 7px 10px;
+  flex: 1;
+}
+.h3ts-chunk-card {
+  flex: 0 0 350px;
+  min-width: 275px;
+  max-width: min(78vw, 450px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #63738e;
+  border-radius: 7px;
+  background: #222c39;
+}
+.h3ts-chunk-card h4 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 6px;
+  color: #e9eef8;
+}
+.h3ts-chunk-card h4 small { font-weight: normal; color: #bfcedc; }
+.h3ts-chunk-card textarea {
+  display: block;
+  min-height: 65px;
+  width: 100%;
+  resize: vertical;
+}
+.h3ts-chunk-compiled {
+  padding: 5px;
+  margin: 6px 0;
+  border-left: 2px solid #83c7b8;
+  color: #bfdfd5;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 75px;
+  overflow: auto;
+}
+.h3ts-chunk-add { display: flex; align-items: center; gap: 3px; }
+.h3ts-chunk-add select:first-child { flex: 1; min-width: 0; }
+.h3ts-chunk-add select:not(:first-child) { flex: 0 1 90px; }
+.h3ts-chunk-card .h3ts-chunk-control { margin-top: 5px; }
+.h3ts-chunk-assigned {
+  margin-top: 5px;
+  border-top: 1px solid #39485c;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.h3ts-chunk-assigned .h3ts-chunk-control { flex: 1 1 80px; }
+.h3ts-chunk-assigned input { width: 80px; }
+.h3ts-chunk-card button { padding: 2px 6px; }
+
+.h3ts-chunk-asset-preview {
+  width: 60px;
+  height: 42px;
+  object-fit: contain;
+  background: #090c14;
+  border: 1px solid #45566b;
+  flex: 0 0 auto;
+}
+
+.h3ts-conveyor-refs {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  padding: 7px;
+  border: 1px solid #455f73;
+  border-radius: 5px;
+}
+.h3ts-conveyor-refs > small {
+  line-height: 1.35;
+  color: #b7c8d9;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 11px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  border-top: 1px solid #374659;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref input {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref span {
+  flex: 1;
+  min-width: 0;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref img {
+  width: 50px;
+  height: 50px;
+  flex-shrink: 0;
+  object-fit: contain;
+  border: 1px solid #546677;
+  border-radius: 3px;
+  background: #090d13;
+}
+
+/* Chunk authoring uses the available desktop width, with exactly one scroll
+   viewport for chunk content. A chunk must never be a narrow scroll-within-
+   scroll card while the rest of the workspace is empty. */
+.h3ts main {
+  min-height: 175px;
+}
+.h3ts-scroll {
+  height: 20vh;
+  min-height: 125px;
+  flex-shrink: 1;
+}
+.h3ts-chunk-workspace {
+  height: clamp(285px, 42vh, 560px);
+  max-height: 55vh;
+  min-height: 250px;
+  flex: 1 1 42vh;
+}
+.h3ts-chunk-settings {
+  display: block;
+  padding: 4px 12px;
+  max-height: none;
+  overflow: visible;
+}
+.h3ts-chunk-settings > summary {
+  cursor: pointer;
+  color: #c5d5e5;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.h3ts-chunk-settings-body {
+  max-height: 115px;
+  overflow: auto;
+  padding-top: 4px;
+}
+.h3ts-chunk-pager { flex-shrink: 0; }
+.h3ts-chunk-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 390px), 1fr));
+  align-content: start;
+  align-items: start;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: hidden;
+  padding: 8px 12px;
+}
+.h3ts-chunk-card {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  flex: none;
+  overflow: visible;
+  padding: 10px;
+}
+.h3ts-conveyor-refs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 7px;
+}
+.h3ts-conveyor-refs > strong,
+.h3ts-conveyor-refs > small,
+.h3ts-conveyor-refs > p,
+.h3ts-conveyor-refs > button {
+  grid-column: 1 / -1;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref {
+  border: 1px solid #374659;
+  border-radius: 5px;
+  padding: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  align-items: start;
+  min-height: 116px;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref-label > span {
+  flex: 1;
+  min-width: 0;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-thumb {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  cursor: zoom-in;
+  border: 1px solid #546677;
+  border-radius: 4px;
+  background: #090d13;
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref > small {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+}
+.h3ts-ref-lightbox {
+  background: #171e29;
+  color: #edf2ff;
+  border: 1px solid #596c86;
+  border-radius: 8px;
+  padding: 12px;
+  max-width: 85vw;
+  max-height: 88vh;
+  overflow: auto;
+}
+.h3ts-ref-lightbox header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.h3ts-ref-lightbox img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 78vw;
+  max-height: 70vh;
+  margin: auto;
+  object-fit: contain;
+}
+@media (max-width: 1040px) {
+  .h3ts-conveyor-refs { grid-template-columns: 1fr; }
+  .h3ts-chunk-cards { grid-template-columns: 1fr; }
+}
+
+/* Temporary still is visually distinct from the high-detail viewer image;
+   the full-detail request replaces it without switching export quality. */
+.h3ts-preview .h3ts-preview-placeholder { z-index: 0; }
+.h3ts-preview .h3ts-image { z-index: 1; }
+.h3ts-preview-state {
+  position: absolute;
+  z-index: 2;
+  bottom: 7px;
+  left: 10px;
+  right: 10px;
+  padding: 5px 9px;
+  font-size: 11px;
+  color: #edf2ff;
+  background: #171e29d9;
+  border: 1px solid #445a70;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* Resizable editor work areas. The three vertical panes share the measured
+   dialog space and never compete via unrelated flex-basis/vh declarations. */
+.h3ts {
+  --h3ts-preview-h: 280px;
+  --h3ts-chunk-h: 260px;
+  --h3ts-left-w: 190px;
+  --h3ts-right-w: 225px;
+  --h3ts-card-min: 390px;
+  --h3ts-ref-size: 100px;
+  --h3ts-track-h: 60px;
+  min-width: min(580px, 98vw);
+  min-height: min(520px, 98vh);
+}
+.h3ts > main {
+  height: var(--h3ts-preview-h);
+  min-height: 0;
+  max-height: none;
+  flex: 0 0 var(--h3ts-preview-h);
+  grid-template-columns:
+    minmax(0, var(--h3ts-left-w)) 8px
+    minmax(0, 1fr) 8px minmax(0, var(--h3ts-right-w));
+}
+.h3ts > main > aside {
+  min-width: 0;
+  overflow: auto;
+}
+.h3ts > main > .h3ts-viewer {
+  min-width: 0;
+  min-height: 0;
+  padding: 7px;
+}
+.h3ts > main .h3ts-preview video,
+.h3ts > main .h3ts-preview img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.h3ts > .h3ts-chunk-workspace {
+  height: var(--h3ts-chunk-h);
+  min-height: 0;
+  max-height: none;
+  flex: 0 0 var(--h3ts-chunk-h);
+}
+.h3ts > .h3ts-scroll {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: auto;
+}
+.h3ts .h3ts-track { height: var(--h3ts-track-h); }
+.h3ts-chunk-cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--h3ts-card-min)), 1fr));
+}
+.h3ts-conveyor-refs .h3ts-conveyor-ref {
+  grid-template-columns: minmax(0, 1fr) var(--h3ts-ref-size);
+  min-height: calc(var(--h3ts-ref-size) + 20px);
+}
+.h3ts-conveyor-refs .h3ts-conveyor-thumb {
+  width: var(--h3ts-ref-size);
+  height: var(--h3ts-ref-size);
+}
+.h3ts-splitter {
+  position: relative;
+  flex: 0 0 auto;
+  background: #212a39;
+  touch-action: none;
+  user-select: none;
+  z-index: 6;
+}
+.h3ts-splitter::after {
+  content: "";
+  position: absolute;
+  border-radius: 3px;
+  background: #7388a3;
+  opacity: .6;
+}
+.h3ts-splitter:hover,
+.h3ts-splitter:focus-visible,
+.h3ts-splitter.h3ts-dragging {
+  background: #34485c;
+  outline: 1px solid #71d7c5;
+}
+.h3ts-splitter-horizontal {
+  height: 8px;
+  width: 100%;
+  cursor: ns-resize;
+}
+.h3ts-splitter-horizontal::after {
+  width: 64px;
+  max-width: 30%;
+  height: 3px;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.h3ts-splitter-vertical {
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+}
+.h3ts-splitter-vertical::after {
+  width: 3px;
+  height: 42px;
+  max-height: 30%;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+}
+.h3ts-chunk-layout-control {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 11px;
+}
+.h3ts .h3ts-chunk-layout-control input[type=range] {
+  width: 95px;
+  min-width: 62px;
+  padding: 0;
+  cursor: ew-resize;
+}
+.h3ts-chunk-layout-control output {
+  font-variant-numeric: tabular-nums;
+  min-width: 32px;
+}
+@media (max-width: 1040px) {
+  .h3ts .h3ts-chunk-cards {
+    grid-template-columns: repeat(auto-fit,minmax(min(100%,var(--h3ts-card-min)),1fr));
+  }
+}
+
+/* Multiple definite source images may contribute to one processed IMAGE
+   socket. Do not fake a unique preview; display a bounded horizontal shelf
+   gallery with a literal multi-input provenance label. */
+.h3ts-conveyor-candidate-list {
+  grid-column: 1 / -1;
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  gap: 5px;
+}
+.h3ts-conveyor-candidate-description {
+  color: #c5d5e5;
+  line-height: 1.4;
+}
+.h3ts-conveyor-candidate-gallery {
+  display: flex;
+  align-items: stretch;
+  gap: 7px;
+  max-width: 100%;
+  overflow: auto hidden;
+  padding-bottom: 5px;
+}
+.h3ts-conveyor-candidate {
+  flex: 0 0 110px;
+  width: 110px;
+  min-width: 0;
+  padding: 4px;
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  border: 1px solid #455268;
+  border-radius: 4px;
+}
+.h3ts-conveyor-candidate img {
+  width: 100%;
+  height: 90px;
+  object-fit: contain;
+  cursor: zoom-in;
+  background: #0b111b;
+}
+.h3ts-conveyor-candidate small {
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* A single, legible media-control area per H3 chunk. Disabled clips remain
+   visible so they can be re-enabled without searching other timeline panels. */
+.h3ts-chunk-media {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  border-top: 1px solid #56677e;
+  padding-top: 8px;
+}
+.h3ts-chunk-media > strong { color: #d8e8f5; font-size: 12px; }
+.h3ts-chunk-media > small {
+  color: #b4c8d7;
+  line-height: 1.4;
+}
+.h3ts-chunk-media .h3ts-chunk-assigned {
+  display: grid;
+  grid-template-columns: minmax(155px, 1fr) minmax(120px, 2fr) auto;
+  align-items: center;
+  padding: 5px 7px;
+  margin-top: 2px;
+  border: 1px solid #3c4d61;
+  border-radius: 5px;
+  background: #1b2634;
+  gap: 5px;
+}
+.h3ts-chunk-media .h3ts-chunk-assigned.h3ts-media-inactive {
+  opacity: .63;
+}
+.h3ts-chunk-media-enable {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.h3ts-chunk-media-enable input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+.h3ts-chunk-media-name {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.h3ts-chunk-media .h3ts-chunk-asset-preview {
+  width: 68px;
+  height: 48px;
+}
+.h3ts-chunk-media .h3ts-chunk-control {
+  grid-column: 1 / -1;
+}
+@media(max-width:900px) {
+  .h3ts-chunk-media .h3ts-chunk-assigned {
+    grid-template-columns: minmax(0,1fr) auto;
+  }
+  .h3ts-chunk-media-name { grid-column: 1 / -1; }
+}
+.h3ts-scroll {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.h3ts-ruler { user-select: none; }
+
+/* Chunk authoring has an explicit reading order. Keep chunk identity visible
+   while scrolling the shared workspace. Reference bulk actions are compact. */
+.h3ts-chunk-card > h4 {
+  position: sticky;
+  top: -8px;
+  z-index: 3;
+  margin: -8px -8px 8px;
+  padding: 9px;
+  border-bottom: 1px solid #5d778e;
+  background: #263648;
+}
+.h3ts-ref-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 3px;
+}
+.h3ts-ref-actions strong {
+  flex: 1 1 170px;
+  color: #d8edee;
+}
+.h3ts-ref-actions button {
+  min-width: 55px;
+}
+.h3ts-chunk-media-enable:has(input:disabled) {
+  opacity: .75;
+  cursor: not-allowed;
+}
+.h3ts-tools button,
+.h3ts-chunk-heading button {
+  white-space: nowrap;
+}
+
+/* Primary chunk actions remain visible and labelled; the add-media workflow
+   is secondary and doesn't push existing clips off the card. */
+.h3ts-chunk-add-details {
+  border: 1px solid #3c4c5d;
+  border-radius: 5px;
+  margin-top: 8px;
+  padding: 7px;
+}
+.h3ts-chunk-add-details > summary { cursor: pointer; font-weight: 600; }
+.h3ts-chunk-add-details > .h3ts-chunk-control { margin-top: 8px; }
+.h3ts-chunk-media-enable { font-weight: 600; cursor: pointer; }
+.h3ts-chunk-media-enable input:disabled { cursor: not-allowed; }
+.h3ts-scroll {
+  overflow-x: auto !important;
+  overscroll-behavior-x: contain;
+}
+
+/* Scene authoring is the primary workflow; auxiliary navigation and layout
+   settings stay available without overwhelming the movie/chunk controls. */
+.h3ts-scene-controls {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+.h3ts-scene-controls .h3ts-chunk-control { display: inline-flex; align-items: center; }
+.h3ts-scene-view-tools {
+  border-bottom: 1px solid #35465b;
+  background: #1d2835;
+  padding: 3px 12px;
+  font-size: 11px;
+}
+.h3ts-scene-view-tools > summary { cursor: pointer; color: #c8d9e9; }
+.h3ts-scene-view-tools-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 0;
+}
+.h3ts-scene-view-tools-body .h3ts-chunk-layout-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* The normal workflow exposes only source start, chunk count and duration.
+   Detailed edit tools remain available without monopolizing the viewer width. */
+.h3ts-advanced-toolbar {
+  background:#1b212d;
+  border-bottom:1px solid #394152;
+  padding:3px 8px;
+  font-size:11px;
+}
+.h3ts-advanced-toolbar > summary {cursor:pointer; color:#c5d3df; padding:3px 6px;}
+.h3ts-tools-secondary {display:flex;flex-wrap:wrap;gap:5px;padding:7px !important;}
+.h3ts-scene-primary {
+  background:#355b81 !important;
+  border:1px solid #84a8c5 !important;
+  padding:6px 11px !important;
+  font-weight:700;
+}
+.h3ts-scene-summary {
+  flex:1 1 100%;
+  color:#b9d5df;
+  font-variant-numeric:tabular-nums;
+}
+.h3ts-scene-manual {
+  padding:4px 8px;
+  border:1px solid #3b4c5d;
+  border-radius:5px;
+}
+.h3ts-scene-manual > summary {cursor:pointer;}
+.h3ts-scene-manual .h3ts-chunk-control {margin:6px 0;}
+.h3ts-chunk-media-details {
+  border:1px solid #384b5c;
+  border-radius:4px;
+  padding:5px 7px;
+  margin-top:7px;
+}
+.h3ts-chunk-media-details > summary {
+  color:#b9d9dd;
+  cursor:pointer;
+  font-size:11px;
+}
+.h3ts-chunk-media-details .h3ts-chunk-media {margin-top:8px;}
+
+/* Compact image slots: never wrap full source filenames into vertical text. */
+.h3ts .h3ts-conveyor-refs {grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;}
+.h3ts .h3ts-conveyor-refs .h3ts-conveyor-ref {
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  min-height:0;min-width:0;overflow:hidden;padding:5px 3px;
+}
+.h3ts .h3ts-conveyor-refs .h3ts-conveyor-ref-label {
+  order:0;align-self:stretch;display:flex;align-items:center;gap:5px;
+  white-space:nowrap;overflow:hidden;
+}
+.h3ts .h3ts-conveyor-refs .h3ts-conveyor-ref-label strong {
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.h3ts .h3ts-conveyor-refs .h3ts-conveyor-thumb {
+  order:1;width:min(100%,var(--h3ts-ref-size));
+  height:clamp(54px,5vw,82px);min-width:0;object-fit:contain;
+}
+.h3ts .h3ts-conveyor-ref-name {
+  order:2;display:block;align-self:stretch;width:100%;min-width:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  overflow-wrap:normal;font-size:10px;text-align:center;color:#cadbe8;
+}
+.h3ts .h3ts-conveyor-refs .h3ts-conveyor-ref > small {order:3;width:100%;}
+.h3ts .h3ts-chunk-media-name {
+  min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;overflow-wrap:normal;
+}
+.h3ts .h3ts-media-explanation {
+  font-size:11px;line-height:1.35;margin:6px 0;color:#bddbe2;
+}
+.h3ts-scene-window {
+  position:absolute;top:0;height:27px;z-index:3;
+  border:1px solid #81bcdb;background:#275b78d9;color:#eaf6ff;
+  overflow:hidden;white-space:nowrap;font-size:10px;padding:2px;
+  text-align:center;cursor:pointer;
+}
+.h3ts-scene-window:hover {background:#397c9b;border-color:#d3f0ff;}
+@media(max-width:1050px) {
+  .h3ts .h3ts-conveyor-refs {grid-template-columns:repeat(2,minmax(0,1fr));}
+}
