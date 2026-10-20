@@ -2493,6 +2493,7 @@ export class TimelineEditor {
     try {
       this.stopPlayback();
       this.video.removeAttribute("src");
+      this.preloadVideo?.removeAttribute("src");
       // Do not call HTMLMediaElement.load() synchronously during Close:
       // tearing down a large remote video resource can stall this callback.
     } catch (e) { console.warn(e); }
