@@ -1594,8 +1594,13 @@ export class TimelineEditor {
     // audio/video while the current player continues. Switching a fully
     // buffered media element avoids a black reset between MP4 requests.
     next.promise.then(result=>{
+      // Consumption moves the request from nextPreview into playController.
+      // The background preloader must still finish if playback reaches the
+      // boundary before FFmpeg has produced this segment.
+      const active=this.nextPreview===next ||
+        this.playController===controller;
       if(!this.preloadVideo || !this.playWanted ||
-         this.closed || this.nextPreview!==next || controller.signal.aborted)
+         this.closed || !active || controller.signal.aborted)
         return;
       const player=this.preloadVideo;
       if(player.dataset.source!==result.url) {

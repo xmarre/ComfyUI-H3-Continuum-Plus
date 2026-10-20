@@ -2073,3 +2073,22 @@ test("cached prebuffer cannot resume at the previous playback timestamp",async()
   assert.equal(queued.currentTime,0);
   assert.equal(player.video,queued);
 });
+
+test("prefetch still warms standby player after playback consumes in-flight request",async()=>{
+  let resolveFetch,loads=0;
+  const old={src:"old",hidden:false};
+  const next={dataset:{},hidden:true,pause(){},load(){loads++;},
+    play(){return Promise.resolve();}};
+  const player={playWanted:true,playEpoch:1,closed:false,
+    abort:new AbortController(),p:{duration_frames:500},
+    video:old,preloadVideo:next,image:{hidden:false},message(){},
+    fetchSegment(){return new Promise(resolve=>resolveFetch=resolve);}};
+  TimelineEditor.prototype.prefetchSegment.call(player,48);
+  const playing=TimelineEditor.prototype.playSegment.call(player,48,1);
+  resolveFetch({url:"/composition/next",start:48,end:192});
+  await playing;
+  await Promise.resolve();
+  assert.equal(loads,1);
+  assert.equal(old.src,"old");
+  assert.equal(player.video,next);
+});
