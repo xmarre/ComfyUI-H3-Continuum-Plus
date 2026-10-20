@@ -2093,3 +2093,26 @@ test("prefetch still warms standby player after playback consumes in-flight requ
   assert.equal(old.src,"old");
   assert.equal(player.video,next);
 });
+
+test("scene window paging is source-relative, not a new clip for each chunk",()=>{
+  const id="c".repeat(64),movie={id,duration:"3600",video:{},audio:{}};
+  const p={assets:[movie],tracks:[],duration_frames:86400,
+    chunk_frames:168,selection:[0,336],operation:"generate"};
+  createSceneFromOriginal(p,17400,10,id);
+  const first=selectedChunkPage(p,0,8),last=selectedChunkPage(p,1,8);
+  assert.equal(first.total,10);
+  assert.deepEqual(first.chunks.map(c=>[c.start,c.end]).slice(0,2),
+    [[17400,17568],[17568,17736]]);
+  assert.deepEqual(last.chunks.map(c=>[c.start,c.end]),
+    [[18744,18912],[18912,19080]]);
+  const original=p.tracks.find(t=>t.role==="retained").clips;
+  const guide=p.tracks.find(t=>t.role==="video_guide").clips;
+  assert.equal(original.length,1);
+  assert.equal(guide.length,1);
+  assert.equal(guide[0].asset_id,original[0].asset_id);
+  assert.equal(guide[0].guidance_source_clip_id,original[0].id);
+  assert.equal(original[0].audio_role,"both");
+  assert.equal(guide[0].audio_role,"neither");
+  assert.deepEqual(overlappingChunkClips(p,1,["video_guide"]).map(x=>
+    [x.start,x.end]),[[17568,17736]]);
+});

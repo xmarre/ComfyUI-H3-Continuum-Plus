@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Display compact per-chunk Image Conveyor references with readable, non-wrapping identifiers, bounded thumbnails, tooltip/full-size provenance, and unchanged reference-image checkboxes.
+- Show a numbered, seekable virtual H3 chunk strip over the full uncut original movie. Chunk boundaries remain logical input windows rather than destructive source cuts.
+- Clarify original-video/audio versus derived H3 guidance in per-chunk routing: the linked guide reuses one original asset and has no extra audio track. Bump frontend/backend/native handshake to v18.
+
+
 - Add pointer-anchored wheel zoom anywhere over the movie ruler/tracks, alongside visible zoom buttons; retain horizontal trackpad panning, track scrolling with Shift+wheel and normal browser Ctrl/Meta zoom.
 - Preload the next composition MP4 into a second video element while the current decoded frame stays visible, avoiding the black frame reset from replacing an active source URL on each short segment. Actual browser audio continuity still requires acceptance testing.
 - Handle intentionally disconnected waveform and playback FFmpeg workers as client-cancelled responses without flooding the ComfyUI server log. Advance the frontend/backend/desktop compatibility contract to v17.

@@ -448,3 +448,21 @@ This can discard unsaved in-memory UI changes; the editor persists ordinary
 edits as they occur. Exiting Electron does **not** itself kill the Python
 ComfyUI server or unrelated background tasks. If a separate task continues
 to consume resources, cancel it in ComfyUI.
+
+### Compact references and virtual chunk windows
+
+Each scene chunk has a compact reference shelf: a slot checkbox, thumbnail,
+short label and full provenance via hover or image preview. Ellipsized labels
+do not change the connected image socket or selection. The original movie
+remains one continuous source clip. Above it, the numbered scene strip marks
+all H3 chunk windows, showing the video interval actually sampled for each
+chunk. Clicking a chunk number seeks to its source start; these visual markers
+do not cut, clone or re-encode the movie.
+
+When the same original movie appears as **Original footage** and **H3 video
+guide** in Advanced media details, the latter is a routing entry, not a
+second copy of the input file. Original footage contributes embedded audio
+to H3 driving conditioning and the preserved final soundtrack. Its linked
+video-guide role supplies video frames only; no second soundtrack is mixed.
+Compilation selects each video's and audio's exact scene-window source
+timestamps rather than feeding the entire movie to H3.

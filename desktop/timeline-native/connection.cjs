@@ -136,7 +136,7 @@ function startupHTML({ heading, detail, url, attempts = [] }) {
 
 // Both the active Python runtime and the actually served editor must agree.
 // This prevents an installed old Patcher overlay from reaching its drive scan.
-const NATIVE_PATH_CONTRACT = "h3-timeline-preview-wheel-v17";
+const NATIVE_PATH_CONTRACT = "h3-timeline-compact-scenes-v18";
 
 function safeExtensionURL(base, value, suffix) {
   if (typeof value !== "string" ||
