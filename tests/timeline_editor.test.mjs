@@ -1874,3 +1874,27 @@ test("scene count cannot extend a scene beyond the original movie",()=>{
   assert.throws(()=>changeTiming(p,"chunks",2),/exceed the original movie/);
   assert.deepEqual(p.selection,[700,868]);
 });
+
+test("video guidance inherits its soundtrack unless the same original audio already covers it",()=>{
+  const id="e".repeat(64),asset={id,name:"source",kind:"video",
+    duration:"120",video:{start_time:"0"},audio:{start_time:"0"}};
+  const p={duration_frames:1000,chunk_frames:168,selection:[0,168],assets:[asset],tracks:[]};
+  const guide=addChunkMedia(p,0,"video_guide",id);
+  assert.equal(guide.audio_role,"both");
+  assert.equal(guide.audio_padding,"silence");
+  const original=makeTrack("retained","original");
+  p.tracks.push(original);
+  const source=placeAsset(p,asset,original,168,168);
+  assert.equal(source.audio_role,"both");
+  // An independently created guide for the identical original interval
+  // cannot add a second copy of the same speech.
+  const duplicate=addChunkMedia(p,1,"video_guide",id);
+  assert.equal(duplicate.audio_role,"neither");
+  assert.equal(duplicate.source_in,source.source_in);
+  // A legacy final-only original track leaves guide-only speech conditioning.
+  const legacy={duration_frames:504,chunk_frames:168,selection:[0,168],
+    assets:[asset],tracks:[{id:"legacy",role:"audio",muted:false,clips:[{
+      id:"old",asset_id:id,start:0,end:168,source_in:"0",
+      speed:"1",audio_role:"final"}]}]};
+  assert.equal(addChunkMedia(legacy,0,"video_guide",id).audio_role,"guide");
+});

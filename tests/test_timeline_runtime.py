@@ -595,3 +595,29 @@ def test_partial_final_audio_never_erases_generated_tail(monkeypatch):
         "audio_role":"final","source_in":"0","speed":"1"}]}]
     inp=TimelineInputs(p,compile_project(p)["jobs"][0],object())
     assert inp.final_audio(0,336,48000) is None
+
+def test_video_guidance_soundtrack_can_supply_complete_final_audio(monkeypatch):
+    import numpy as np
+    from types import SimpleNamespace
+    from ComfyUI_H3_Continuum_Join.timeline import runtime as timeline_runtime
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    from ComfyUI_H3_Continuum_Join.timeline.model import blank_project, compile_project
+    p=blank_project()
+    p.update(duration_frames=504,selection=[0,168])
+    asset_id="e"*64
+    p["assets"]=[{"id":asset_id,"kind":"video","video":{},"audio":{}}]
+    p["tracks"]=[{"id":"guide","role":"video_guide","clips":[{
+        "id":"clip","asset_id":asset_id,"start":0,"end":168,
+        "source_in":"0","speed":"1","audio_role":"both",
+        "padding":"hold","audio_padding":"silence"}]}]
+    calls=[]
+    def mix(project,store,a,b,rate,route):
+        calls.append((a,b,route))
+        return np.full((2,round((b-a)*rate/24)),0.25,dtype=np.float32)
+    monkeypatch.setattr(timeline_runtime,"mix_audio",mix)
+    inputs=TimelineInputs(p,compile_project(p)["jobs"][0],SimpleNamespace(assets=object()))
+    assert inputs.windows[0]["guide"]
+    audio=inputs.final_audio(0,168,24000)
+    assert audio["sample_rate"]==24000
+    assert tuple(audio["waveform"].shape)==(1,2,168000)
+    assert calls==[(0,168,"final")]

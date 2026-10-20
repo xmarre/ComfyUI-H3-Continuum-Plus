@@ -184,7 +184,7 @@ class TimelineInputs:
         available = sorted(
             (max(start_frame, c["start"]), min(end_frame, c["end"]))
             for track, c in active_clips(
-                self.project, start_frame, end_frame, {"retained", "audio"}
+                self.project, start_frame, end_frame, {"retained", "audio", "video_guide"}
             )
             if c["audio_role"] in {"final", "both"}
         )

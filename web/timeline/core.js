@@ -430,6 +430,33 @@ export function makeTrack(role, name = role) {
     hidden: false,
   };
 }
+/**
+ * Reuse an existing continuous, matching soundtrack before assigning audio
+ * to another video clip. This prevents duplicate playback when a video guide
+ * is cut from an original clip that already supplies its own audio.
+ */
+export function videoSoundtrackRole(p, clip) {
+  const asset=p.assets?.find(a=>a.id===clip.asset_id);
+  if(!asset?.video || !asset?.audio) return "neither";
+  let hasGuide=false,hasFinal=false;
+  for(const track of p.tracks||[]) {
+    if(track.muted) continue;
+    for(const other of track.clips||[]) {
+      if(other.id===clip.id || other.muted || other.asset_id!==clip.asset_id ||
+         other.start>=clip.end || other.end<=clip.start ||
+         !["guide","final","both"].includes(other.audio_role)) continue;
+      const common=Math.max(clip.start,other.start);
+      if(Math.abs(sourceAt(other,common)-sourceAt(clip,common))>1e-6 ||
+         Math.abs(ratio(other.speed??1)-ratio(clip.speed??1))>1e-9)
+        continue;
+      hasGuide ||= other.audio_role==="guide" || other.audio_role==="both";
+      hasFinal ||= other.audio_role==="final" || other.audio_role==="both";
+    }
+  }
+  if(hasGuide) return hasFinal?"neither":"final";
+  return hasFinal?"guide":"both";
+}
+
 export function placeAsset(p, asset, track, frame, duration) {
   if (track.locked) throw new Error("Unlock this track before placing media");
   if (track.role === "image_reference" && asset.kind !== "image")
@@ -450,14 +477,15 @@ export function placeAsset(p, asset, track, frame, duration) {
     padding: track.role === "audio" ? "silence" : "error",
     // A video's original soundtrack follows its own clip and source PTS:
     // cutting or moving the video cannot desynchronize its audio.
-    audio_role: track.role === "audio" ? "final" :
-      track.role === "retained" && asset.video && asset.audio ? "both" : "neither",
+    audio_role: track.role === "audio" ? "final" : "neither",
     // Audio may end milliseconds ahead of video. Only PCM is padded.
-    ...(track.role === "retained" && asset.video && asset.audio ?
+    ...(["retained","video_guide"].includes(track.role) && asset.video && asset.audio ?
       { audio_padding: "silence" } : {}),
     alias: asset.alias || "",
     name: asset.name,
   };
+  if(["retained","video_guide"].includes(track.role))
+    c.audio_role=videoSoundtrackRole(p,c);
   track.clips.push(c);
   p.duration_frames = Math.max(p.duration_frames, end);
   return c;

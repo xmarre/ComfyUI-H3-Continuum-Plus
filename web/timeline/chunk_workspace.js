@@ -1,6 +1,6 @@
 // Chunk-first authoring operations. All spans use the same 24 fps project
 // frame clock as timeline/model.py and the connected Continuum sampler.
-import { makeTrack, placeAsset, sourceAt, uid, ratio } from "./core.js";
+import { makeTrack, placeAsset, sourceAt, uid, ratio, videoSoundtrackRole } from "./core.js";
 
 export function chunkWindow(project, index) {
   if (!Number.isSafeInteger(index) || index < 0) throw new Error("Invalid chunk");
@@ -187,7 +187,8 @@ export function addChunkMedia(project, index, role, assetId, audioRole = "guide"
   clip.end = end;
   clip.chunk_workspace = true;
   clip.chunk_index = index;
-  clip.audio_role = role === "audio" ? audioRole : "neither";
+  clip.audio_role = role === "audio" ? audioRole :
+    role === "video_guide" ? videoSoundtrackRole(project,clip) : "neither";
   clip.padding = role === "audio" ? "silence" : "hold";
   // Preserve existing lane content; overlapping guides follow top-track
   // precedence in the native compositor. The new authored lane is topmost.
