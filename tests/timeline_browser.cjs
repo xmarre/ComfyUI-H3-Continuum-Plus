@@ -141,6 +141,19 @@ const { chromium } = require("playwright");
     });
     assert.ok(pan>30,"Horizontal scrollbar must pan beyond selected chunks");
     await page.getByRole("button",{name:"Fit movie"}).click();
+    // Wheel zoom must magnify a multi-hour source under the pointer,
+    // independently of whether the scene selection starts near movie zero.
+    const ruler=page.locator(".h3ts-ruler");
+    await ruler.hover({position:{x:100,y:10}});
+    const beforeWheel=await page.evaluate(()=>
+      h3TestNode.properties.h3_timeline_view.zoom);
+    await page.mouse.wheel(0,-240);
+    await page.waitForFunction(z=>
+      h3TestNode.properties.h3_timeline_view.zoom>z,beforeWheel);
+    const afterWheel=await page.evaluate(()=>
+      h3TestNode.properties.h3_timeline_view.zoom);
+    assert.ok(afterWheel>beforeWheel);
+    await page.getByRole("button",{name:"Fit movie"}).click();
     const fitted=await page.evaluate(()=>{
       const el=document.querySelector(".h3ts-scroll");
       return {scrollWidth:el.scrollWidth,viewport:el.clientWidth};

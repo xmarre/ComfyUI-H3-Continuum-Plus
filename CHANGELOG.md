@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add pointer-anchored wheel zoom anywhere over the movie ruler/tracks, alongside visible zoom buttons; retain horizontal trackpad panning, track scrolling with Shift+wheel and normal browser Ctrl/Meta zoom.
+- Preload the next composition MP4 into a second video element while the current decoded frame stays visible, avoiding the black frame reset from replacing an active source URL on each short segment. Actual browser audio continuity still requires acceptance testing.
+- Handle intentionally disconnected waveform and playback FFmpeg workers as client-cancelled responses without flooding the ComfyUI server log. Advance the frontend/backend/desktop compatibility contract to v17.
+
 - Rebuild an uncut original video and its synchronized soundtrack atomically whenever a new H3 scene is created, discarding old clip cuts, muted soundtrack fragments and stale H3 video-guide lanes in one Undo-capable action.
 - Make scene creation from the current playhead with a user-selected chunk count/duration the primary workflow; retain manual frame entry, split/merge and advanced audio toggles in expandable sections.
 - Refresh the visible chunk cards after scene replacement; fix anchored-scene reroll indexing; bump frontend/backend/Windows native bridge compatibility to v16 to exclude stale cached modules.

@@ -179,7 +179,7 @@ images remain connected IMAGE inputs rather than imported copies.
 ## Timeline navigation and chunk media switches
 
 The lower track timeline navigates the full source duration. Scroll the mouse
-wheel over the timeline to pan left or right; horizontal trackpad gestures work
+wheel over the ruler or any timeline track to zoom around the mouse cursor; horizontal trackpad gestures pan. Shift+wheel scrolls tracks vertically
 directly. The toolbar also offers **← Pan**, **Pan →**, **Fit selection** and
 **Fit movie**. Pan changes the visible range, not the selected H3 generation
 interval, clip positions or source PTS. Zoom changes only view magnification.
