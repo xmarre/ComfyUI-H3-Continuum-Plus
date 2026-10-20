@@ -2150,11 +2150,18 @@ export class TimelineEditor {
   async queue(reroll = false) {
     await this.save();
     const snapshot = clone(this.p);
-    snapshot.queued_batch_id = uid();
+    // A fresh batch marker alters ComfyUI's upstream node input even when the
+    // project and seed are unchanged. Single-job normal queues need no marker:
+    // leave their prompt graph byte-for-byte identical so Comfy's native cache
+    // can reuse the previous Timeline result.
+    delete snapshot.queued_batch_id;
     const plan = await request(this.api, "/compile", {
       method: "POST",
       body: JSON.stringify(snapshot),
     });
+    // Rerolls must execute again; multi-job queues need the marker to resolve
+    // freshly queued parent takes rather than older alternative takes.
+    if (reroll || plan.jobs.length > 1) snapshot.queued_batch_id = uid();
     const samplers = this.app.graph._nodes
       .filter(
         (n) =>
