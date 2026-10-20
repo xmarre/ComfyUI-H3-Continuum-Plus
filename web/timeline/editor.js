@@ -1230,6 +1230,27 @@ export class TimelineEditor {
         style: `left:${this.frameX(this.p.selection[0])}px;width:${((this.p.selection[1] - this.p.selection[0]) * this.zoom) / 24}px`,
       }),
     );
+    // Virtual render windows are deliberately not physical film cuts.
+    // Draw only visible windows to keep multi-hour movie navigation bounded.
+    const sceneStart=this.p.selection[0],sceneEnd=this.p.selection[1];
+    const count=Math.ceil((sceneEnd-sceneStart)/this.p.chunk_frames);
+    const begin=Math.max(0,Math.floor(((left-180)*24/this.zoom-sceneStart)/
+      this.p.chunk_frames));
+    const finish=Math.min(count,Math.ceil(((right-180)*24/this.zoom-sceneStart)/
+      this.p.chunk_frames)+1);
+    for(let i=begin;i<finish;i++){
+      const a=sceneStart+i*this.p.chunk_frames;
+      const b=Math.min(sceneEnd,a+this.p.chunk_frames);
+      const width=(b-a)*this.zoom/24;
+      const block=el("button",{type:"button",class:"h3ts-scene-window",
+        title:"Scene chunk "+(i+1)+"/"+count+
+          " · source frames "+a+"–"+b+
+          " · virtual window, original movie remains uncut",
+        style:"left:"+this.frameX(a)+"px;width:"+width+"px",
+        text:width>=56?"#"+(i+1)+" · "+((b-a)/24).toFixed(1)+"s":""});
+      block.addEventListener("click",()=>this.seek(a));
+      this.timeline.append(block);
+    }
     for (const m of this.p.markers)
       if (this.frameX(m.frame) >= left && this.frameX(m.frame) < right)
         this.timeline.append(

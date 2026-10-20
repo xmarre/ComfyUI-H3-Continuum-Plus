@@ -316,7 +316,7 @@ function conveyorReferenceControls(editor,index,sources) {
         "processing may alter or combine the images before H3 receives them."}));
   for(const source of available) {
     const checked=chosen===null||chosen.includes(source.slot);
-    const card=el("div",{class:"h3ts-conveyor-ref"});
+    const card=el("div",{class:"h3ts-conveyor-ref",title:source.label});
     const toggle=el("input",{
       type:"checkbox",
       "aria-label":"Chunk "+(index+1)+" reference input "+source.slot,
@@ -326,8 +326,10 @@ function conveyorReferenceControls(editor,index,sources) {
       editor.editChunkReferences(project=>
         setConveyorSlotEnabled(project,index,source.slot,toggle.checked,
           availableSlots))));
-    const caption=el("label",{class:"h3ts-conveyor-ref-label"},
-      toggle,el("span",{text:"Ref "+source.slot+" · "+source.label}));
+    const caption=el("label",{class:"h3ts-conveyor-ref-label",title:source.label},
+      toggle,el("strong",{text:"Ref "+source.slot}));
+    const name=el("span",{class:"h3ts-conveyor-ref-name",
+      title:source.label,text:source.label.split(" · ")[0]});
     card.append(caption);
     if(source.thumbnail) {
       const image=el("img",{
@@ -360,6 +362,7 @@ function conveyorReferenceControls(editor,index,sources) {
       card.append(el("small",{class:"h3ts-chunk-warning",
         text:source.reason||"Upstream source has no stable preview"}));
     }
+    card.append(name);
     group.append(card);
   }
   return group;
@@ -613,10 +616,21 @@ export function renderChunkWorkspace(editor) {
       track.role==="video_guide" ||
       (track.role==="retained" && p.operation==="recreate"));
     const mediaDetails=el("details",{class:"h3ts-chunk-media-details"});
-    const status=(hasVideo?"Video guide ready":"No video guide")+
-      " · "+(hasAudioGuide?"Driving audio active":"No driving audio")+
-      " · "+(hasFinalAudio?"Original/final audio active":"No preserved final audio");
-    mediaDetails.append(el("summary",{text:"Media routing · "+status}));
+    const sameSourceGuide=activeMedia.some(({track,clip})=>
+      track.role==="video_guide" && clip.guidance_source_clip_id &&
+      activeMedia.some(({track:t,clip:c})=>
+        t.role==="retained" && c.id===clip.guidance_source_clip_id));
+    const status=(hasVideo?"Video guide":"No video guide")+
+      " · "+(hasAudioGuide?"Driving audio":"No driving audio")+
+      " · "+(hasFinalAudio?"Final soundtrack":"No final soundtrack");
+    mediaDetails.append(el("summary",{text:"Media · "+status}));
+    if(sameSourceGuide)mediaDetails.append(el("p",{
+      class:"h3ts-media-explanation",
+      text:"One original movie is used for video guidance and audio. "+
+        "The purple H3 guide is a routing view of the SAME source, not "+
+        "a second video or soundtrack. Each H3 chunk reads only its "+
+        (chunk.end-chunk.start)+"-frame source window ("+
+        frameTime(chunk.start)+"–"+frameTime(chunk.end)+")."}));
     const media=el("section",{class:"h3ts-chunk-media"},
       el("strong",{text:"Source clips and advanced enable / disable"}),
       el("small",{text:"These advanced controls split clips when toggled. "+
@@ -665,7 +679,9 @@ export function renderChunkWorkspace(editor) {
               : "")+
           (track.muted?" · track muted":clip.muted?" · disabled":" · active")})));
       row.append(el("span",{class:"h3ts-chunk-media-name",
-        text:(asset?.alias || asset?.name || clip.text || "source")+
+        title:asset?.alias || asset?.name || clip.text || "source",
+        text:(track.role==="video_guide" && clip.guidance_source_clip_id
+          ? "Linked to original movie" : (asset?.alias || asset?.name || clip.text || "source"))+
           " · "+(end-start)+"f"}));
       if(track.muted)row.append(button("Unmute track",()=>
         editor.edit(project=>{
