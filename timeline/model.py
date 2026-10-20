@@ -172,6 +172,9 @@ def validate(project):
                 raise ValueError("Clip speed must be nonzero and between -16 and 16")
             if c.setdefault("padding", "error") not in {"error", "hold", "silence"}:
                 raise ValueError("Unknown clip end policy")
+            if ("audio_padding" in c
+                    and c["audio_padding"] not in {"error", "hold", "silence"}):
+                raise ValueError("Unknown soundtrack end policy")
             if c.setdefault("audio_role", "neither") not in AUDIO_ROLES:
                 raise ValueError("Unknown audio route")
             for key in ("gain", "fade_in", "fade_out"):

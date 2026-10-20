@@ -437,3 +437,13 @@ def test_external_scene_local_prompt_uses_local_chunk_indices():
     assert "second utterance" not in windows[0]["prompt"]
     assert "second utterance" in windows[1]["prompt"]
     assert "first utterance" not in windows[1]["prompt"]
+
+def test_embedded_audio_padding_validated_independently_of_video_padding():
+    p=project()
+    clip=p["tracks"][0]["clips"][0]
+    clip["padding"]="error"
+    clip["audio_padding"]="silence"
+    assert validate(p)["tracks"][0]["clips"][0]["padding"]=="error"
+    clip["audio_padding"]="invalid"
+    with pytest.raises(ValueError, match="soundtrack end policy"):
+        validate(p)
