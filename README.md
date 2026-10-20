@@ -1,5 +1,70 @@
 # ComfyUI-H3-Continuum-Plus
 
+## Timeline Studio (draft integration)
+
+The chunk editor traces connected IMAGE paths back through unambiguous single-input
+image processors (including a Media Resolution node) to Image Conveyor. It shows
+the active Conveyor shelf's thumbnail, filename and original source provenance
+beside each chunk's reference checkbox. Thumbnails are **source previews**,
+not the output of any intermediate resizing/processing nodes; actual sampling
+continues to receive the existing connected processed IMAGE tensor.
+Shelf changes and output toggles refresh while Studio remains open. Reference
+checkbox edits preserve video playback and do not rebuild movie tracks.
+
+The chunk workspace uses the full desktop width, with one scrollable content
+region for its chunk cards and expandable advanced sampler diagnostics. Main
+viewer still images first expose a cached low-detail source preview while the
+high-detail image is decoded; failures are reported on-screen rather than
+leaving an unexplained black viewport. Neither preview derivative participates
+in H3 sampling or video export. The current native/editor compatibility
+contract is `h3-timeline-conveyor-preview-v8`.
+
+## Timeline Studio (draft integration)
+
+**Chunk-first H3 preparation:** Timeline Studio now opens on the selected number of
+logical H3 generation chunks and their exact 24 fps duration, synchronized with
+the connected Continuum Timeline Sampler. Each chunk has a prompt textarea,
+per-chunk selections from the connected Image Conveyor reference shelf, source-PTS-addressed video guidance
+cuts, and separately routed audio guide/reference/final cuts. The panel identifies
+persistent node connections and values, plus any native input precedence.
+A long source movie can still be inspected in the optional full-film timeline.
+See [chunk-first authoring](docs/timeline/USER_GUIDE.md#chunk-first-generation-authoring)
+for scope, connected `sequence_prompt` behavior, and chunk re-timing semantics.
+
+
+
+Timeline filmstrips reuse immutable cached JPEG derivatives from long linked movies instead of repeating identical decoder seeks for each scroll/track redraw. Preview status distinguishes direct-source seeking from slower composition, without silently lowering output resolution. Timeline queues respect connected DoRA State Manager's persistent prompt write protection: if a selected preset is empty while a controlled Text Box has unsaved text, save it explicitly through State Manager's **Save connected** before queueing.
+
+
+
+A compact Timeline Studio node opens a resizable editor for retained footage,
+scoped prompts/references/audio, native Continuum jobs, alternatives and final
+composition. **True no-copy Explorer drag requires the Windows
+[Continuum Timeline Desktop](desktop/timeline-native/README.md) wrapper**.
+Electron's native `webUtils.getPathForFile` supplies the actual selected path
+privately; the WSL backend links and hashes that exact source in place, stores
+only a small content-addressed pointer, and **never scans directories**.
+The native UI neither uploads nor duplicates the original movie.
+
+**Important:** ordinary Chrome cannot expose a dropped source's absolute path.
+In Chrome the editor explicitly refuses zero-copy import; it does not scan,
+upload or silently create a managed copy. The desktop wrapper must be launched
+once instead of a normal Chrome tab; an ordinary ComfyUI custom node/Patcher
+install cannot grant browser-level native file permissions. The Windows desktop
+package has now passed a real packaged-Windows startup and OS-backed File IPC smoke test. Physical Explorer drag into actual WSL ComfyUI, media sampling/export and code signing still require qualification. Startup also verifies the installed Timeline Python/frontend no-scan protocol rather than trusting a possibly stale Patcher overlay. It refuses the old recursive-search implementation with actionable diagnostics. Startup probes the local ComfyUI `/system_stats` API and presents connection diagnostics and a local URL field instead of a blank page; native path registration uses main-process IPC.
+The editor distinguishes **source-native export resolution** from the lower H3
+sampling canvas. Export creates a file, not H3 guidance; select retained footage
+and click **Guide H3 with selected clip**, then **Queue selection**, to condition
+MiniMax-H3 directly on the registered media and its source timing. Recreate uses
+retained footage as guidance automatically in eligible windows. Source-size FFV1
+remains an 8-bit RGB re-encode rather than an original-bitstream copy.
+Whole-stream PCM disk caching is disabled by default. Existing V3.4 nodes
+remain available unchanged. See the [user guide](docs/timeline/USER_GUIDE.md),
+[architecture](docs/timeline/ARCHITECTURE.md),
+[validation](docs/timeline/VALIDATION.md), and
+[importable examples](examples/timeline). Trained-H3 hardware acceptance remains
+pending before production release.
+
 ## v3.4.11 — Comfy Registry ownership (17 October 2026)
 
 The Plus fork is configured for publishing with **`PublisherId = "xmarre"`** and its own Registry node ID, **`comfyui-h3-continuum-plus`**. This identifies the maintained Plus fork separately from upstream `ukr8b3g-cmyk/ComfyUI-H3-Continuum`. The original author is still credited in the package metadata.
@@ -441,3 +506,5 @@ not included in this release set.
 ## License
 
 See [LICENSE](LICENSE).
+
+Timeline Studio’s **Import…** supports selective ZIP/JSON/text/media and read-only State Manager prompt imports, with global identity, editable chunk sections and original soundtrack routing. See [the import guide](docs/timeline/USER_GUIDE.md#import-prompts-pre-cut-pictures-and-the-original-soundtrack). Frontend, backend and desktop must use the matching v21 contract.
