@@ -24,6 +24,8 @@ import {
   mergeAdjacentClips,
   setSceneStart,
   restoreOriginalMovie,
+  originalSceneAssetId,
+  createSceneFromOriginal,
   makeTrack,
   placeAsset,
   trim,
@@ -1899,28 +1901,82 @@ test("video guidance inherits its soundtrack unless the same original audio alre
   assert.equal(addChunkMedia(legacy,0,"video_guide",id).audio_role,"guide");
 });
 
-test("starting a scene routes original video, H3 audio guidance and final sound automatically",()=>{
+test("starting a new scene discards legacy split/muted video and audio in one edit",()=>{
   const id="f".repeat(64),asset={id,name:"film",kind:"video",
     duration:"1200",video:{start_time:"0"},audio:{start_time:"0"}};
   const original=makeTrack("retained","Original movie");
-  const p={duration_frames:30000,chunk_frames:168,selection:[0,336],
+  const p={duration_frames:30000,chunk_frames:168,selection:[17393,17729],
     operation:"generate",assets:[asset],prompts:{global:"",mode:"Fixed",script:""},
-    tracks:[original]};
-  const clip=placeAsset(p,asset,original,0,30000);
-  clip.source_in="10";
-  const editor={p,playhead:14955,selected:[],
+    tracks:[original],markers:[{id:"m",frame:17393}],accepted:{"0":"old"}};
+  const clip=placeAsset(p,asset,original,0,28800);
+  split(p,[clip.id],17472);
+  original.clips[0].muted=true;
+  original.clips[1].source_in="725.583333333334";
+  const oldAudio=makeTrack("audio","Original soundtrack");
+  const oldClip=placeAsset(p,asset,oldAudio,17393,79);
+  oldClip.muted=true;
+  p.tracks.push(oldAudio);
+  const editor={p,playhead:17393,selected:[],chunkPage:4,
     edit(fn){fn(this.p);},jumpToFrame(frame){this.playhead=frame;},
-    message(msg){this.lastMessage=msg;}};
-  TimelineEditor.prototype.startScene.call(editor,14955);
-  assert.deepEqual(p.selection,[14955,15291]);
-  assert.equal(p.chunk_origin_frame,14955);
-  assert.equal(p.tracks.find(t=>t.role==="retained").clips[0].end,30000);
-  assert.equal(clip.audio_role,"both");
+    fitSelectedRange(){this.fitted=true;},message(msg){this.lastMessage=msg;}};
+  TimelineEditor.prototype.startScene.call(editor,17393,2);
+  assert.deepEqual(p.selection,[17393,17729]);
+  assert.equal(p.chunk_origin_frame,17393);
+  assert.equal(p.scene_original_asset_id,id);
+  assert.equal(p.duration_frames,28800);
+  assert.equal(p.tracks.filter(t=>t.role==="audio").length,0);
+  const source=p.tracks.find(t=>t.role==="retained").clips;
+  assert.equal(source.length,1);
+  assert.equal(source[0].audio_role,"both");
+  assert.equal(source[0].start,0);
+  assert.equal(source[0].end,28800);
+  assert.equal(source[0].source_in,"0");
+  assert.equal(source[0].muted,undefined);
   const guided=p.tracks.flatMap(t=>t.role==="video_guide"?t.clips:[]);
   assert.equal(guided.length,1);
   assert.equal(guided[0].audio_role,"neither");
-  assert.equal(guided[0].source_in,clip.source_in);
   assert.equal(guided[0].start,0);
-  assert.equal(guided[0].end,30000);
-  assert.match(editor.lastMessage,/soundtrack remain whole/);
+  assert.equal(guided[0].end,28800);
+  assert.equal(p.accepted,undefined);
+  assert.deepEqual(p.markers,[]);
+  assert.equal(editor.chunkPage,0);
+  assert.equal(editor.fitted,true);
+  assert.match(editor.lastMessage,/previous cuts cleared/);
+});
+
+test("scene recovery chooses unique original despite disjoint edited pieces",()=>{
+  const movie={id:"a".repeat(64),duration:"1500",kind:"video",video:{},audio:{}};
+  const b={id:"b".repeat(64),duration:"1500",kind:"video",video:{}};
+  const p={assets:[movie,b],tracks:[{role:"retained",clips:[
+    {id:"split1",asset_id:movie.id,start:200,end:300,source_in:"25"},
+    {id:"split2",asset_id:movie.id,start:300,end:400,source_in:"800"}]}]};
+  assert.equal(originalSceneAssetId(p,[]),movie.id);
+  p.tracks.push({role:"retained",clips:[{id:"other",asset_id:b.id,start:0,end:100}]});
+  assert.throws(()=>originalSceneAssetId(p,[]),/Select which original/);
+  assert.equal(originalSceneAssetId(p,["split1"]),movie.id);
+});
+
+test("scene reset rejects out of bounds without changing any edit",()=>{
+  const movie={id:"a".repeat(64),duration:"120",kind:"video",video:{},audio:{}};
+  const p={assets:[movie],chunk_frames:168,duration_frames:5000,
+    selection:[3000,3336],tracks:[{role:"retained",clips:[
+      {id:"old",asset_id:movie.id,start:0,end:5000,source_in:"0"}]}]};
+  const snapshot=JSON.stringify(p);
+  assert.throws(()=>createSceneFromOriginal(p,2800,2,movie.id),/exceeds/);
+  assert.equal(JSON.stringify(p),snapshot);
+  createSceneFromOriginal(p,2800,1,movie.id);
+  assert.deepEqual(p.selection,[2800,2968]);
+  assert.equal(p.tracks.length,2);
+});
+
+test("recreate mode relies on source guidance and attaches original audio once",()=>{
+  const movie={id:"a".repeat(64),duration:"120",kind:"video",
+    video:{start_time:"8"},audio:{start_time:"8"}};
+  const p={assets:[movie],chunk_frames:168,duration_frames:2880,
+    selection:[0,336],operation:"recreate",tracks:[]};
+  const {source}=createSceneFromOriginal(p,100,2,movie.id);
+  assert.equal(source.source_in,"8");
+  assert.equal(source.audio_role,"both");
+  assert.equal(p.tracks.filter(t=>t.role==="video_guide").length,0);
+  assert.deepEqual(p.selection,[100,436]);
 });

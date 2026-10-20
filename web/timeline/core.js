@@ -211,13 +211,15 @@ export function setSceneStart(p, frame, count) {
 // and acceptance in the current timeline project only.
 export function restoreOriginalMovie(p, assetId=null) {
   const options=p.assets.filter(a=>a.video);
-  const asset=assetId?options.find(a=>a.id===assetId):
+  const chosen = assetId || p.scene_original_asset_id || null;
+  const asset=chosen?options.find(a=>a.id===chosen):
     options.length===1?options[0]:null;
   if(!asset)throw Error("Select one original movie to reset");
   const duration=Math.round(ratio(asset.duration)*24);
   if(!Number.isSafeInteger(duration)||duration<1)
     throw Error("Invalid original movie duration");
   p.duration_frames=duration;
+  p.scene_original_asset_id=asset.id;
   p.chunk_origin_frame=0;
   if(p.prompts) p.prompts.origin_frame=0;
   p.tracks=[];
@@ -231,6 +233,63 @@ export function restoreOriginalMovie(p, assetId=null) {
   delete p.conveyor_reference_slots;
   delete p.queued_batch_id;
   return clip;
+}
+
+/**
+ * Resolve the original asset, never a currently cut piece's source_in.
+ * An explicitly selected retained video takes priority. Ambiguous sources
+ * must be resolved by selection rather than guessing from track order.
+ */
+export function originalSceneAssetId(p, selectedIds=[]) {
+  const videos = new Set((p.assets||[]).filter(a=>a.video).map(a=>a.id));
+  const selected = new Set(selectedClips(p,selectedIds)
+    .filter(([track,clip])=>track.role==="retained" && videos.has(clip.asset_id))
+    .map(([,clip])=>clip.asset_id));
+  if(selected.size===1)return [...selected][0];
+  if(selected.size>1)throw Error("Select one original movie, not clips from multiple videos");
+  if(p.scene_original_asset_id && videos.has(p.scene_original_asset_id))
+    return p.scene_original_asset_id;
+  const placed = new Set((p.tracks||[])
+    .filter(t=>t.role==="retained")
+    .flatMap(t=>t.clips||[])
+    .filter(c=>videos.has(c.asset_id))
+    .map(c=>c.asset_id));
+  if(placed.size===1)return [...placed][0];
+  if(placed.size>1)throw Error("Select which original video to use for the new scene");
+  if(videos.size===1)return [...videos][0];
+  throw Error("Select an original video on the timeline before starting a scene");
+}
+
+/**
+ * The scene-first operation intentionally starts from pristine registered
+ * source media. Old mute splits, trims, guide lanes and cut audio cannot bleed
+ * into a new scene, and all mutations form one Undo-capable history step.
+ * The movie's source timestamps remain absolute; only chunk boundaries and
+ * project selection use the new scene clock.
+ */
+export function createSceneFromOriginal(p, frame, count, assetId) {
+  const asset = p.assets.find(a=>a.id===assetId && a.video);
+  if(!asset)throw Error("Scene source video is missing or was not registered");
+  frame=Number(frame);count=Number(count);
+  if(!Number.isSafeInteger(frame)||frame<0)
+    throw Error("Scene start frame must be a nonnegative integer");
+  if(!Number.isSafeInteger(count)||count<1||count>65536)
+    throw Error("Scene chunk count must be between 1 and 65536");
+  const duration=Math.round(ratio(asset.duration)*24);
+  const end=frame+count*p.chunk_frames;
+  if(!Number.isSafeInteger(duration)||duration<1||!Number.isSafeInteger(end)||
+     end>duration)
+    throw Error("The selected scene exceeds the original movie duration");
+  const source=restoreOriginalMovie(p,assetId);
+  setSceneStart(p,frame,count);
+  if(p.operation!=="recreate") {
+    // The guide is a visible virtual copy, so legacy Recreate can still use
+    // its established implicit source-guide behavior without duplication.
+    const selection=p.selection.slice();
+    routeClipToGuidance(p,[source.id]);
+    p.selection=selection;
+  }
+  return {source,selection:p.selection.slice(),movieFrames:duration};
 }
 
 export function split(p, ids, frame) {

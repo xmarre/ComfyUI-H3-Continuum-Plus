@@ -17,6 +17,8 @@ import {
   mergeAdjacentClips,
   setSceneStart,
   restoreOriginalMovie,
+  originalSceneAssetId,
+  createSceneFromOriginal,
   trim,
   move,
   remove,
@@ -1889,50 +1891,32 @@ export class TimelineEditor {
       e.stopPropagation();
     }
   }
-  startScene(frame) {
-    const count=Math.max(1,Math.ceil((this.p.selection[1]-
-      this.p.selection[0])/this.p.chunk_frames));
-    const hasScopedEdits=this.p.tracks.some(t=>t.clips.some(c=>
-      c.chunk_prompt||c.chunk_workspace)) ||
+  startScene(frame, count = null) {
+    const total = count ?? Math.max(1,Math.ceil(
+      (this.p.selection[1]-this.p.selection[0])/this.p.chunk_frames));
+    // Resolve the original from the selected source, pinned project original,
+    // or unique registered film. Never derive a new scene from old cut pieces.
+    const assetId = originalSceneAssetId(this.p,this.selected);
+    const existingEdits=this.p.tracks.some(t=>
+      t.clips.length>1 || t.role==="audio" || t.role==="generated" ||
+      t.role==="video_guide" || t.clips.some(c=>
+        c.muted || c.chunk_prompt || c.chunk_workspace || c.start!==0)) ||
       !!this.p.accepted_windows?.length ||
       !!Object.keys(this.p.accepted||{}).length;
-    if(hasScopedEdits && !globalThis.confirm?.(
-      "Start a new scene? Existing scene-specific inputs and accepted bindings " +
-      "are cleared. Original media and stored take files remain. Undo restores " +
-      "the previous editor state."))return;
+    if(existingEdits && globalThis.confirm &&
+       !globalThis.confirm("Replace the current cuts, muted audio and scene " +
+         "overrides with the original movie and its soundtrack? Undo restores " +
+         "this timeline. Registered assets and saved takes are not deleted."))
+      return;
     this.edit(p=>{
-      setSceneStart(p,frame,count);
-      const sources=p.tracks.flatMap(t=>t.role==="retained" &&
-        !t.muted ? t.clips.filter(c=>!c.muted&&c.start<=frame&&frame<c.end &&
-        p.assets.some(a=>a.id===c.asset_id&&a.video)) : []);
-      if(sources.length>1)
-        throw Error("Multiple original movies cover this scene; mute or trim the others before choosing the source");
-      if(sources.length===1) {
-        const source=sources[0];
-        if(source.end<p.selection[1])
-          throw Error("The original video does not cover all requested chunks; choose fewer chunks");
-        const asset=p.assets.find(a=>a.id===source.asset_id);
-        if(asset?.audio && !p.tracks.some(t=>t.role==="audio" && !t.muted &&
-          t.clips.some(c=>!c.muted && c.audio_role==="guide" &&
-            c.start<=frame && c.end>=p.selection[1]))) {
-          const legacyFinal=p.tracks.some(t=>t.role==="audio"&&!t.muted &&
-            t.clips.some(c=>!c.muted&&c.asset_id===source.asset_id &&
-              ["final","both"].includes(c.audio_role)));
-          source.audio_role=legacyFinal ? "guide" : "both";
-          source.audio_padding="silence";
-        }
-        if(p.operation!=="recreate" && !p.tracks.some(t=>
-          t.role==="video_guide"&&!t.muted&&t.clips.some(c=>!c.muted &&
-          c.start<=frame && c.end>=p.selection[1]))) {
-          routeClipToGuidance(p,[source.id]);
-          p.selection=[frame,frame+count*p.chunk_frames];
-        }
-      }
+      createSceneFromOriginal(p,frame,total,assetId);
       this.selected=[];
     });
+    this.chunkPage=0;
     this.jumpToFrame(frame);
-    this.message("Scene starts at "+time(frame)+
-      ". The source movie and soundtrack remain whole; subsequent chunks are automatic.");
+    this.fitSelectedRange();
+    this.message("New scene: "+time(frame)+" · "+total+" automatic H3 chunks. "+
+      "Original movie and synchronized audio rebuilt; previous cuts cleared.");
   }
   restoreMovie() {
     const clips=selectedClips(this.p,this.selected)
