@@ -64,6 +64,7 @@ def blank_project():
         "height": 512,
         "operation": "generate",
         "final_audio_source": "original",
+        "audio_generation_mode": "guided",
         "video_guidance_enabled": True,
         "assets": [],
         "tracks": [],
@@ -126,6 +127,9 @@ def validate(project):
         raise ValueError("Unknown timeline generation operation")
     if p.get("final_audio_source", "original") not in {"original", "generated"}:
         raise ValueError("Unknown timeline final audio source")
+    from ..source_audio_lock import AUDIO_GENERATION_MODES
+    if p.get("audio_generation_mode", "guided") not in AUDIO_GENERATION_MODES:
+        raise ValueError("Unknown H3 audio generation mode")
     if type(p.setdefault("video_guidance_enabled", True)) is not bool:
         raise ValueError("Timeline H3 model video guidance must be enabled or disabled")
     assets = p.setdefault("assets", [])
@@ -638,6 +642,15 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         "guide": guide,
         "voice": [audio_identity(i) for i in inputs if i["audio_role"] == "reference"],
     }
+    audio_mode = p.get("audio_generation_mode", "guided")
+    if audio_mode != "guided":
+        from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT
+        semantic["audio_generation_mode"] = audio_mode
+        if audio_mode == "source_locked":
+            semantic["source_audio_lock_contract"] = SOURCE_AUDIO_LOCK_CONTRACT
+        else:
+            semantic["guide"] = []
+            semantic["audio_encoder_scope_hash"] = "none"
     selected_slots = reference_slots_for_chunk(p, index)
     if selected_slots is not None:
         # This is causal input state: masks invalidate their chunk and suffix.

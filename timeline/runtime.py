@@ -134,13 +134,27 @@ class TimelineInputs:
 
     @property
     def storage_contract(self):
-        return {
+        result = {
             "contract": 2,
             "reference_size": self.reference_size,
             "video_reference_size": self.video_reference_size,
         }
+        if self.audio_generation_mode != "guided":
+            from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT
+            result["audio_generation_mode"] = self.audio_generation_mode
+            if self.audio_generation_mode == "source_locked":
+                result["source_audio_lock_contract"] = SOURCE_AUDIO_LOCK_CONTRACT
+        return result
+
+    @property
+    def audio_generation_mode(self):
+        return self.project.get("audio_generation_mode", "guided")
 
     def guide_active(self, index):
+        if self.audio_generation_mode == "generated":
+            return False
+        if self.audio_generation_mode == "source_locked":
+            return True
         if self.driving_audio is not None:
             rate = int(self.driving_audio["sample_rate"])
             return self.driving_audio["waveform"].shape[-1] > round(
@@ -149,6 +163,10 @@ class TimelineInputs:
         return bool(self.windows[index]["guide"])
 
     def audio_source(self, audio_vae):
+        if self.audio_generation_mode == "generated":
+            return None
+        if self.audio_generation_mode == "source_locked":
+            return self._locked_audio_source(audio_vae)
         if self.driving_audio is None and not any(w["guide"] for w in self.windows):
             return None
         from ..driving_audio import prepare_driving_audio_source
@@ -180,6 +198,39 @@ class TimelineInputs:
             source.contract if self.driving_audio is not None else None
         )
         return source
+
+    def _locked_audio_source(self, audio_vae):
+        from ..source_audio_lock import prepare_locked_source
+
+        # Include real source PCM for the previous job's continuation prefix.
+        # No generated-audio tail is authoritative in this mode.
+        a = max(0, self.offset - 39)
+        end = self.offset + self.job["range"][1] - self.job["range"][0]
+        b = end + 34
+        self.lock_source_origin = a
+        self.guide_mix_range = [a, b]
+        rate = int(getattr(audio_vae, "audio_sample_rate", 32000))
+        self.guide_rate = rate
+        if self.driving_audio is not None:
+            source = prepare_locked_source(self.driving_audio, audio_vae,
+                start_frame=a, end_frame=b, required_end_frame=end)
+        else:
+            if not any(w["guide"] for w in self.windows):
+                raise ValueError("Source Audio Locked requires a connected Driving Audio input or an active Timeline audio guide")
+            pcm = mix_audio(self.project, self.store.assets, a, b, rate, "guide")
+            # prepare_locked_source uses the movie clock; this bounded mix has
+            # its own origin, so validate and fingerprint in that local clock.
+            source = prepare_locked_source(
+                {"waveform": torch.from_numpy(pcm)[None], "sample_rate": rate}, audio_vae,
+                start_frame=0, end_frame=b-a, required_end_frame=end-a)
+        self.direct_audio_contract = source.contract
+        return source
+
+    def locked_audio_window(self, source, audio_vae, *, retained_frames, trim_frames, total_frames):
+        from ..source_audio_lock import encode_locked_window
+        return encode_locked_window(source, audio_vae,
+            start_frame=self.offset + retained_frames - trim_frames - self.lock_source_origin,
+            total_frames=total_frames)
 
     def final_audio(self, start_frame, end_frame, sample_rate):
         """Return original/authored final PCM only when it covers the job.

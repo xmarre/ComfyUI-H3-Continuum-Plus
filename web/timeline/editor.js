@@ -1,7 +1,7 @@
 import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-video-optout-v23";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-audio-lock-v24";
 import {
   History,
   clone,
@@ -27,7 +27,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js?v=h3-timeline-explicit-video-v22";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-video-optout-v23";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-audio-lock-v24";
 import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-explicit-video-v22";
 import { selectedChunkPage } from "./chunk_workspace.js?v=h3-timeline-explicit-video-v22";

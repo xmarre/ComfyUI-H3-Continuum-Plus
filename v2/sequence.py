@@ -708,6 +708,10 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         # therefore invalidates the causal suffix when only references change.
         prompt_hashes = [hashlib.sha256((a+b).encode()).hexdigest()
                          for a,b in zip(prompt_hashes,timeline_inputs.hashes)]
+    source_audio_locked = (timeline_inputs is not None and
+                           timeline_inputs.audio_generation_mode == "source_locked")
+    if source_audio_locked:
+        require_native_mask_support()
     physical_candidate=physical_prompt_compiler_enabled()
     _log_prompt_routing_receipt(plan, physical_candidate=physical_candidate)
     if continuation_method==CONTINUATION_NATIVE_MASKED: require_native_mask_support()
@@ -864,7 +868,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         if reference_audio_source is not None:
             from ..reference_audio import encode_reference_audio
             reference_audio_assets=encode_reference_audio(reference_audio_vae,reference_audio_source)
-        driving_audio_assets=encode_driving_audio(driving_audio_source,driving_audio_vae)
+        driving_audio_assets=None if source_audio_locked else encode_driving_audio(driving_audio_source,driving_audio_vae)
         reference_video_assets=None
         if reference_video_source is not None:
             from ..reference_video import encode_reference_video
@@ -1077,7 +1081,19 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
         driving_audio_latent=slice_driving_audio_latent(driving_audio_assets,cumulative_retained_before=retained_frames,total_frames=int(chunk_plan["total_frames"]),trim_frames=int(chunk_plan["trim_frames"]),fps=FPS)
         if timeline_inputs is not None and not timeline_inputs.guide_active(sequence_index):
             driving_audio_latent=None
-        conditioning=attach_driving_audio(conditioning,driving_audio_latent)
+        if source_audio_locked:
+            from ..source_audio_lock import apply_source_audio_lock, SOURCE_AUDIO_LOCK_CONTRACT
+            locked_audio = timeline_inputs.locked_audio_window(
+                driving_audio_source, driving_audio_vae, retained_frames=retained_frames,
+                trim_frames=int(chunk_plan["trim_frames"]), total_frames=geometry.total_frames)
+            latent = apply_source_audio_lock(latent, locked_audio)
+            chunk_plan["source_audio_lock"] = SOURCE_AUDIO_LOCK_CONTRACT
+            LOG.info("H3 target audio lock receipt contract=%s shape=%s movie_start_frame=%d frames=%d guide_keyframe=absent",
+                SOURCE_AUDIO_LOCK_CONTRACT, tuple(locked_audio.shape),
+                timeline_inputs.offset + retained_frames - int(chunk_plan["trim_frames"]), geometry.total_frames)
+            del locked_audio
+        else:
+            conditioning=attach_driving_audio(conditioning,driving_audio_latent)
         log_physical_validation_manifest(physical_meta, conditioning)
         chunk_model=clone_model_for_chunk(model,strict=bool(strict_compatibility),debug=bool(debug),chunk_index=geometry.clip_index,context_frames=geometry.context_frames if geometry.continuation else None)
         sampled=sample_chunk(model=chunk_model,conditioning=conditioning,latent=latent,sampler=sampler,sigmas=sigmas,seed=seed,enable_preview=bool(enable_preview))

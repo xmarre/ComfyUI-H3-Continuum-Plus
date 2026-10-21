@@ -967,13 +967,16 @@ class H3ContinuumTimelineSampler:
         selected_audio = None
         if source_mode == "generated":
             report += "\nFinal audio: generated H3 audio selected; source audio remains available for driving conditioning."
-        elif driving_audio is not None and guide is not None:
+        elif driving_audio is not None:
             from ..v3.driving_nodes import _DRIVING_AUDIO_PLAN_KEY, _copy_audio
             from ..driving_audio import prepare_driving_audio_source
 
             selected_audio = _copy_audio(
                 prepare_driving_audio_source(
-                    guide.source_audio,
+                    {"waveform": driving_audio["waveform"][...,
+                        round(record["output_range"][0] * int(driving_audio["sample_rate"]) / 24):
+                        round(record["output_range"][1] * int(driving_audio["sample_rate"]) / 24)],
+                     "sample_rate": int(driving_audio["sample_rate"])},
                     audio_vae,
                     target_frames=record["output_range"][1] - record["output_range"][0],
                     fps=24,

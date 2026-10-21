@@ -2,8 +2,8 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 // Query-versioned import prevents a stale editor module after a Patcher update.
 // The desktop additionally verifies the actual server and frontend bytes.
-import { TimelineEditor } from "./timeline/editor.js?v=h3-timeline-video-optout-v23";
-const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-video-optout-v23";
+import { TimelineEditor } from "./timeline/editor.js?v=h3-timeline-audio-lock-v24";
+const H3_TIMELINE_ENTRY_CONTRACT = "h3-timeline-audio-lock-v24";
 import { uid } from "./timeline/core.js?v=h3-timeline-explicit-video-v22";
 import {
   migrateSamplerWorkflow,

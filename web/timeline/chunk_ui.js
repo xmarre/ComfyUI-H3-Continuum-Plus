@@ -535,13 +535,24 @@ export function renderChunkWorkspace(editor) {
   if(p.import_notes?.length) host.append(el("details",{class:"h3ts-import-notes"},
     el("summary",{text:"Clip-pack import receipt · timing and soundtrack ("+p.import_notes.length+")"}),
     ...p.import_notes.map(text=>el("p",{text}))));
+  const audioMode=el("select",{"aria-label":"H3 audio generation"},
+    el("option",{value:"guided",text:"Guided audio — existing behavior"}),
+    el("option",{value:"source_locked",text:"Source Audio Locked — experimental"}),
+    el("option",{value:"generated",text:"Generated audio — no driving audio"}));
+  audioMode.value=p.audio_generation_mode||"guided";
+  audioMode.addEventListener("change",()=>editor.edit(project=>{
+    project.audio_generation_mode=audioMode.value;
+  }));
+  host.append(control("H3 audio generation",audioMode),el("small",{
+    text:"Source Audio Locked holds the entire target audio latent at encoded source audio while generating video. Requires source audio and Core native masks. Lip synchronization is unverified. Generated disables driving audio; voice references remain independent. Queue a new take after changing this mode."
+  }));
   const outputAudio=el("select",{"aria-label":"Final audio for new takes"},
     el("option",{value:"original",text:"Original soundtrack"}),
     el("option",{value:"generated",text:"Generated H3 audio"}));
   outputAudio.value=p.final_audio_source||"original";
   outputAudio.addEventListener("change",()=>editor.edit(project=>setFinalAudioSource(project,outputAudio.value)));
   host.append(control("Final audio for new takes",outputAudio),el("small",{
-    text:"Audio guidance is unchanged. Original uses a complete routed source soundtrack, otherwise generated audio. Saved takes keep their audio; queue and save a new take after changing this choice."}));
+    text:"Output selection is independent of H3 audio generation. Original uses a complete routed source soundtrack, otherwise generated audio. Saved takes keep their audio; queue and save a new take after changing this choice."}));
   const globalPrompt=el("textarea",{
     class:"h3ts-global-prompt",rows:"3","aria-label":"Global prompt for every chunk",
     placeholder:"Identity, style and instructions shared by every chunk",
