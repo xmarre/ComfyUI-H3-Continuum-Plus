@@ -2296,6 +2296,9 @@ export class TimelineEditor {
       graphNode.widgets_values[0] = JSON.stringify(snapshot);
     let submitted = 0;
     try {
+      // Timeline Studio queues through api.queuePrompt; do not mutate the
+      // application-wide queuePrompt or bypass State Manager's wrapper.
+      if (this.smartReferences) await this.smartReferences.cancelVlm();
       for (let i = 0; i < plan.jobs.length; i++) {
         const payload = clone(frozen);
         const actual = payload.output[String(sampler.id)].inputs;
