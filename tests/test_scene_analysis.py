@@ -139,7 +139,9 @@ def test_alias_budget_identity_and_no_chunk_leak():
     w=compile_window(p,0,picture_offset=1)
     assert len(w['images'])==2 and set(w['aliases'].values())=={'<Picture 2>','<Picture 3>'}
     assert '<d>[English] We both do.</d>' in w['prompt']
-    assert [s['range'] for s in w['segments']]==[[0,67],[67,153],[153,168]]
+    assert w['segments'] is None
+    assert w['prompt'].count('<d>[English] We both do.</d>') == 1
+    assert w['prompt'].count('Shot plan (') == 1
     assert compile_window(p,1,picture_offset=1)['images']==[]
     full=compile_window(p,0,picture_offset=8)
     assert full['images']==[] and 'Scene composition evidence:' not in full['prompt'] and any('omitted' in s for s in full['warnings'])
@@ -159,7 +161,9 @@ def test_user_precedence_dialogue_verbatim():
     p['prompts']['regions']=[{'id':'dialogue','start':0,'end':168,'text':'S2 <d>[English] We both do.</d>\n(pause)'}]
     w=compile_window(p,0,picture_offset=1)
     assert 'invented' not in w['prompt'] and 'Mary remains neutral.' in w['prompt']
-    assert all('S2 <d>[English] We both do.</d>\n(pause)' in s['text'] for s in w['segments'])
+    assert w['segments'] is None
+    assert w['prompt'].count('S2 <d>[English] We both do.</d>\n(pause)') == 1
+    assert 'Visual shot request' not in w['prompt']
 
 
 def test_vlm_schema():
@@ -241,9 +245,9 @@ def test_split_correction_survives_detector_reanalysis():
     raw={'id':'analysis','source_asset_id':aid,'settings':settings(),'references':p['scene_plan']['references'],
          'shots':copy.deepcopy(p['scene_plan']['shots']),'scope':'selection','project_range':[0,336]}
     corrected=edit_plan(validate(p),'split','s1',frame=24)
-    corrected['scene_plan']['shots'][0]['user']['description']='Keep this exact authored interval.'
+    # Manual interval correction must not require an added description.
     result=mapped_plan(corrected,raw)
-    assert any(s['range']==[0,24] and s['user'].get('description')=='Keep this exact authored interval.' for s in result['shots'])
+    assert any(s['range']==[0,24] and s['user'].get('interval_overridden') for s in result['shots'])
     assert not any(s['range'][0]<24 and 0<s['range'][1] and s['range']!=[0,24] for s in result['shots'])
 
 
@@ -323,3 +327,70 @@ def test_manual_edit_keeps_measured_events_separate():
     assert right['event'] is None and right['events']==[]
     merged=edit_plan(split,'merge',left['id'],other_id=right['id'])
     assert next(s for s in merged['scene_plan']['shots'] if s['range']==[67,153])['events']==[event]
+
+
+def test_shot_schedule_does_not_split_timed_dialogue():
+    p=plan_project()
+    p['prompts']['regions']=[
+        {'id':'line-1','start':0,'end':100,'text':'<d>[English] First line.</d>'},
+        {'id':'line-2','start':100,'end':168,'text':'<d>[English] Second line.</d>'}]
+    w=compile_window(p,0,picture_offset=1)
+    assert [segment['range'] for segment in w['segments']]==[[0,100],[100,168]]
+    assert w['prompt'].count('<d>[English] First line.</d>')==1
+    assert w['prompt'].count('<d>[English] Second line.</d>')==1
+    assert sum('Shot plan (' in segment['text'] for segment in w['segments'])==1
+
+
+def test_reanalysis_preserves_other_source_and_unselected_shots():
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import mapped_plan
+    p=plan_project()
+    other='d'*64
+    p['assets'].append({'id':other,'kind':'video'})
+    foreign={'id':'other-shot','range':[170,210],'source_asset_id':other,
+             'source_start':'0','source_end':'5/3','reference_ids':[],
+             'user':{'description':'Keep scene B.'}}
+    p['scene_plan']['shots'].append(foreign)
+    p['scene_plan']['shots'][0]['user']['description']='Keep earlier source interval.'
+    a='a'*64
+    p['tracks']=[{'id':'track','role':'retained','clips':[{'id':'movie','asset_id':a,
+        'start':0,'end':336,'source_in':'0','speed':'1','audio_role':'neither'}]}]
+    raw={'id':'analysis-selection','source_asset_id':a,'settings':settings(),
+         'references':p['scene_plan']['references'],
+         'shots':[copy.deepcopy(p['scene_plan']['shots'][1])],
+         'scope':'selection','project_range':[67,153]}
+    result=mapped_plan(p,raw)
+    assert next(s for s in result['shots'] if s['id']=='other-shot')==foreign
+    assert next(s for s in result['shots'] if s['id']=='s1')['user']['description']=='Keep earlier source interval.'
+    assert any(s['range']==[67,153] and s['source_asset_id']==a for s in result['shots'])
+
+
+def test_rec709_midtone_codes_survive_reference_extraction(tmp_path):
+    from PIL import Image
+    path=tmp_path/'rec709_ramp.mkv'
+    src=np.full((3,96,160),128,dtype=np.uint8)
+    source_codes=[16,64,128,192,235]
+    for index,value in enumerate(source_codes):
+        src[0,:,index*32:(index+1)*32]=value
+    with av.open(str(path),'w') as container:
+        stream=container.add_stream('ffv1',rate=24)
+        stream.width,stream.height=160,96
+        stream.pix_fmt='yuv444p'
+        stream.codec_context.color_range=1
+        stream.codec_context.colorspace=stream.codec_context.color_primaries=stream.codec_context.color_trc=1
+        frame=av.VideoFrame.from_ndarray(src,format='yuv444p')
+        frame.pts=0
+        frame.time_base=Fraction(1,24)
+        for packet in stream.encode(frame):container.mux(packet)
+        for packet in stream.encode():container.mux(packet)
+    store,_,asset=registered(tmp_path,path)
+    with av.open(str(path)) as container:
+        frame=next(container.decode(video=0))
+        point={'pts':frame.pts,'time_base':str(frame.time_base)}
+    extracted=extract_reference(store,asset,point,settings(),cancel=lambda:None)
+    image=next(a for a in extracted['assets'] if a['representation']=='h3')
+    with Image.open(store.assets.path(image['id'])) as img:
+        pixels=np.asarray(img)
+    for index,value in enumerate(source_codes):
+        expected=round((value-16)*255/219)
+        observed=float(np.median(pixels[:,index*32+8:index*32+24,:]))
+        assert abs(observed-expected)<=4,(value,observed,expected)
