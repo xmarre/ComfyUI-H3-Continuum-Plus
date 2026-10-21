@@ -431,6 +431,9 @@ def test_fixed_scene_shot_schedule_reaches_native_invocation_without_dialogue_du
     assert physical['source']['kind']=='timeline'
     assert physical['prompts'][0].count(authored)==1
     assert physical['prompts'][0].count('Shot plan:')==1
+    assert provider.invocation_text(authored,0).count(authored)==1
+    assert provider.invocation_text(authored,0).count('Shot plan:')==1
+    assert provider.invocation_text(authored,1)==authored
     assert provider.invocation_plan(native,1) is native
 
     # Without Smart References, native Fixed handling is unchanged.
@@ -439,3 +442,4 @@ def test_fixed_scene_shot_schedule_reaches_native_invocation_without_dialogue_du
     bare_windows=[compile_window(bare,i,picture_offset=1) for i in range(2)]
     normal=TimelineInputs(bare,{'windows':bare_windows,'range':[0,336]},None)
     assert normal.invocation_plan(native,0) is native
+    assert normal.invocation_text(authored,0)==authored
