@@ -104,7 +104,7 @@ export class TimelineEditor {
     this.playhead = view.playhead ?? this.p.selection[0];
 
     this.previewMode = view.previewMode || "composed";
-    this.chunkPage = view.chunkPage || 0;
+    this.chunkPage = (view.chunkPage || 0) * (view.layout?.version===2 ? 1 : 8);
     this.layout = view.layout?.version===2 ? layoutView(view.layout) :
       layoutView({thumb:view.layout?.thumb,track:view.layout?.track});
     this.sidebarTab = ["scene","prompts","media","inspector"].includes(view.sidebarTab) ? view.sidebarTab : "scene";
@@ -625,8 +625,6 @@ export class TimelineEditor {
           this.scroller.clientWidth/2)),
         button("+ Zoom", () => this.zoomAround(this.zoom*1.5,
           this.scroller.clientWidth/2)),
-        button("Queue scene", () => this.guard(() => this.queue())),
-        button("Cancel sampling", () => this.guard(() => this.cancelSampling())),
       ),
     );
     const advanced=el("details",{class:"h3ts-advanced-toolbar"});
@@ -814,8 +812,6 @@ export class TimelineEditor {
     const timelineTools=this.root.querySelector(":scope > .h3ts-tools");
     // Keep queue actions in the workspace header, and time-navigation actions
     // directly above the timeline they operate on.
-    for(const item of [...timelineTools.querySelectorAll("button")])
-      if(["Queue scene","Cancel sampling"].includes(item.textContent))item.remove();
     const footer=this.root.querySelector(":scope > footer");
     footer.classList.add("h3ts-delivery");
     this.root.insertBefore(actions,this.main);
@@ -2186,7 +2182,7 @@ export class TimelineEditor {
     if ((this.chunkBoard.contains(document.activeElement) ||
         this.promptSettings?.contains(document.activeElement) ||
         this.sceneSettings?.contains(document.activeElement)) &&
-        ["TEXTAREA","INPUT"].includes(document.activeElement?.tagName)) return;
+        ["TEXTAREA","INPUT","SELECT"].includes(document.activeElement?.tagName)) return;
     renderChunkWorkspace(this);
   }
   scheduleChunkCompile() {

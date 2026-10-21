@@ -447,6 +447,15 @@ export function refreshConveyorControls(editor, force = false) {
 export function renderChunkWorkspace(editor) {
   const host = editor.chunkBoard;
   if (!host) return;
+  // Preserve panel disclosure and select focus when chunk navigation or a
+  // project edit rebuilds these non-causal controls. Text input uses editPrompt
+  // and is never rebuilt during typing.
+  const panels=[editor.sceneSettings,editor.promptSettings].filter(Boolean);
+  const panelState=panels.map(panel=>({panel,
+    open:[...panel.querySelectorAll("details")].map(detail=>detail.open),
+    focus:panel.contains(document.activeElement) && document.activeElement.tagName==="SELECT"
+      ? document.activeElement.getAttribute("aria-label") : null,
+  }));
   const p = editor.p;
   const page = selectedChunkPage(p,editor.chunkPage || 0,1);
   editor.chunkPage = page.page;
@@ -859,6 +868,13 @@ export function renderChunkWorkspace(editor) {
     cards.append(card);
   }
   host.append(cards);
+  for(const state of panelState) {
+    const details=[...state.panel.querySelectorAll("details")];
+    if(details.length===state.open.length)
+      details.forEach((detail,index)=>{detail.open=state.open[index];});
+    if(state.focus) [...state.panel.querySelectorAll("select[aria-label]")]
+      .find(select=>select.getAttribute("aria-label")===state.focus)?.focus({preventScroll:true});
+  }
 }
 // Only repaint derived output lines; do not tear down a textarea while
 // the user is typing a new chunk prompt.

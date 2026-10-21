@@ -89,6 +89,13 @@ else {
           if (result.id !== "h3-smoke-asset" || result.storage !== "linked") {
             throw new Error("Packaged native path IPC returned unexpected asset");
           }
+          // Portable Windows GUI apps do not reliably forward stdout. Confirm
+          // capture completion to the smoke server before forced window close.
+          const receipt = await fetch(new URL("/h3-smoke-capture", selected), {
+            method:"POST", headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({width:result.captureWidth,height:result.captureHeight}),
+          });
+          if (!receipt.ok) throw new Error("Capture smoke receipt was not acknowledged");
           console.log("H3_EDITOR_CAPTURE_SMOKE_PASSED", result.captureWidth, result.captureHeight);
           console.log("H3_NATIVE_DESKTOP_SMOKE_PASSED");
           // CI must exercise the real packaged BrowserWindow.close() path,

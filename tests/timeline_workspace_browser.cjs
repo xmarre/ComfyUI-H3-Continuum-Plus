@@ -27,7 +27,7 @@ function graphFixture(node) {
   if(url.pathname==='/'){
    res.setHeader('Content-Type','text/html');res.end(`<!doctype html><link rel="stylesheet" href="/web/timeline/studio.css"><script type="module">
    import {TimelineEditor} from '/web/timeline/editor.js';
-   const node={id:1,properties:{h3_timeline_view:{layout:{preview:110,chunk:150},playhead:17400}},setDirtyCanvas(){}};
+   const node={id:1,properties:{h3_timeline_view:{layout:{preview:110,chunk:150},chunkPage:1,playhead:17400}},setDirtyCanvas(){}};
    const widget={value:JSON.stringify(${JSON.stringify(project)})};
    const graph=(${graphFixture.toString()})(node);
    const api={apiURL:p=>p,fetchApi:(p,o)=>fetch(p,o)};
@@ -58,6 +58,10 @@ function graphFixture(node) {
   page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.waitForFunction(()=>window.editor && document.querySelector('.h3ts-image').naturalWidth>0);
+  // v24 page 1 held scene chunks 9-16; keep its first visible chunk.
+  assert.equal(await page.locator('.h3ts-chunk-card').getAttribute('data-chunk-index'),'8');
+  await page.getByLabel('Go to scene chunk').fill('1');
+  await page.getByLabel('Go to scene chunk').press('Tab');
   const dimensions=()=>page.evaluate(()=>Object.fromEntries(['.h3ts','.h3ts > main','.h3ts-viewer','.h3ts-chunk-workspace','.h3ts-chunk-cards','.h3ts-scroll'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return [selector,{width:r.width,height:r.height}]})));
   for(const [width,height] of [[1920,1200],[1366,768],[1000,700]]) {
    await page.setViewportSize({width,height});
@@ -87,7 +91,17 @@ function graphFixture(node) {
   await page.getByRole('tab',{name:'Media',exact:true}).click();
   await page.getByRole('tab',{name:'Inspect',exact:true}).click();
   await page.getByRole('tab',{name:'Scene',exact:true}).click();
-  await page.getByRole('separator',{name:'Resize media library width'}).focus();
+  const disclosure=page.locator('.h3ts-setting-help').first();
+  await disclosure.locator('summary').click();
+  const mode=page.getByLabel('H3 model video conditioning',{exact:true});
+  await mode.focus();
+  await mode.selectOption('on');
+  assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('aria-label')),'H3 model video conditioning');
+  assert.equal(await disclosure.getAttribute('open'),'');
+  await mode.selectOption('off');
+  // Restore the initial project check after these two intentional causal edits.
+  await page.evaluate(()=>{initialProject=editor.widget.value});
+  await page.getByRole('separator' ,{name:'Resize media library width'}).focus();
   await page.keyboard.press('ArrowRight');
   assert.equal(await page.evaluate(()=>editor.widget.value===initialProject),true);
   // A chunk page is one real logical chunk; changing pages must not edit inputs.
