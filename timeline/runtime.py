@@ -52,6 +52,7 @@ class TimelineInputs:
         self.store = store
         self.windows = self.job["windows"]
         self.manifests = []
+        self.scene_materialized = {}
         self.conditioning_cache = {}
         self.timeline_plan = None
         self.reference_cache = OrderedDict()
@@ -303,15 +304,28 @@ class TimelineInputs:
             audio["waveform"] = F.pad(audio["waveform"], (0, padding))
         return audio
 
+    def invocation_text(self, original, index):
+        """Use authored window text plus scene evidence in legacy nominal mode.
+
+        When no scene schedule is active the pre-existing native Fixed/List
+        prompt remains identical, preserving unrelated sampler behavior.
+        """
+        window = self.windows[index]
+        return window["prompt"] if window.get("scene_schedule") else original
+
     def invocation_plan(self, original, index):
         """Native Timeline source for a window with timed prompt regions.
 
         Each window is an outer section on its exact job-clock chunk boundary;
-        timed regions are a strict inner partition of it. The physical
+        timed regions are a strict inner partition of it. A fixed prompt with
+        Smart References visual instructions must also use this plan; otherwise
+        the native sampler would consume the unaugmented original instead.
+        The physical
         compiler then re-bases them onto each invocation's own clock, including
         native context, without importing adjacent windows.
         """
-        if not self.windows[index].get("timed_prompt"):
+        if not (self.windows[index].get("timed_prompt") or
+                self.windows[index].get("scene_schedule")):
             return original
         if self.timeline_plan is None:
             from ..v2.prompts import make_prompt_plan
@@ -361,13 +375,18 @@ class TimelineInputs:
 
         prepared = []
         for item in w["images"]:
-            key = (item["asset_id"], width, height, self.reference_size)
+            key = (item["asset_id"], width, height, self.reference_size, item.get("scene_native", False))
             cached = self.reference_cache.pop(key, None)
             if cached is None:
                 from PIL import Image
                 import numpy as np
 
                 with Image.open(self.store.assets.verify(item["asset_id"])) as im:
+                    if item.get("scene_native"):
+                        from .scene_color import native_reference_dimensions
+                        size = native_reference_dimensions(im.width, im.height, width, height, self.reference_size)
+                        if size != im.size:
+                            im = im.resize(size, Image.Resampling.LANCZOS)
                     image = (
                         torch.from_numpy(np.asarray(im.convert("RGB")).copy()).float()[
                             None
@@ -417,6 +436,16 @@ class TimelineInputs:
                 ),
                 self.reference_size,
             )
+        if any(item.get("scene_native") for item in w["images"]):
+            offset = self.picture_offset_for(w["index"])
+            self.scene_materialized[index] = [
+                {"asset_id": item["asset_id"], "picture": f"<Picture {offset+n+1}>",
+                 "shape": list(prepared[n].images[0].shape),
+                 "image_sha256": prepared[n].image_hashes[0],
+                 "megapixels": prepared[n].images[0].shape[1]*prepared[n].images[0].shape[2]/1e6,
+                 "scene_native": bool(item.get("scene_native"))}
+                for n, item in enumerate(w["images"])
+            ]
         video_source = video_assets = None
         if w["video"]:
             # Timeline video lanes compose by explicit top-track precedence.
@@ -505,6 +534,9 @@ class TimelineInputs:
                 + self.offset,
             ],
         }
+        if index in self.scene_materialized:
+            presentation["timeline_studio"]["reference_inputs"] = self.scene_materialized[index]
+            presentation["timeline_studio"]["shot_timing_enforced"] = False
         if hasattr(self, "guide_rate"):
             from .model import sample_boundary, active_clips, clip_input
 

@@ -140,6 +140,9 @@ def validate(project):
         ):
             raise ValueError("Assets require unique registered SHA256 identifiers")
         ids.add(a["id"])
+    if "scene_plan" in p:
+        from .scene_plan import validate_plan
+        validate_plan(p["scene_plan"], ids, duration)
     slot_masks = p.get("conveyor_reference_slots", {})
     if not isinstance(slot_masks, dict) or len(slot_masks) > 65536:
         raise ValueError("Invalid chunk reference selections")
@@ -400,6 +403,10 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         if i["role"] == "image_reference" and i["asset_id"] not in seen:
             seen.add(i["asset_id"])
             images.append(i)
+    from .scene_plan import allocate
+    smart_images, smart_shots, smart_warnings = allocate(p, start, end, picture_offset, images)
+    images.extend(i for i in smart_images if i["asset_id"] not in seen)
+    inputs.extend(smart_images)
     if len(images) + picture_offset > 8:
         raise ValueError(
             f"Chunk {index + 1} exceeds H3's eight active reference images"
@@ -567,7 +574,9 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             f"{seconds_text(s['range'][0] - start)}-{seconds_text(s['range'][1] - start)}s:\n{s['text']}"
             for s in segments
         )
-    warnings = []
+    from .scene_plan import augment_prompt
+    segments, text, scene_schedule = augment_prompt(p, smart_shots, start, end, base, segments, text, picture_by_asset)
+    warnings = list(smart_warnings)
     if p.get("video_guidance_enabled", True) is False and re.search(r"<Video\s+\d+>", text):
         warnings.append(
             "The prompt refers to <Video N>, but H3 model video conditioning is Off. "
@@ -602,7 +611,8 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
 
     guide = [audio_identity(i) for i in inputs if i["audio_role"] in {"guide", "both"}]
     final = [i for i in inputs if i["audio_role"] in {"final", "both"}]
-    images = [{"asset_id": i["asset_id"], "alias": i["alias"]} for i in images]
+    images = [{"asset_id": i["asset_id"], "alias": i["alias"],
+               **({"scene_native": True} if "scene_reference_id" in i else {})} for i in images]
     video = [
         {
             k: v
@@ -647,6 +657,8 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         "guide": guide,
         "voice": [audio_identity(i) for i in inputs if i["audio_role"] == "reference"],
     }
+    if any(i.get("scene_native") for i in images):
+        semantic["scene_reference_preparation"] = "native_floor_v1"
     audio_mode = p.get("audio_generation_mode", "guided")
     if audio_mode != "guided":
         from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT
@@ -665,6 +677,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         "index": index,
         "range": [start, end],
         "timed_prompt": segments is not None,
+        "scene_schedule": scene_schedule,
         "warnings": warnings,
         **semantic,
         "aliases": aliases,

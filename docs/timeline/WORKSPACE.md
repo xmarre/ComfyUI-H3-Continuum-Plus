@@ -1,4 +1,4 @@
-# Timeline workspace (v26)
+# Timeline workspace (v27)
 
 The editor has two main work areas: preview on the left and one selected H3
 chunk on the right. Previous/Next chunk and the chunk-number field navigate the
@@ -42,3 +42,12 @@ settings and soundtrack.
 
 Source Audio Locked requires source audio and controls audio denoising; it does
 not constrain head/body pose, camera motion or shot boundaries.
+
+## Smart references
+
+The workspace header opens **Smart references** as a separate scrollable analysis
+workspace. Analyze, review thumbnails and exact source intervals, correct
+split/merge/reuse decisions, preview compiled inputs, and Apply as one Undo step.
+The existing preview, chunk editor and settings keep their layouts. Analysis
+finishing never queues H3. The full workflow and color/provider limitations are
+in [Smart References](SMART_REFERENCES.md).

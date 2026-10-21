@@ -1,7 +1,8 @@
+import { SmartReferences } from "./smart_references.js?v=h3-timeline-smart-references-v27";
 import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-workspace-v26";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v27";
 import {
   History,
   clone,
@@ -27,8 +28,8 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js?v=h3-timeline-explicit-video-v22";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-workspace-v26";
-import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-workspace-v26";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls, referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v27";
+import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-smart-references-v27";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-explicit-video-v22";
 import { selectedChunkPage } from "./chunk_workspace.js?v=h3-timeline-explicit-video-v22";
 import { ImportDialog } from "./import_dialog.js?v=h3-timeline-explicit-video-v22";
@@ -794,6 +795,7 @@ export class TimelineEditor {
     const actions=el("nav",{class:"h3ts-workspace-actions"},
       this.sidebarToggle,this.focusSelect,this.timelineToggle,
       button("Global prompt",()=>this.showSidebar("prompts")),
+      button("Smart references",()=>{this.smartReferences?.close();this.smartReferences=new SmartReferences(this);}),
       button("Inspect inputs",()=>{
         this.showSidebar("inspector");this.guard(()=>this.inspectInputs());
       }),
@@ -1372,6 +1374,13 @@ export class TimelineEditor {
         text:width>=56?"#"+(i+1)+" · "+((b-a)/24).toFixed(1)+"s":""});
       block.addEventListener("click",()=>this.seek(a));
       this.timeline.append(block);
+    }
+    for (const shot of this.p.scene_plan?.shots||[]) {
+      const x=this.frameX(shot.range[0]);
+      if(x>=left&&x<right)this.timeline.append(el("button",{
+        class:"h3ts-shot-boundary",style:`left:${x}px`,text:"│ Shot",
+        title:`Detected shot · source PTS ${shot.source_start} · H3 timing advisory`,
+        onclick:()=>this.seek(shot.range[0])}));
     }
     for (const m of this.p.markers)
       if (this.frameX(m.frame) >= left && this.frameX(m.frame) < right)
@@ -2195,7 +2204,14 @@ export class TimelineEditor {
           selection: [page.chunks[0].start, page.chunks.at(-1).end],
           accepted_windows: [],
         } : this.p;
-        const plan = await request(this.api, "/compile", {
+        let plan;
+        if(previewProject.scene_plan) {
+          const sources=referenceSocketSources(this);
+          const slot_sizes=Array.from({length:8},(_,i)=>sources[i]?.connected&&!sources[i]?.unavailable?1:0);
+          const scene=await request(this.api,"/scenes/compile",{
+            method:"POST",body:JSON.stringify({project:previewProject,slot_sizes}),signal:this.abort.signal});
+          plan={jobs:[{windows:scene.windows}]};
+        } else plan = await request(this.api, "/compile", {
           method: "POST", body: JSON.stringify(previewProject),
           signal: this.abort.signal,
         });
@@ -2280,6 +2296,9 @@ export class TimelineEditor {
       graphNode.widgets_values[0] = JSON.stringify(snapshot);
     let submitted = 0;
     try {
+      // Timeline Studio queues through api.queuePrompt; do not mutate the
+      // application-wide queuePrompt or bypass State Manager's wrapper.
+      if (this.smartReferences) await this.smartReferences.cancelVlm();
       for (let i = 0; i < plan.jobs.length; i++) {
         const payload = clone(frozen);
         const actual = payload.output[String(sampler.id)].inputs;
@@ -2625,6 +2644,7 @@ export class TimelineEditor {
     }
   }
   close() {
+    this.smartReferences?.close();
     if (this.closed) return;
     this.closed = true;
     // Remove the modal FIRST. No video decoder, canvas refresh, workflow
