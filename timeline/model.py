@@ -678,7 +678,8 @@ def guide_scope_for(p, indices, offset=None):
     a = scene_origin + indices[0] * size
     b = min(p["duration_frames"], scene_origin + (indices[-1] + 1) * size)
     origin = a if offset is None else offset
-    return (origin, origin + b - a + 34)
+    prefix = 39 if p.get("audio_generation_mode") == "source_locked" else 0
+    return (max(0, origin-prefix), origin + b - a + 34)
 
 
 def compile_project(project):

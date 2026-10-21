@@ -601,3 +601,48 @@ def test_generated_audio_choice_keeps_driving_conditioning_without_final_replace
     assert result[3]['final_audio_source']=='generated'
     assert 'generated H3 audio selected' in result[4]
     assert all(any('audio_latent' in k for k in c['conditioning'][0][1]['minimax_keyframes']) for c in calls)
+
+
+@pytest.mark.parametrize('mode',['guided','source_locked','generated'])
+@pytest.mark.parametrize('final',['original','generated'])
+def test_audio_generation_and_final_source_are_independent(runtime,monkeypatch,mode,final):
+    from tests.test_source_audio_lock import install_native
+    from ComfyUI_H3_Continuum_Join.v3.driving_nodes import _FINAL_AUDIO_SOURCE_PLAN_KEY
+    install_native(monkeypatch)
+    args,calls,_,_,_=runtime
+    p=args['timeline']['project']
+    p.update(audio_generation_mode=mode,final_audio_source=final)
+    args['timeline']=compile_project(p)
+    pcm=torch.linspace(-.8,.8,3600).expand(1,2,3600).clone()
+    args['driving_audio']={'waveform':pcm,'sample_rate':240}
+    result=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls)==3
+    for call in calls:
+        audio_keys=[kf for _,md in call['conditioning'] for kf in md.get('minimax_keyframes',[]) if 'audio_latent' in kf]
+        assert bool(audio_keys)==(mode=='guided')
+        if mode=='source_locked':
+            assert call['latent']['noise_mask'].unbind()[1].count_nonzero()==0
+    assert result[2][_FINAL_AUDIO_SOURCE_PLAN_KEY]==final
+    if final=='original':
+        torch.testing.assert_close(result[-1]['waveform'],pcm,rtol=0,atol=0)
+    else:
+        assert result[-1] is None and _DRIVING_AUDIO_PLAN_KEY not in result[2]
+
+
+def test_lock_mode_storage_resume_and_switch_never_reuses_guided_chunks(runtime,monkeypatch):
+    from tests.test_source_audio_lock import install_native
+    install_native(monkeypatch)
+    args,calls,_,_,_=runtime
+    args['driving_audio']={'waveform':torch.ones(1,2,3600),'sample_rate':240}
+    nodes.H3ContinuumTimelineSampler().sample(**args)
+    p=args['timeline']['project'];p['audio_generation_mode']='source_locked'
+    args['timeline']=compile_project(p)
+    locked=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert locked[3]['reused_chunks']==0
+    assert locked[3]['sampling_contract']['global']['timeline_studio']['audio_generation_mode']=='source_locked'
+    resumed=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert resumed[3]['reused_chunks']==3
+    assert len(calls)==6
+    args['driving_audio']['waveform'][...,20]=.5
+    changed=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert changed[3]['reused_chunks']==0

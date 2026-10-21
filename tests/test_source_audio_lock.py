@@ -187,3 +187,23 @@ def test_generated_mode_suppresses_driving_without_changing_source():
     provider.driving_audio=stereo(504)
     assert provider.audio_source(AudioVAE()) is None
     assert not provider.guide_active(0)
+
+
+def test_fractional_source_origin_uses_absolute_sample_boundaries():
+    vae=AudioVAE(); audio=stereo(600)
+    source=prepare_locked_source(audio,vae,start_frame=1,end_frame=634,required_end_frame=600)
+    encode_locked_window(source,vae,start_frame=1,total_frames=175,origin_frame=1)
+    expected=round(Fraction(2*32000,24))
+    assert vae.inputs[-1][0,0,0] == audio['waveform'][0,0,expected]
+
+
+def test_refine_transport_retains_full_audio_mask(monkeypatch):
+    install_native(monkeypatch)
+    from ComfyUI_H3_Continuum_Join.v3.driving_nodes import _attach_refine_masks
+    mask=Nested([torch.ones(1,1,52,4,4),torch.zeros(1,1,2,292)])
+    videos=[{'samples':torch.zeros(1,24,52,4,4)}]
+    audios=[{'samples':torch.randn(1,32,2,292)}]
+    _,out=_attach_refine_masks(enabled=True,captured=[{'noise_mask':mask}],video_latents=videos,audio_latents=audios)
+    assert out[0]['noise_mask'].shape==(1,1,2,292)
+    assert out[0]['noise_mask'].count_nonzero()==0
+    assert out[0]['noise_mask'].data_ptr()!=mask.unbind()[1].data_ptr()

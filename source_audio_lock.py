@@ -52,7 +52,7 @@ def prepare_locked_source(audio, audio_vae, *, start_frame, end_frame, required_
     return replace(source, contract=contract, combined_hash=_canonical_sha256(contract))
 
 
-def encode_locked_window(source, audio_vae, *, start_frame, total_frames):
+def encode_locked_window(source, audio_vae, *, start_frame, total_frames, origin_frame=0):
     """Encode a physical window at its PCM phase, never slice rounded ticks.
 
     start_frame is relative to source PCM's first frame. Audio VAE receives an
@@ -64,7 +64,8 @@ def encode_locked_window(source, audio_vae, *, start_frame, total_frames):
     if rate % 40:
         raise ValueError("Source Audio Locked requires an Audio VAE sample rate divisible by 40 Hz")
     ticks = round(Fraction(int(total_frames)*40, 24))
-    start = round(Fraction(int(start_frame)*rate, 24))
+    start = (round(Fraction((int(origin_frame)+int(start_frame))*rate, 24))
+             - round(Fraction(int(origin_frame)*rate, 24)))
     count = ticks*(rate//40)
     waveform = source.resampled_waveform
     if start < 0 or start+count > waveform.shape[-1]:

@@ -158,7 +158,7 @@ def apply_components(
     current = p
     if target == "replace":
         p = blank_project()
-        for key in ("project_id", "revision", "width", "height", "final_audio_source"):
+        for key in ("project_id", "revision", "width", "height", "final_audio_source", "audio_generation_mode"):
             if key in current:
                 p[key] = copy.deepcopy(current[key])
         p["prompts"] = copy.deepcopy(current.get("prompts", {}))

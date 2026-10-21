@@ -213,7 +213,7 @@ class TimelineInputs:
         self.guide_rate = rate
         if self.driving_audio is not None:
             source = prepare_locked_source(self.driving_audio, audio_vae,
-                start_frame=a, end_frame=b, required_end_frame=end)
+                start_frame=a, end_frame=b, required_end_frame=min(end, self.project["duration_frames"], self.project["selection"][1]))
         else:
             if not any(w["guide"] for w in self.windows):
                 raise ValueError("Source Audio Locked requires a connected Driving Audio input or an active Timeline audio guide")
@@ -230,7 +230,7 @@ class TimelineInputs:
         from ..source_audio_lock import encode_locked_window
         return encode_locked_window(source, audio_vae,
             start_frame=self.offset + retained_frames - trim_frames - self.lock_source_origin,
-            total_frames=total_frames)
+            total_frames=total_frames, origin_frame=self.lock_source_origin)
 
     def final_audio(self, start_frame, end_frame, sample_rate):
         """Return original/authored final PCM only when it covers the job.

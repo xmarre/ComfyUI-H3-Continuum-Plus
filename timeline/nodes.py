@@ -739,6 +739,7 @@ class H3ContinuumTimelineSampler:
             "status": "sampled",
             "operation": p["operation"],
             "final_audio_source": p.get("final_audio_source", "original"),
+            "audio_generation_mode": p.get("audio_generation_mode", "guided"),
             "selection": p["selection"],
             "project_snapshot": p,
             "source_canvas": source_canvas,

@@ -508,3 +508,11 @@ not included in this release set.
 See [LICENSE](LICENSE).
 
 Timeline Studio’s **Import…** supports selective ZIP/JSON/text/media and read-only State Manager prompt imports, with global identity, editable chunk sections and original soundtrack routing. See [the import guide](docs/timeline/USER_GUIDE.md#import-prompts-pre-cut-pictures-and-the-original-soundtrack). Frontend, backend and desktop must use the matching v21 contract.
+
+### Experimental source-audio target lock
+
+Timeline Studio Scene setup offers independent **H3 audio generation** and
+**Final audio for new takes** controls. Guided audio remains the default.
+Source Audio Locked protects the complete source-encoded target audio during
+video sampling; lip-sync quality and GPU performance require validation.
+See [the source-audio lock contract and limitations](docs/timeline/SOURCE_AUDIO_LOCK.md).
