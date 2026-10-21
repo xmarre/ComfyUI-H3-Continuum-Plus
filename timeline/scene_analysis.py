@@ -250,9 +250,15 @@ class SceneAnalysis:
             with _lock:
                 _workers.pop((str(self.root), token), None)
 
-    def preview(self, project, token):
+    def preview(self, project, token, model_id=None):
         p = validate(project)
-        analysis = self.result(token)
+        analysis = copy.deepcopy(self.result(token))
+        if model_id is not None:
+            for shot in analysis["shots"]:
+                record = shot.get("vlm_observations", {}).get(model_id)
+                if record:
+                    shot["vlm"] = record
+                    shot["visible_subjects"] = list(record["observation"]["subjects"])
         if analysis["source_asset_id"] not in {a["id"] for a in p["assets"]}:
             raise ValueError("Analysis source is no longer registered in this project")
         self.store.assets.verify(analysis["source_asset_id"], cancel=lambda: None)
@@ -299,8 +305,7 @@ class SceneAnalysis:
         with _lock:
             result = self.result(token)
             shot = next(s for s in result["shots"] if s["id"] == shot_id)
-            shot["vlm"] = record
-            shot["visible_subjects"] = list(value["subjects"])
+            shot.setdefault("vlm_observations", {})[model_id] = record
             self.store.atomic_json(self.path(token)/(evidence["cache_key"]+".vlm.json"), record)
             self.store.atomic_json(self.path(token)/"result.json", result)
         return record
