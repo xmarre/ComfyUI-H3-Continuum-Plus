@@ -19,6 +19,9 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Check out tested commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -166,3 +169,61 @@ jobs:
             --target "${RELEASE_SHA}" \
             --title "H3 Continuum ${TAG}" \
             --notes-file /tmp/h3-continuum-release-notes.md
+
+  desktop-windows:
+    name: Attach matching unsigned Windows Timeline desktop
+    needs: publish
+    if: ${{ needs.publish.outputs.release == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out the tested release commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Install native wrapper dependencies
+        working-directory: desktop/timeline-native
+        run: npm install --no-audit --no-fund
+      - name: Validate bridge and unsigned desktop build
+        working-directory: desktop/timeline-native
+        run: |
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node smoke_windows.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Attach exact-commit Windows wrapper to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_TAG: ${{ needs.publish.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = $env:GITHUB_REPOSITORY
+          $current = gh api "repos/$repo/commits/main" --jq '.sha'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify main commit' }
+          if ($current.Trim() -ne $env:RELEASE_SHA) {
+            Write-Host 'Main moved since the source release; refusing stale Windows attachment.'
+            exit 0
+          }
+          $release = gh release view $env:RELEASE_TAG --repo $repo --json isDraft --jq '.isDraft'
+          if ($LASTEXITCODE -ne 0 -or $release.Trim() -ne 'false') { throw 'Published release not found' }
+          $tagTarget = gh api "repos/$repo/commits/$env:RELEASE_TAG" --jq '.sha'
+          if ($LASTEXITCODE -ne 0 -or $tagTarget.Trim() -ne $env:RELEASE_SHA) { throw 'Release tag does not match tested commit' }
+          $files = @(Get-ChildItem 'desktop/timeline-native/dist' -Filter '*.exe' -File)
+          if ($files.Count -ne 1) { throw "Expected one unsigned portable EXE; found $($files.Count)" }
+          $assetNames = @(gh release view $env:RELEASE_TAG --repo $repo --json assets --jq '.assets[].name')
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect release assets' }
+          if ($assetNames -contains $files[0].Name) {
+            Write-Host 'Exact-tag Windows asset already present; leaving it unchanged.'
+            exit 0
+          }
+          gh release upload $env:RELEASE_TAG $files[0].FullName --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release attachment failed' }

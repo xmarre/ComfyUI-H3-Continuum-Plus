@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import json
+import logging
 import marshal
 import os
 import re
@@ -616,6 +617,7 @@ def build_sampling_contract(
         conditioning_mode_uses_video_vae(conditioning_mode)
         or reference_video_contract is not None
         or timeline_video_contract is not None
+        or bool(prompt_plan.get("timeline_studio"))
     )
     if uses_video_vae:
         video_vae_value, video_vae_safe = _video_vae_signature(
@@ -628,7 +630,7 @@ def build_sampling_contract(
         audio_vae_value, audio_vae_safe = _audio_vae_signature(reference_audio_vae)
     else:
         audio_vae_value, audio_vae_safe = None, True
-    if driving_audio_contract is not None:
+    if driving_audio_contract is not None or bool(prompt_plan.get("timeline_studio")):
         driving_audio_vae_value, driving_audio_vae_safe = _audio_vae_signature(
             driving_audio_vae
         )
@@ -683,6 +685,10 @@ def build_sampling_contract(
     }
     if graph_authoritative:
         global_contract["upstream_graph"] = dict(upstream_graph_contract)
+    if prompt_plan.get("timeline_studio"):
+        global_contract["timeline_studio"] = dict(prompt_plan["timeline_studio"])
+        global_contract["video_vae"] = video_vae_value
+        global_contract["timeline_audio_vae"] = driving_audio_vae_value if driving_audio_vae is not None else None
     if uses_video_vae:
         global_contract["video_vae"] = video_vae_value
     if conditioning_mode in {"i2va", "fl2va"}:
@@ -1005,6 +1011,7 @@ class RunStorageController:
         request = str(contract["nonce_request_sha256"])
         highest = 0
         matching: dict[int, dict[str, Any]] = {}
+        excluded = set(getattr(self, "excluded_revisions", ()))
         if self.revisions_root.exists():
             for path in self.revisions_root.glob("*/manifest.json"):
                 try:
@@ -1014,13 +1021,15 @@ class RunStorageController:
                         continue
                     nonce = int(lifecycle.get("effective_nonce", 0))
                     highest = max(highest, nonce)
+                    if path.parent.name in excluded or manifest.get("revision_id") in excluded:
+                        continue
                     if str(lifecycle.get("request_sha256", "")) == request:
                         current = matching.get(nonce)
                         if current is None or str(manifest.get("updated_utc", "")) >= str(current.get("updated_utc", "")):
                             matching[nonce] = manifest
                 except Exception:
                     continue
-        if resume_safe and matching:
+        if resume_safe and matching and not getattr(self, "force_fresh_nonce", False):
             latest_nonce = max(matching)
             latest = matching[latest_nonce]
             if latest_nonce == highest and str(latest.get("status", "")) != "complete":
@@ -1056,9 +1065,10 @@ class RunStorageController:
                 conditioning_mode_uses_video_vae(str(conditioning_mode))
                 or reference_video_contract is not None
                 or timeline_video_contract is not None
+                or bool(prompt_plan.get("timeline_studio"))
             ),
             require_reference_audio_vae=reference_audio_contract is not None,
-            require_audio_vae=driving_audio_contract is not None,
+            require_audio_vae=driving_audio_contract is not None or bool(prompt_plan.get("timeline_studio")),
         )
         contract, safe, reasons = build_sampling_contract(
             model=model, model_fingerprint_value=model_fingerprint_value,
@@ -1116,14 +1126,25 @@ class RunStorageController:
         legacy_hashes = _legacy_v2_chunk_hashes(contract)
         best_entries: list[dict[str, Any]] = []
         best_records: list[dict[str, Any]] = []
+        excluded = set(getattr(self, "excluded_revisions", ()))
         candidates = [exact] if exact is not None and safe else []
-        if safe and exact is None and self.revisions_root.exists():
+        if safe and (exact is None or self.revision_id in excluded) and self.revisions_root.exists():
             for path in self.revisions_root.glob("*/manifest.json"):
                 try:
                     candidates.append(_read_json(path))
                 except Exception:
                     continue
+        preferred = getattr(self,"preferred_revision",None)
+        if preferred:
+            # Timeline take selection pins the immutable causal source. Do not
+            # substitute a longer prefix from a different alternative.
+            if not re.fullmatch(r"[0-9a-f]{16}",str(preferred)):
+                raise RunStorageError("Invalid selected Timeline revision identifier")
+            selected_path=self.revisions_root / preferred / "manifest.json"
+            candidates=[_read_json(selected_path)] if selected_path.is_file() and safe else []
         for candidate in candidates:
+            if candidate.get("revision_id") in excluded:
+                continue
             schema = int(candidate.get("run_storage_schema_version", -1))
             if schema == RUN_STORAGE_SCHEMA_VERSION:
                 candidate_hashes = hashes
@@ -1155,6 +1176,25 @@ class RunStorageController:
         }
         self._write_manifest()
         self._write_project()
+        # Emit admission before the first expensive H3 model evaluation.
+        # Prior to this, the only reuse/disabled explanation was the success
+        # report, which was never returned on mid-run exceptions.
+        logging.getLogger("h3_continuum_join").warning(
+            "H3C Run Storage admission name=%s revision=%s safe=%s "
+            "validated_chunks=%d/%d nonce=%d decision=%s "
+            "exact_manifest=%s candidates=%d disabled_reasons=%r notes=%r",
+            self.run_name,
+            self.revision_id,
+            safe,
+            len(best_entries),
+            len(hashes),
+            self.effective_reroll_nonce,
+            self.nonce_decision,
+            exact is not None,
+            len(candidates),
+            self.disabled_reasons,
+            self.notes,
+        )
         if not best_entries:
             return None
         physical_entries = all(
