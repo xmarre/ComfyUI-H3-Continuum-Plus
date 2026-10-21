@@ -42,5 +42,6 @@ GPU checks must cover Sage only, Sage+Sol, Sage+Spectrum, and Sage+Sol+Spectrum 
 - Active ComfyUI runtime: `D:\StabilityMatrix\Data\Packages\ComfyUI_WAN\custom_nodes\ComfyUI-H3-Continuum`
 - Reuse the repository's existing pytest configuration and helper scripts instead of rediscovering paths on every task.
 - Read this file before each task. Record durable project decisions, paths, commands, failure causes, and validation methods here so later work reuses them instead of restarting from zero.
+- Scene creation in Generate/Replace must not automatically add source-video guidance. Original audio remains independently routed as guide/final; video guidance is explicit per chunk or derived by Recreate. A saved guide track has no reliable provenance distinguishing automatic from explicit assignment, so preserve it until an authored edit or scene reset.
 - GitHub authentication for this repository is already configured. Do not request a new login or token unless an actual authentication command fails.
 - Commit and push only when the user explicitly requests publication.
