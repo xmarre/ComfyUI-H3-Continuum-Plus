@@ -103,8 +103,12 @@ def test_mp_no_upscale():
 def test_color_and_dolby_fallback():
     for trc in ['bt709','smpte2084','arib-std-b67']:
         meta=color_metadata({'color_transfer':trc,'color_primaries':'bt2020','color_space':'bt2020nc','color_range':'tv','pix_fmt':'yuv420p10le'})
-        f,_=color_filter(meta,settings());assert 't=linear' in f and 'npl=125' in f and 'iec61966-2-1' in f
-        assert ('tonemap=' in f)==(trc!='bt709')
+        f,_=color_filter(meta,settings())
+        if trc=='bt709':
+            assert 't=linear' not in f and 't=bt709' in f and 'tonemap=' not in f
+        else:
+            assert 't=linear' in f and 'npl=125' in f and 'iec61966-2-1' in f
+            assert 'tonemap=' in f
     dv={'side_data_type':'DOVI configuration record','dv_profile':5,'dv_bl_signal_compatibility_id':0}
     meta=color_metadata({'side_data_list':[dv]})
     with pytest.raises(ValueError,match='profile 5'):color_filter(meta,settings())
