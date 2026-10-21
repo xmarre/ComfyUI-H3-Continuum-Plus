@@ -233,3 +233,17 @@ Two-hour 1080p/4K CPU throughput and disk-use measurements remain unqualified.
 Outstanding acceptance includes real therapy/source footage, difficult dissolves/occlusions,
 matched MPC HDR/Dolby Vision captures, live LM Studio semantics, trained-H3 cut
 fidelity, accelerator combinations and end-to-end GPU performance.
+
+
+### Continuation shot-schedule clocks
+
+Studio's **nominal preview** and the compiler-disabled legacy conditioning path
+use per-window timestamps beginning at 0 seconds. Physical Timeline conditioning
+instead carries structured job-relative project-frame shot ranges. The physical
+compiler renders `Shot plan:` once, against the exact descriptor's starting
+frame (including retained context), so a 34-frame context at 24 fps shifts
+current-chunk cuts by 1.416667 seconds. This is an advisory visual instruction,
+not proof of frame-accurate edits by MiniMax H3. The physical compiler never
+parses nominal shot-plan prose and never duplicates authored dialogue or imports
+adjacent chunks' shot descriptions. A single shared identity-precedence sentence
+applies across the entire shot schedule.

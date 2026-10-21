@@ -575,7 +575,13 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             for s in segments
         )
     from .scene_plan import augment_prompt
-    segments, text, scene_schedule = augment_prompt(p, smart_shots, start, end, base, segments, text, picture_by_asset)
+    # Preserve the authored source separately from its nominal text preview.
+    # Physical H3 must never ingest the already-timestamped nominal shot prose.
+    authored_segments = copy.deepcopy(segments) if segments is not None else None
+    authored_prompt = text
+    segments, text, scene_schedule, scene_shots = augment_prompt(
+        p, smart_shots, start, end, base, segments, text, picture_by_asset
+    )
     warnings = list(smart_warnings)
     if p.get("video_guidance_enabled", True) is False and re.search(r"<Video\s+\d+>", text):
         warnings.append(
@@ -678,6 +684,9 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         "range": [start, end],
         "timed_prompt": segments is not None,
         "scene_schedule": scene_schedule,
+        "scene_shots": scene_shots,
+        "authored_prompt": authored_prompt,
+        "authored_segments": authored_segments,
         "warnings": warnings,
         **semantic,
         "aliases": aliases,

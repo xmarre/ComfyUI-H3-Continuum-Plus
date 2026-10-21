@@ -8,6 +8,7 @@ import math
 from .model import digest, rational, source_time
 
 SCHEMA = "h3_scene_plan_v1"
+SCENE_IDENTITY_NOTICE = "Dedicated character identity references and authored character instructions control facial appearance."
 DEFAULTS = {"sensitivity": 1., "detect_shots": True, "within_shot": True,
             "deduplicate": True, "min_shot_frames": 3, "max_per_shot": 2,
             "h3_mp": .7, "vlm_mp": .25, "tone_mapping": "zscale",
@@ -266,34 +267,45 @@ def shot_instructions(shot, plan, picture_by_asset):
             tags.append(picture_by_asset[asset_id])
     text = []
     if tags:
-        text.append("Scene composition evidence: "+", ".join(dict.fromkeys(tags))+". Use for framing, staging, wardrobe and environment. Dedicated character identity references and authored character instructions control facial appearance.")
+        text.append("Scene composition evidence: "+", ".join(dict.fromkeys(tags))+". Use for framing, staging, wardrobe and environment.")
     if description:
         text.append(description)
     return "\n".join(text)
 
 
 def augment_prompt(project, shots, start, end, base, segments, text, picture_by_asset):
-    """Preserve authored partitions and dialogue; add a shared visual shot schedule."""
+    """Preserve dialogue/partitions; retain exact frame ranges for physical rendering.
+
+    The human-facing/legacy schedule uses chunk-local times. Physical H3
+    conditioning must re-render the structured ranges relative to its actual
+    context-prefixed sample start, never parse the nominal prose.
+    """
     plan = project.get("scene_plan")
     if not plan:
-        return segments, text, False
+        return segments, text, False, []
     from .model import seconds_text
     schedule = []
+    scene_shots = []
+    identity_notice = False
     for shot in sorted(shots, key=lambda s: (s["range"], s["id"])):
         detail = shot_instructions(shot, plan, picture_by_asset)
         a, b = max(start, shot["range"][0]), min(end, shot["range"][1])
         if detail and a < b:
+            scene_shots.append({"range": [a, b], "text": detail})
             schedule.append(f"{seconds_text(a-start)}-{seconds_text(b-start)}s: {detail}")
+            identity_notice |= "Scene composition evidence:" in detail
     if not schedule:
-        return segments, text, False
-    advisory = "Shot plan:\n" + "\n".join(schedule)
+        return segments, text, False, []
+    advisory = "Shot plan:\n" + (
+        SCENE_IDENTITY_NOTICE + "\n" if identity_notice else ""
+    ) + "\n".join(schedule)
     if segments is None:
-        return None, advisory + "\n\n" + text, True
+        return None, advisory + "\n\n" + text, True, scene_shots
     result = copy.deepcopy(segments)
     result[0]["text"] = advisory + "\n\n" + result[0]["text"]
     return result, "\n".join(
         f"{seconds_text(s['range'][0]-start)}-{seconds_text(s['range'][1]-start)}s:\n{s['text']}"
-        for s in result), True
+        for s in result), True, scene_shots
 
 
 def edit_plan(project, operation, shot_id, *, frame=None, other_id=None, reference_ids=None, setup_id=None):

@@ -128,6 +128,7 @@ class TimelineInputs:
             for i in indices
         ]
         self.job["windows"] = self.windows
+        self.timeline_plan = None  # Window-scoped structured scene ranges changed.
 
     @property
     def hashes(self):
@@ -336,21 +337,42 @@ class TimelineInputs:
             for w in self.windows:
                 a, b = (x - origin for x in w["range"])
                 rows.append(f"[{seconds_text(a)}-{seconds_text(b)}s]")
-                if w.get("segments"):
-                    for segment in w["segments"]:
+                if w.get("authored_segments") is not None:
+                    for segment in w["authored_segments"]:
                         x, y = (v - origin for v in segment["range"])
                         rows.append(f"{seconds_text(x)}-{seconds_text(y)}s:")
                         rows.append(segment["text"])
                 else:
                     # Untimed windows use the nominal List plan; this body only
                     # keeps the routing partition well formed.
-                    rows.append(w["prompt"] or "(no prompt)")
+                    rows.append(w.get("authored_prompt", w["prompt"]) or "(no prompt)")
             self.timeline_plan = make_prompt_plan(
                 mode="Timeline",
                 script="\n".join(rows),
                 chunks=len(self.windows),
                 chunk_seconds=self.project["chunk_frames"] / 24,
             )
+            # Exact job-relative frame ranges are compiled on the real physical
+            # clock, including reused continuation context. This metadata is
+            # deliberately separate from authored speech and nominal previews.
+            frame_origin = self.job["range"][0]
+            scene_shots = [
+                {
+                    "range": [a - frame_origin, b - frame_origin],
+                    "text": shot["text"],
+                    "logical_index": local_index,
+                }
+                for local_index, w in enumerate(self.windows)
+                for shot in w.get("scene_shots", ())
+                for a, b in [shot["range"]]
+            ]
+            if scene_shots:
+                from .scene_plan import SCENE_IDENTITY_NOTICE
+                source = dict(self.timeline_plan["source"])
+                source["scene_shots"] = scene_shots
+                if any("Scene composition evidence:" in shot["text"] for shot in scene_shots):
+                    source["scene_identity_notice"] = SCENE_IDENTITY_NOTICE
+                self.timeline_plan = {**self.timeline_plan, "source": source}
         return self.timeline_plan
 
     def materialize(self, index, *, video_vae, audio_vae, width, height):

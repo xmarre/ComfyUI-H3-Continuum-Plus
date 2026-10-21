@@ -430,7 +430,8 @@ def test_fixed_scene_shot_schedule_reaches_native_invocation_without_dialogue_du
     assert physical is not native
     assert physical['source']['kind']=='timeline'
     assert physical['prompts'][0].count(authored)==1
-    assert physical['prompts'][0].count('Shot plan:')==1
+    assert physical['prompts'][0].count('Shot plan:')==0
+    assert len(physical['source']['scene_shots'])==3
     assert provider.invocation_text(authored,0).count(authored)==1
     assert provider.invocation_text(authored,0).count('Shot plan:')==1
     assert provider.invocation_text(authored,1)==authored
@@ -443,3 +444,61 @@ def test_fixed_scene_shot_schedule_reaches_native_invocation_without_dialogue_du
     normal=TimelineInputs(bare,{'windows':bare_windows,'range':[0,336]},None)
     assert normal.invocation_plan(native,0) is native
     assert normal.invocation_text(authored,0)==authored
+
+
+
+def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
+    """34 carried frames shift cuts inside the physical H3 clip, not legacy text."""
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    from ComfyUI_H3_Continuum_Join.v2.prompts import make_prompt_plan
+    from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
+        compile_physical_prompt, make_physical_sample_descriptor,
+    )
+    from ComfyUI_H3_Continuum_Join.v2.physical_runtime import compile_invocation_prompt
+
+    p = plan_project()
+    # Move the real 0/67/153/168 frame shot pattern to chunk 2.
+    for shot in p['scene_plan']['shots']:
+        shot['range'] = [value + 168 for value in shot['range']]
+    authored = "S2 <d>[English] We both do.</d>"
+    p['prompts']['global'] = authored
+    windows = [compile_window(p, i, picture_offset=1) for i in range(2)]
+    assert not windows[0]['scene_schedule']
+    assert windows[1]['scene_schedule']
+    assert windows[1]['prompt'].count('2.791667-6.375s:') == 1
+    assert windows[1]['prompt'].count(authored) == 1
+
+    provider = TimelineInputs(p, {'windows': windows, 'range': [0, 336]}, None)
+    native = make_prompt_plan(mode='Fixed', script=authored, chunks=2, chunk_seconds=7)
+    physical = provider.invocation_plan(native, 1)
+    assert physical['source']['kind'] == 'timeline'
+    assert 'Shot plan:' not in physical['prompts'][1]
+    assert physical['prompts'][1].count(authored) == 1
+
+    descriptor = make_physical_sample_descriptor(
+        group_id='scene-chunk-two', logical_indices=(1,),
+        retained_before=168, context_frames=34, total_frames=202,
+        target_duration_frames=336, continuation_method='guide',
+        initial_state_origin='previous_chunk', include_first=False,
+        include_last=False, presentation_contract={},
+    )
+    emitted = compile_physical_prompt(physical, descriptor).text
+    assert emitted.count('Shot plan:') == 1
+    assert '1.416667-4.208333s:' in emitted  # 34/24 -> (34+67)/24
+    assert '4.208333-7.791667s:' in emitted  # (34+67)/24 -> (34+153)/24
+    assert '7.791667-8.416667s:' in emitted
+    assert '0-2.791667s:' not in emitted
+    assert emitted.count(authored) == 1
+    assert emitted.count('Dedicated character identity references') == 1
+
+    # Default environment gate OFF: legacy nominal text remains chunk-local.
+    nominal = compile_invocation_prompt(
+        physical, descriptor, legacy_text=provider.invocation_text(authored, 1),
+        candidate=False,
+    ).text
+    assert '0-2.791667s:' in nominal
+    assert '1.416667-4.208333s:' not in nominal
+    assert nominal.count(authored) == 1
+
+    # The compiler is also used by the next-chunk conditioning lookahead.
+    assert compile_physical_prompt(provider.invocation_plan(native, 1), descriptor).text == emitted
