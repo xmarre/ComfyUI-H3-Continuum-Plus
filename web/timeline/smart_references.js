@@ -186,7 +186,7 @@ export class SmartReferences {
       enabled.onchange=()=>{shot.user||={};shot.user.enabled=enabled.checked;};
       const area=el("textarea",{"aria-label":"Shot description "+shot.id,rows:3});
       area.value=shot.user?.description??shot.vlm?.description??"";
-      area.oninput=()=>{shot.user||={};shot.user.description=area.value;shot.user.description_provenance="edited model observation";};
+      area.oninput=()=>{shot.user||={};shot.user.description=area.value;shot.user.description_provenance=shot.vlm?"edited_model_observation":"user_authored";};
       const location=el("input",{"aria-label":"Physical scene identity "+shot.id,placeholder:"Unverified location"});
       location.value=shot.scene_id||"";
       location.onchange=()=>{shot.scene_id=location.value||null;shot.user||={};shot.user.scene_id=shot.scene_id;};
