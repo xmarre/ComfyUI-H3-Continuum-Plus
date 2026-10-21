@@ -120,37 +120,9 @@ function graphFixture(node) {
   const media=page.locator('.h3ts-chunk-media-details > summary');
   await media.click();await media.scrollIntoViewIfNeeded();
   assert.ok(await media.isVisible());
-  const frameResult=page.waitForEvent('download');
-  await page.getByRole('button',{name:'Save frame',exact:true}).click();
-  const frameDownload=await frameResult;
-  assert.match(frameDownload.suggestedFilename(),/continuum-frame-.*\.png/);
-  const buffer=await fs.readFile(await frameDownload.path());
-  assert.equal(buffer.subarray(1,4).toString(),'PNG');
-  // Native screenshot is scoped to the visible app; no server call or project change.
-  await page.evaluate(()=>{window.h3NativeMedia={captureEditor:async()=>{window.captureCalls=(window.captureCalls||0)+1;const c=document.createElement('canvas');c.width=c.height=10;return c.toDataURL('image/png')}}});
-  const screenshot=page.waitForEvent('download');
-  await page.getByRole('button',{name:'Screenshot',exact:true}).click();
-  assert.equal((await screenshot).suggestedFilename(),'continuum-editor.png');
-  assert.equal(await page.evaluate(()=>captureCalls),1);
-  // The browser chooser path stops its stream immediately after capture.
-  await page.evaluate(()=>{
-    delete window.h3NativeMedia;
-    const canvas=document.createElement('canvas');canvas.width=200;canvas.height=100;
-    navigator.mediaDevices.getDisplayMedia=async()=>{
-      const stream=canvas.captureStream(24);
-      for(const track of stream.getTracks()) {
-        const stop=track.stop.bind(track);
-        track.stop=()=>{window.stoppedCaptureTracks=(window.stoppedCaptureTracks||0)+1;stop()};
-      }
-      setTimeout(()=>canvas.getContext('2d').fillRect(0,0,100,100),50);
-      return stream;
-    };
-  });
-  const browserCapture=page.waitForEvent('download');
-  await page.getByRole('button',{name:'Screenshot',exact:true}).click();
-  assert.equal((await browserCapture).suggestedFilename(),'continuum-editor.png');
-  assert.equal(await page.evaluate(()=>stoppedCaptureTracks),1);
+  assert.equal(await page.getByRole('button',{name:'Screenshot',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Save frame',exact:true}).count(),0);
   assert.deepEqual(errors,[]);
-  console.log('Workspace browser acceptance passed: 3 viewport sizes, focus, tabs, splitters, chunk navigation/editing, media scrolling and PNG capture.');
+  console.log('Workspace browser acceptance passed: 3 viewport sizes, focus, tabs, splitters, chunk navigation/editing, media scrolling and removal of capture utilities.');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1});

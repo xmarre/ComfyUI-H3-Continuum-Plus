@@ -6,9 +6,6 @@ const pending = new Set();
 // Native file paths stay inside the isolated preload/main process. Page JS
 // sees only registered metadata; no arbitrary IPC or HTTP client is exposed.
 contextBridge.exposeInMainWorld("h3NativeMedia", {
-  captureEditor() {
-    return ipcRenderer.invoke("h3-timeline:capture-editor");
-  },
   async linkFile(file, transaction) {
     if (typeof transaction !== "string" ||
         !/^[a-zA-Z0-9_-]{1,80}$/.test(transaction) ||

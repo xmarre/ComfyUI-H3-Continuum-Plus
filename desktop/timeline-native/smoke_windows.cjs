@@ -24,7 +24,6 @@ async function main() {
   fs.writeFileSync(file, "H3_TEST_ONLY; not real media");
   const expectedPath = toWSLPath(file);
   let linked = 0;
-  let captured = 0;
   const server = http.createServer((req,res) => {
     if (req.url === "/system_stats") {
       res.writeHead(200, {"content-type":"application/json"});
@@ -48,20 +47,6 @@ async function main() {
       res.writeHead(200, {"content-type":"text/html; charset=utf-8"});
       res.end("<!doctype html><title>ComfyUI smoke</title><body>" +
         "H3_SMOKE_READY<input id='h3-smoke-file' type='file'></body>");
-    } else if (req.url === "/h3-smoke-capture") {
-      assert.equal(req.method,"POST");
-      const parts=[];
-      let length=0;
-      req.on("data",data=>{
-        length+=data.length;
-        if(length>1024)req.destroy();else parts.push(data);
-      });
-      req.on("end",()=>{
-        const {width,height}=JSON.parse(Buffer.concat(parts).toString("utf8"));
-        assert.ok(width>=100 && height>=100,"Packaged capture must contain a PNG surface");
-        captured++;
-        res.writeHead(200,{"content-type":"application/json"});res.end("{}");
-      });
     } else if (req.url === "/h3_continuum/timeline/link") {
       assert.equal(req.method, "POST");
       const parts = [];
@@ -112,11 +97,11 @@ async function main() {
       }, 120000);
     });
     const result = await Promise.race([exit,timeout]);
-    if (result.code !== 0 || linked !== 1 || captured !== 1) {
+    if (result.code !== 0 || linked !== 1) {
       throw new Error("Packaged desktop startup/native File IPC failed: " +
-        JSON.stringify({exit:result,linked,captured,output:output.join("").slice(-8000)}));
+        JSON.stringify({exit:result,linked,output:output.join("").slice(-8000)}));
     }
-    console.log("Packaged Electron captured its visible content as PNG, displayed the UI, resolved a genuine OS-backed " +
+    console.log("Packaged Electron displayed the UI, resolved a genuine OS-backed " +
       "File through its preload, and linked only the original path over IPC.");
   } finally {
     if (timer) clearTimeout(timer);

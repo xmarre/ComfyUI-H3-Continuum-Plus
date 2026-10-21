@@ -706,3 +706,32 @@ def test_default_locked_audio_outputs_protect_refinement_without_disabling_reuse
             assert mask.dtype==torch.float32
             assert mask.device==item['samples'].device
             assert mask.count_nonzero()==0
+
+
+@pytest.mark.parametrize("connected_media", [False, True])
+def test_reference_prompt_only_ignores_disabled_video_and_driving_audio(runtime, connected_media):
+    from ComfyUI_H3_Continuum_Join.v3.driving_nodes import _FINAL_AUDIO_SOURCE_PLAN_KEY
+
+    args, calls, _, _, _ = runtime
+    project = args["timeline"]["project"]
+    project.update(video_guidance_enabled=False, audio_generation_mode="generated",
+                   final_audio_source="generated")
+    args.update(timeline=compile_project(project), run_storage="Off",
+                sequence_prompt="<Picture 1> speaks calmly.",
+                reference_image_1=torch.ones(1, 64, 96, 3))
+    if connected_media:
+        args.update(reference_video_1=torch.zeros(124, 64, 96, 3),
+                    driving_audio={"waveform":torch.ones(1, 2, 3600), "sample_rate":240})
+    result = nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls) == 3
+    assert len(result[0]) == len(result[1]) == 3
+    assert result[-1] is None
+    assert result[2][_FINAL_AUDIO_SOURCE_PLAN_KEY] == "generated"
+    assert _DRIVING_AUDIO_PLAN_KEY not in result[2]
+    # First invocation has no previous generated context to confuse with an
+    # authored source. Its encoder receives the picture, not the video batch.
+    assert len(args["clip"].inputs[0][1]["minimax_ref_items"]) == 1
+    assert args["clip"].inputs[0][1]["minimax_ref_items"][0]["data"].shape[0] == 1
+    assert not any("audio_latent" in keyframe
+                   for _, metadata in calls[0]["conditioning"]
+                   for keyframe in metadata.get("minimax_keyframes", []))

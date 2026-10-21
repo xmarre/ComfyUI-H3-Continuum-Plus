@@ -1,4 +1,4 @@
-# Timeline workspace (v25)
+# Timeline workspace (v26)
 
 The editor has two main work areas: preview on the left and one selected H3
 chunk on the right. Previous/Next chunk and the chunk-number field navigate the
@@ -21,38 +21,24 @@ restores defaults. **Timeline** hides the lower tracks to reclaim workspace heig
 inputs are unchanged. View state remains in node properties, outside sampling
 hashes. The source movie remains horizontally navigable below the workspace.
 
-## Capture
+## Generate from reference images and prompts
 
-**Screenshot** in the header saves a PNG of the visible editor. In the matching
-v25 Windows Desktop it captures only the application content via Electron's
-`capturePage`; it cannot capture other apps or enumerate displays. An ordinary
-browser opens its screen/tab chooser and immediately stops the selected stream
-after taking one frame. The browser needs screen-sharing support and a secure
-context. Nothing is uploaded or sent automatically; attach the downloaded PNG
-to a report yourself.
+Keep Timeline Studio connected to supply duration and chunk timing. A project
+can contain no source media. Connect the desired reference images and prompt
+to the sampler, or write prompts in Studio.
 
-**Save frame** under the preview saves the currently displayed video/still as
-PNG at its displayed resource dimensions. This is a preview capture, not a
-lossless source-frame extraction or a new Image Conveyor reference. It does not
-change the project or model inputs.
+To ignore existing source footage and its soundtrack, use Scene settings:
 
-## Mary's reported motion
+- **H3 model video conditioning → Off**.
+- **H3 audio generation → Generated · no driving audio**.
+- **Final audio for new takes → Generated H3 audio**.
 
-The supplied October 21 output has working lip sync according to the user, but
-additional head/gaze movement. Side-by-side frame inspection confirms different
-pose/framing from the original; the screenshot has model video conditioning
-Off. Source Audio Locked constrains audio targets and downstream audio masks,
-not video pose, expression, camera or shot boundaries. This is a plausible
-explanation for free motion, not proof of the specific cause of head shaking.
-No sampler or prompt rewrite is presented as a motion fix. A controlled GPU
-comparison needs the completed workflow, exact prompts/references/seed and
-conditioning settings, plus source/output video. This host has no CUDA GPU.
+These controls disable source-video conditioning, driving-audio conditioning
+and original-soundtrack replacement independently. Registered media can remain
+in the project for preview/editing. Image references and independent voice
+references retain their authored selections. H3 still generates its own audio.
+Queue a new take after changing conditioning; saved takes retain their recorded
+settings and soundtrack.
 
-## Verification boundaries
-
-`tests/timeline_workspace_browser.cjs` runs the actual editor modules/CSS in
-Chromium at 1920×1200, 1366×768 and 1000×700, with mocked backend responses. It
-checks independent chunk scrolling, focus and settings, view-only resizing,
-chunk navigation/prompt editing, and PNG downloads. CI uploads its screenshots.
-This establishes browser layout/interaction behavior, not installed ComfyUI,
-physical Windows capture quality or trained H3 motion/lip-sync acceptance.
+Source Audio Locked requires source audio and controls audio denoising; it does
+not constrain head/body pose, camera motion or shot boundaries.

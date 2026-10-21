@@ -26,8 +26,6 @@ async function launch({ found = true, compatible = true } = {}) {
         on(name, cb) {listeners.set(name, cb);},
         setWindowOpenHandler() {},
         getURL() {return currentURL;},
-        mainFrame:{url:"http://127.0.0.1:8188/"},
-        async capturePage() {return {toDataURL(){return "data:image/png;base64,capture";}};},
       };
       contents = this.webContents;
     }
@@ -215,20 +213,4 @@ test("Ctrl+Shift+Q exits native process without relying on ComfyUI renderer",asy
   );
   assert.equal(prevented,true);
   assert.equal(native.exitCalls,1);
-});
-
-
-test("editor capture only returns the active application surface to its main frame",async()=>{
-  const app=await launch();
-  const capture=app.ipc.get("h3-timeline:capture-editor");
-  assert.equal(await capture({sender:app.contents,senderFrame:app.contents.mainFrame}),
-    "data:image/png;base64,capture");
-  await assert.rejects(capture({sender:app.contents,
-    senderFrame:{url:"http://127.0.0.1:8188/embedded"}}),/restricted/);
-  await assert.rejects(capture({sender:{},senderFrame:app.contents.mainFrame}),/restricted/);
-  await assert.rejects(capture({sender:app.contents,
-    senderFrame:{url:"https://unrelated.invalid"}}),/restricted/);
-  const startup=await launch({compatible:false});
-  await assert.rejects(startup.ipc.get("h3-timeline:capture-editor")({
-    sender:startup.contents,senderFrame:startup.contents.mainFrame}),/restricted/);
 });
