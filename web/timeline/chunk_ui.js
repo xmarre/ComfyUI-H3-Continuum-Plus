@@ -155,6 +155,19 @@ export function referenceSocketSources(editor) {
   });
 }
 
+export async function referencePreviewSlots(editor) {
+  const sources=referenceSocketSources(editor);
+  let known=[];
+  // These are observed counts, not proof that a dynamic upstream output will
+  // have the same size on the next execution. Refresh after graph/take changes.
+  try {
+    const response=await editor.api.fetchApi("/h3_continuum/timeline/scenes/socket-sizes/"+editor.p.project_id);
+    if(response.ok)known=(await response.json()).slot_sizes||[];
+  } catch { /* A first run still has graph-based estimates. */ }
+  return Array.from({length:8},(_,i)=>sources[i]?.connected&&!sources[i]?.unavailable
+    ? (Number.isInteger(known[i])&&known[i]>=0?known[i]:1):0);
+}
+
 // One selectable tile per *currently active* persistent reference output,
 // never eight copies of the complete upstream shelf. Selection IDs remain
 // physical Timeline Sampler reference_image_N sockets. For opaque multi-input

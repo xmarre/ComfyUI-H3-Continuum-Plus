@@ -1,9 +1,8 @@
 // Smart References is a detached analysis workspace. Apply uses the editor's
 // existing History transaction and rejects results after concurrent edits.
 import { clone } from "./core.js";
-import { referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v27";
+import { referencePreviewSlots } from "./chunk_ui.js?v=h3-timeline-smart-references-v27";
 const BASE="/h3_continuum/timeline";
-const QUEUE=Symbol.for("h3.timeline.sceneVlmQueue");
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag);
   for(const [key,value] of Object.entries(attrs)) {
@@ -20,15 +19,15 @@ async function json(api,path,body,method=body===undefined?"GET":"POST") {
   if(!r.ok)throw Error(typeof data.error==="string"?data.error:data.error?.message||"Scene analysis request failed ("+r.status+")");
   return data;
 }
-export function installSceneQueueHandoff(app) {
-  if(!app?.queuePrompt || app[QUEUE])return;
-  const state={clients:new Set(),original:app.queuePrompt};app[QUEUE]=state;
-  app.queuePrompt=async function(...args) {
-    // Wait for the provider worker to finish cancellation before handing the
-    // graph to ComfyUI. This does not pretend to unload LM Studio's model.
-    await Promise.all([...state.clients].map(client=>client.cancelVlm()));
-    return state.original.apply(this,args);
-  };
+export async function cancelSceneVlm(editor) {
+  await Promise.all([...(editor.sceneVlmClients||[])].map(client=>client.cancelVlm()));
+}
+export function setShotDescription(shot,value) {
+  const fromModel=shot.user?.description===undefined&&shot.vlm;
+  shot.user||={};shot.user.description=value;
+  if(!shot.user.description_provenance)
+    shot.user.description_provenance=fromModel ? {kind:"edited_model",model_id:shot.vlm.model_id,
+      cache_key:shot.vlm.cache_key,original_description:shot.vlm.description} : {kind:"authored"};
 }
 export function applySceneCandidate(editor,candidate,version) {
   if(editor.closed||editor.editVersion!==version)
@@ -58,6 +57,7 @@ export class SmartReferences {
     this.provider=el("output",{text:"Checking Prompt Writer…"});
     this.root.append(el("header",{},el("strong",{text:"Scene Analysis / Smart References"}),button("Close",()=>this.close())),
       this.status,this.controls,el("nav",{},this.provider,this.models,
+        el("label",{},el("input",{type:"checkbox","data-remote-consent":"","aria-label":"Allow source frames to remote API"}),"Allow source frames to the selected remote API provider"),
         button("Refresh Prompt Writer",()=>this.guard(()=>this.loadModels())),
         button("Interpret selected evidence",()=>this.guard(()=>this.interpret())),
         button("Cancel VLM",()=>this.guard(()=>this.cancelVlm()))),
@@ -68,7 +68,7 @@ export class SmartReferences {
         button("Undo applied plan",()=>this.guard(()=>{if(this.appliedVersion!==editor.editVersion)throw Error("Only the most recently applied shot-plan edit can be undone here. Use Timeline Undo for later edits.");editor.undo();this.appliedVersion=null;this.version=editor.editVersion;this.candidate=clone(editor.p);this.renderShots();})),
         button("Revert pending edits",()=>{this.candidate=clone(editor.p);this.renderShots();})));
     document.body.append(this.root);this.root.showModal();this.renderControls();this.renderShots();
-    installSceneQueueHandoff(editor.app);editor.app?.[QUEUE]?.clients.add(this);
+    editor.sceneVlmClients||=new Set();editor.sceneVlmClients.add(this);
     this.guard(()=>this.loadModels());
   }
   async guard(fn){try{return await fn();}catch(error){this.status.textContent=error.message;}}
@@ -99,12 +99,19 @@ export class SmartReferences {
       button("Analyze selected scene",()=>this.guard(()=>this.analyze("selection"))),
       button("Analyze full source",()=>this.guard(()=>this.analyze("source"))),
       button("Cancel analysis",()=>this.guard(()=>this.cancelAnalysis())),
-      button("Load completed analysis",()=>this.guard(()=>this.preview())));
+      button("Load completed analysis",()=>this.guard(()=>this.preview())),
+      button("Show scene cache use",()=>this.guard(()=>this.cacheUsage())),
+      button("Prune scene caches older than 30 days",()=>this.guard(()=>this.cacheUsage(true))));
+  }
+  async cacheUsage(prune=false){
+    const usage=await json(this.api,BASE+(prune?"/scenes/cache/prune":"/scenes/cache"),prune?{}:undefined);
+    this.status.textContent="Scene caches: "+(usage.bytes/1024**3).toFixed(3)+" GiB. No automatic eviction. "+
+      (prune?usage.removed_directories+" old cache directories removed. ":"")+"Applied PNG assets are retained. Pruned masters/observations require reanalysis. "+(usage.warnings||[]).join(" ");
   }
   async analyze(scope) {
     if(this.job)await this.cancelAnalysis();
     this.project=clone(this.editor.p);this.version=this.editor.editVersion;
-    this.candidate=clone(this.project);this.page=0;
+    this.candidate=clone(this.project);this.page=0;this.observations={};
     const result=await json(this.api,BASE+"/scenes/analyze",{project:this.project,asset_id:this.source.value,scope,settings:this.cfg});
     if(this.closed){await json(this.api,BASE+"/scenes/"+result.id+"/cancel",{});return;}
     this.job=result.id;await this.poll();
@@ -127,18 +134,18 @@ export class SmartReferences {
     // A new preview intentionally rebases onto the latest project, then holds
     // that exact revision until Apply. No old snapshot replaces unrelated edits.
     const version=this.editor.editVersion;
-    const result=await json(this.api,BASE+"/scenes/"+this.job+"/preview",{project:this.pendingInterpretation?this.candidate:this.editor.p});
+    const result=await json(this.api,BASE+"/scenes/"+this.job+"/preview",{project:this.pendingInterpretation?this.candidate:this.editor.p,observations:this.observations});
     if(this.editor.editVersion!==version)throw Error("Timeline changed during preview. Preview again.");
     if(this.closed)return;
     this.version=version;this.candidate=result.project;this.analysis=result.analysis;
-    this.renderShots();this.status.textContent=this.candidate.scene_plan.shots.length+" mapped shots · review before Apply";
+    this.renderShots();this.status.textContent=this.candidate.scene_plan.shots.length+" mapped shots · review before Apply. "+(this.analysis.warnings||[]).join(" ");
   }
   async loadModels(){
     try{
       const result=await json(this.api,"/h3studio/scene-analysis/capabilities");
       if(result.version!==1||result.schema!=="visual_observations_v1")throw Error("Prompt Writer scene API version is incompatible");
       this.modelChoices=result.models||[];
-      this.models.replaceChildren(...this.modelChoices.map(m=>el("option",{value:m.id,text:m.name+" · "+m.api_preset})));
+      this.models.replaceChildren(...this.modelChoices.map(m=>el("option",{value:m.id,text:m.name+" · "+m.api_preset+" · "+(m.data_destination||"remote")})));
       this.provider.textContent=this.modelChoices.length?"Prompt Writer connected vision models":"Connect a vision model in Prompt Writer → Settings → API providers";
     }catch(error){this.provider.textContent="VLM unavailable · "+error.message+". Deterministic analysis remains available.";}
   }
@@ -147,7 +154,9 @@ export class SmartReferences {
     if(!this.analysis)throw Error("Analyze footage before VLM interpretation");
     const model=this.modelChoices?.find(m=>m.id===this.models.value);
     if(!model)throw Error("Connect and select a vision model in Prompt Writer");
-    this.vlmStop=false;
+    if(model.data_destination!=="local"&&!this.root.querySelector('[data-remote-consent]')?.checked)
+      throw Error("This provider receives source frames over a remote API. Enable remote transmission below the model selector to interpret with it.");
+    this.vlmStop=false;this.observations||={};
     const work=async()=>{
       const unique=new Map();
       for(const shot of this.analysis.shots){
@@ -166,7 +175,8 @@ export class SmartReferences {
         }
         if(this.vlmStop||this.closed)break;
         unique.set(group,observation);
-        await json(this.api,BASE+"/scenes/"+this.job+"/observation",{shot_id:shot.id,model_id:model.id,observation,context_budget:this.contextBudget});
+        const record=await json(this.api,BASE+"/scenes/"+this.job+"/observation",{shot_id:shot.id,model_id:model.id,observation,context_budget:this.contextBudget});
+        this.observations[shot.id]=record.cache_key;
       }
       if(!this.vlmStop&&!this.closed){this.pendingInterpretation=true;try{await this.preview();}finally{this.pendingInterpretation=false;}}
     };
@@ -195,7 +205,7 @@ export class SmartReferences {
       enabled.onchange=()=>{shot.user||={};shot.user.enabled=enabled.checked;};
       const area=el("textarea",{"aria-label":"Shot description "+shot.id,rows:3});
       area.value=shot.user?.description??shot.vlm?.description??"";
-      area.oninput=()=>{shot.user||={};shot.user.description=area.value;};
+      area.oninput=()=>setShotDescription(shot,area.value);
       const location=el("input",{"aria-label":"Physical scene identity "+shot.id,placeholder:"Unverified location"});
       location.value=shot.scene_id||"";
       location.onchange=()=>{shot.scene_id=location.value||null;shot.user||={};shot.user.scene_id=shot.scene_id;};
@@ -230,7 +240,7 @@ export class SmartReferences {
         el("p",{text:"Setup "+shot.setup_id.slice(0,12)+(shot.reused_reference?" · reused reference":" · distinct evidence")+" · "+(shot.event?.type||(shot.provenance==="user-split"?"user boundary":"source start"))+" · "+(shot.event?.evidence?.reason||"measured source interval")}),
         el("label",{},enabled,"Use this shot"),
         el("label",{},"Physical scene/location",location),el("label",{},"Camera setup",setup),el("label",{},"Visible subjects",subjects),events,refs,el("label",{},"Visual description / user correction",area),
-        el("p",{text:shot.vlm?"Model-generated observation · "+shot.vlm.model_id+" · review visual claims":"No semantic model observation. Facial visibility and acting are unmeasured."}),
+        el("p",{text:shot.user?.description_provenance?.kind==="edited_model"?"User-edited model observation · "+shot.user.description_provenance.model_id:shot.vlm?"Model-generated observation · "+shot.vlm.model_id+" · review visual claims":"No semantic model observation. Facial visibility and acting are unmeasured."}),
         picker,split,button("Split shot",()=>this.guard(()=>this.edit("split",shot,{frame:Number(split.value)}))),
         button("Merge with next",()=>this.guard(()=>this.edit("merge",shot,{other_id:next?.id})))));
     }
@@ -246,10 +256,9 @@ export class SmartReferences {
   async compile(){
     if(!this.candidate.scene_plan)throw Error("Analyze footage first");
     this.updatePlanSettings();
-    const sources=referenceSocketSources(this.editor);
-    const sizes=Array.from({length:8},(_,i)=>sources[i]?.connected&&!sources[i]?.unavailable?1:0);
+    const sizes=await referencePreviewSlots(this.editor);
     const result=await json(this.api,BASE+"/scenes/compile",{project:this.candidate,slot_sizes:sizes});
-    this.compiled.textContent="Socket counts are inferred from graph outputs. Bundled/dynamic tensors are resolved by the sampler; saved take manifests are authoritative.\nCut timing: advisory.\n\n"+result.windows.map(w=>
+    this.compiled.textContent="Socket counts use the last sampled group sizes when available, otherwise one per connected output. Changed/bundled/dynamic outputs can differ on the next run; physical manifests are authoritative.\nCut timing: advisory.\n\n"+result.windows.map(w=>
       "Chunk "+(w.index+1)+" ["+w.range.join(",")+")\n"+JSON.stringify({reference_budget:w.reference_budget,aliases:w.aliases,images:w.images,warnings:w.warnings},null,2)+"\n"+w.prompt).join("\n\n");
     this.compiled.parentElement.open=true;
   }
@@ -262,9 +271,8 @@ export class SmartReferences {
   close(){
     if(this.closed)return;
     this.closed=true;clearTimeout(this.timer);this.root.close();this.root.remove();
-    this.guard(()=>this.cancelAnalysis());this.guard(()=>this.cancelVlm());
-    // Keep a live client registered until cancellation really finishes so a
-    // simultaneous queue cannot bypass the handoff by closing this window.
-    Promise.resolve(this.cancelVlm()).finally(()=>this.editor.app?.[QUEUE]?.clients.delete(this));
+    this.guard(()=>this.cancelAnalysis());
+    // Keep this editor's worker visible to its queue until cancellation ends.
+    this.guard(async()=>{await this.cancelVlm();this.editor.sceneVlmClients?.delete(this);});
   }
 }

@@ -315,6 +315,8 @@ class TimelineInputs:
         if not self.windows[index].get("timed_prompt"):
             return original
         if self.timeline_plan is None:
+            self.timeline_plan = {}
+        if index not in self.timeline_plan:
             from ..v2.prompts import make_prompt_plan
             from .model import seconds_text
 
@@ -332,13 +334,16 @@ class TimelineInputs:
                     # Untimed windows use the nominal List plan; this body only
                     # keeps the routing partition well formed.
                     rows.append(w["prompt"] or "(no prompt)")
-            self.timeline_plan = make_prompt_plan(
+            # Only this invocation's visual schedule is shared. Putting it
+            # inside an outer section would invalidate the strict inner grammar.
+            schedule = self.windows[index].get("scene_prompt", "")
+            self.timeline_plan[index] = make_prompt_plan(
                 mode="Timeline",
-                script="\n".join(rows),
+                script=(schedule+"\n\n" if schedule else "")+"\n".join(rows),
                 chunks=len(self.windows),
                 chunk_seconds=self.project["chunk_frames"] / 24,
             )
-        return self.timeline_plan
+        return self.timeline_plan[index]
 
     def materialize(self, index, *, video_vae, audio_vae, width, height):
         from ..reference import prepare_reference_assets, encode_reference_latents

@@ -575,7 +575,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             for s in segments
         )
     from .scene_plan import augment_prompt
-    segments, text = augment_prompt(p, smart_shots, start, end, base, segments, text, picture_by_asset)
+    segments, text, scene_prompt = augment_prompt(p, smart_shots, start, end, base, segments, text, picture_by_asset)
     warnings = list(smart_warnings)
     if p.get("video_guidance_enabled", True) is False and re.search(r"<Video\s+\d+>", text):
         warnings.append(
@@ -659,6 +659,8 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
     }
     if any(i.get("scene_native") for i in images):
         semantic["scene_reference_preparation"] = "native_floor_v1"
+    if scene_prompt:
+        semantic["scene_prompt"] = scene_prompt
     audio_mode = p.get("audio_generation_mode", "guided")
     if audio_mode != "guided":
         from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT

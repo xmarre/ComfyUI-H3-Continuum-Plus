@@ -139,7 +139,9 @@ def test_alias_budget_identity_and_no_chunk_leak():
     w=compile_window(p,0,picture_offset=1)
     assert len(w['images'])==2 and set(w['aliases'].values())=={'<Picture 2>','<Picture 3>'}
     assert '<d>[English] We both do.</d>' in w['prompt']
-    assert [s['range'] for s in w['segments']]==[[0,67],[67,153],[153,168]]
+    assert w['segments'] is None
+    assert w['prompt'].count('<d>[English] We both do.</d>')==1
+    assert w['prompt'].count('Shot plan (visual composition within this chunk):')==1
     assert compile_window(p,1,picture_offset=1)['images']==[]
     full=compile_window(p,0,picture_offset=8)
     assert full['images']==[] and 'Scene composition evidence:' not in full['prompt'] and any('omitted' in s for s in full['warnings'])
@@ -159,7 +161,9 @@ def test_user_precedence_dialogue_verbatim():
     p['prompts']['regions']=[{'id':'dialogue','start':0,'end':168,'text':'S2 <d>[English] We both do.</d>\n(pause)'}]
     w=compile_window(p,0,picture_offset=1)
     assert 'invented' not in w['prompt'] and 'Mary remains neutral.' in w['prompt']
-    assert all('S2 <d>[English] We both do.</d>\n(pause)' in s['text'] for s in w['segments'])
+    assert w['prompt'].count('S2 <d>[English] We both do.</d>\n(pause)')==1
+    assert w['segments'] is None
+    assert 'timing advisory' not in w['prompt'] and 'authored instructions take precedence' not in w['prompt']
 
 
 def test_vlm_schema():
@@ -241,9 +245,8 @@ def test_split_correction_survives_detector_reanalysis():
     raw={'id':'analysis','source_asset_id':aid,'settings':settings(),'references':p['scene_plan']['references'],
          'shots':copy.deepcopy(p['scene_plan']['shots']),'scope':'selection','project_range':[0,336]}
     corrected=edit_plan(validate(p),'split','s1',frame=24)
-    corrected['scene_plan']['shots'][0]['user']['description']='Keep this exact authored interval.'
     result=mapped_plan(corrected,raw)
-    assert any(s['range']==[0,24] and s['user'].get('description')=='Keep this exact authored interval.' for s in result['shots'])
+    assert any(s['range']==[0,24] and s['user'].get('interval_overridden') for s in result['shots'])
     assert not any(s['range'][0]<24 and 0<s['range'][1] and s['range']!=[0,24] for s in result['shots'])
 
 
@@ -323,3 +326,108 @@ def test_manual_edit_keeps_measured_events_separate():
     assert right['event'] is None and right['events']==[]
     merged=edit_plan(split,'merge',left['id'],other_id=right['id'])
     assert next(s for s in merged['scene_plan']['shots'] if s['range']==[67,153])['events']==[event]
+
+
+@pytest.mark.parametrize('mode,script,regions', [
+    ('Fixed', 'S1 <d>[English] First line.</d>\nS2 <d>[English] Second line.</d>', []),
+    ('Timeline', '[0-7s]\nS1 <d>[English] First line.</d>\nS2 <d>[English] Second line.</d>', []),
+    ('Fixed', '', [{'id':'one','start':0,'end':100,'text':'S1 <d>[English] First line.</d>'},
+                   {'id':'two','start':100,'end':168,'text':'S2 <d>[English] Second line.</d>'}]),
+])
+def test_shot_schedule_preserves_authored_partition_and_single_dialogue(mode,script,regions):
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    from ComfyUI_H3_Continuum_Join.timeline.model import compile_project
+    from ComfyUI_H3_Continuum_Join.v2.prompts import make_prompt_plan
+    from ComfyUI_H3_Continuum_Join.v2.physical_prompts import inspect_strict_inner_ranges
+    p=plan_project();p['selection']=[0,168]
+    p['prompts'].update(mode=mode,script=script,regions=regions)
+    bare=copy.deepcopy(p);bare.pop('scene_plan')
+    before=compile_window(bare,0);after=compile_window(p,0,picture_offset=1)
+    assert after['segments']==before['segments']
+    for line in ['S1 <d>[English] First line.</d>', 'S2 <d>[English] Second line.</d>']:
+        assert after['prompt'].count(line)==before['prompt'].count(line)==1
+    assert after['prompt'].count('Shot plan (visual composition within this chunk):')==1
+    assert 'advisory' not in after['prompt'] and 'take precedence' not in after['prompt']
+    if after['segments']:
+        provider=TimelineInputs(p,compile_project(p)['jobs'][0],None)
+        plan=provider.invocation_plan(make_prompt_plan(mode='Fixed',script='',chunks=1,chunk_seconds=7),0)
+        assert plan['source']['preamble'].count('Shot plan (visual composition within this chunk):')==1
+        section=plan['source']['sections'][0]
+        parts=inspect_strict_inner_ranges(section,outer_start=Fraction(0),outer_end=Fraction(7))
+        assert parts is not None and len(parts)==len(before['segments'])
+        assert all('Shot plan' not in part['body'] for part in parts)
+        assert sum(part['body'].count('First line.') for part in parts)==1
+
+
+def mapped_fixture():
+    p=plan_project();aid='a'*64
+    p['tracks']=[{'id':'track','role':'retained','clips':[{'id':'movie','asset_id':aid,'start':0,'end':336,'source_in':'0','speed':'1','audio_role':'neither'}]}]
+    for s in p['scene_plan']['shots']:s['mapping']={'clip_id':'movie','source_in':'0','speed':'1','clip_start':0}
+    return validate(p)
+
+
+def test_selected_analysis_retains_other_scene_and_generation_hash():
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import mapped_plan
+    p=mapped_fixture();p['scene_plan']['shots'][0]['user']['description']='Preserve this correction.'
+    before=copy.deepcopy(p['scene_plan']['shots']);old_hash=compile_window(p,0,picture_offset=1)['generation_hash']
+    source=copy.deepcopy(before[0]);source.update(id='later',source_start='7',source_end='14',reference_ids=['r2'],user={})
+    raw={'id':'later-analysis','source_asset_id':'a'*64,'settings':settings(),'references':{'r2':p['scene_plan']['references']['r2']},
+         'shots':[source],'scope':'selection','project_range':[168,336]}
+    p['scene_plan']=mapped_plan(p,raw)
+    assert p['scene_plan']['shots'][:3]==before
+    assert compile_window(p,0,picture_offset=1)['generation_hash']==old_hash
+    # The same preservation rule applies to a different registered source.
+    bid='d'*64;p['assets'].append({'id':bid,'kind':'video'})
+    p['tracks'][0]['clips'].append({'id':'movie-b','asset_id':bid,'start':168,'end':336,'source_in':'0','speed':'1','audio_role':'neither'})
+    raw.update(source_asset_id=bid,shots=[{**source,'id':'other-source','source_start':'0','source_end':'7','reference_ids':[]}],references={})
+    p['scene_plan']=mapped_plan(p,raw)
+    assert p['scene_plan']['shots'][:3]==before
+    assert compile_window(p,0,picture_offset=1)['generation_hash']==old_hash
+
+
+def test_partial_selection_replaces_only_covered_frames():
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import mapped_plan
+    p=mapped_fixture();p['scene_plan']['shots']=p['scene_plan']['shots'][:1]
+    old=copy.deepcopy(p['scene_plan']['shots'][0])
+    source={**old,'id':'remeasured','reference_ids':['r2']}
+    raw={'id':'analysis','source_asset_id':'a'*64,'settings':settings(),'references':p['scene_plan']['references'],
+         'shots':[source],'scope':'selection','project_range':[24,48]}
+    result=mapped_plan(p,raw)
+    assert [s['range'] for s in result['shots']]==[[0,24],[24,48],[48,67]]
+    assert [s['reference_ids'] for s in result['shots']]==[['r1'],['r2'],['r1']]
+
+
+def test_fractional_rate_project_boundaries_use_earlier_ties():
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import nearest_frame, mapped_plan
+    assert nearest_frame(Fraction(3003,2))==1501
+    for n in range(5000):
+        x=Fraction(n*1001,1000)
+        assert nearest_frame(x)==(x.numerator//x.denominator + (x%1>Fraction(1,2)))
+    p=mapped_fixture();p.update(duration_frames=2000,selection=[0,2000]);p['tracks'][0]['clips'][0]['end']=2000
+    source=copy.deepcopy(p['scene_plan']['shots'][0]);source.update(source_start=str(Fraction(1500*1001,24000)),source_end='70')
+    raw={'id':'analysis','source_asset_id':'a'*64,'settings':settings(),'references':p['scene_plan']['references'],
+         'shots':[source],'scope':'source','project_range':[0,2000]}
+    assert any(s['range'][0]==1501 for s in mapped_plan(p,raw)['shots'])
+
+
+@pytest.mark.parametrize('full_range',[False,True])
+def test_sdr_bt709_midtones_and_saturated_patch_match_matrix_range_only(tmp_path,full_range):
+    import subprocess
+    path=tmp_path/'ramp.mkv'
+    y=np.tile(np.arange(256,dtype=np.uint8),(64,1));uv=np.full_like(y,128)
+    values=np.stack([y,uv,uv]);values[:,32:,192:]=np.array([63,102,215],dtype=np.uint8)[:,None,None]
+    with av.open(str(path),'w') as c:
+        s=c.add_stream('ffv1',rate=24);s.width,s.height=256,64;s.pix_fmt='yuv444p'
+        s.codec_context.color_range=2 if full_range else 1
+        s.codec_context.colorspace=s.codec_context.color_primaries=s.codec_context.color_trc=1
+        f=av.VideoFrame.from_ndarray(values,format='yuv444p');f.pts=0;f.time_base=Fraction(1,24)
+        for packet in s.encode(f):c.mux(packet)
+        for packet in s.encode():c.mux(packet)
+    cfg=settings();meta=color_metadata({'color_transfer':'bt709','color_primaries':'bt709','color_space':'bt709','color_range':'pc' if full_range else 'tv','pix_fmt':'yuv444p'})
+    filt,_=color_filter(meta,cfg)
+    def convert(f):
+        return np.frombuffer(subprocess.check_output(['ffmpeg','-v','error','-threads','1','-filter_threads','1','-i',str(path),'-vf',f,'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-threads:v','1','-']),np.uint8).reshape(64,256,3)
+    actual=convert(filt)
+    expected=convert(f"scale=in_color_matrix=bt709:in_range={'full' if full_range else 'limited'}:out_range=full,format=rgb24")
+    assert np.abs(actual.astype(int)-expected.astype(int)).max()<=2
+    assert np.abs(actual[0,[16,31,64,128,192,240]].astype(int)-expected[0,[16,31,64,128,192,240]].astype(int)).max()<=1

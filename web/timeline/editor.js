@@ -1,4 +1,4 @@
-import { SmartReferences } from "./smart_references.js?v=h3-timeline-smart-references-v27";
+import { SmartReferences, cancelSceneVlm } from "./smart_references.js?v=h3-timeline-smart-references-v27";
 import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
@@ -28,7 +28,7 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js?v=h3-timeline-explicit-video-v22";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls, referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v27";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls, referenceSocketSources, referencePreviewSlots } from "./chunk_ui.js?v=h3-timeline-smart-references-v27";
 import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-smart-references-v27";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-explicit-video-v22";
 import { selectedChunkPage } from "./chunk_workspace.js?v=h3-timeline-explicit-video-v22";
@@ -2206,8 +2206,7 @@ export class TimelineEditor {
         } : this.p;
         let plan;
         if(previewProject.scene_plan) {
-          const sources=referenceSocketSources(this);
-          const slot_sizes=Array.from({length:8},(_,i)=>sources[i]?.connected&&!sources[i]?.unavailable?1:0);
+          const slot_sizes=await referencePreviewSlots(this);
           const scene=await request(this.api,"/scenes/compile",{
             method:"POST",body:JSON.stringify({project:previewProject,slot_sizes}),signal:this.abort.signal});
           plan={jobs:[{windows:scene.windows}]};
@@ -2338,6 +2337,7 @@ export class TimelineEditor {
         try {
           // State Manager patches api.queuePrompt to flush persistent writes
           // and reject unsaved managed prompt text. Never bypass that guard.
+          await cancelSceneVlm(this);
           queued = await this.api.queuePrompt(0, payload);
         } catch (error) {
           const reason = error?.code === "DSM_UNSAVED_MANAGED_TEXT"

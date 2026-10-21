@@ -57,6 +57,45 @@ class SceneAnalysis:
         self.root = store.root / "scene_analysis"
         self.root.mkdir(exist_ok=True)
 
+    def cache_usage(self):
+        roots = [self.root, self.store.root/"scene_references"]
+        return {"bytes": sum(p.stat().st_size for root in roots if root.exists()
+                             for p in root.rglob("*") if p.is_file()),
+                "automatic_eviction": False, "prune_age_days": 30}
+
+    def prune_cache(self):
+        """Explicitly prune old reconstructible caches; never delete CAS assets.
+
+        PNGs in projects/takes live in AssetStore and remain usable. Evicted
+        masters and observations require reanalysis of the registered source.
+        """
+        import shutil
+        if not _slots.acquire(blocking=False):
+            raise ValueError("Wait for scene analysis to finish before pruning its cache")
+        removed, errors = 0, []
+        try:
+            with _lock:
+                active = {key[1] for key in _workers if key[0] == str(self.root)}
+                cutoff = time.time()-30*86400
+                for root in [self.root, self.store.root/"scene_references"]:
+                    if not root.exists():
+                        continue
+                    for directory in root.iterdir():
+                        if (not directory.is_dir() or directory.is_symlink() or directory.name in active
+                                or not re.fullmatch(r"[a-f0-9]{64}", directory.name)):
+                            continue
+                        files = [p for p in directory.rglob("*") if p.is_file()]
+                        if max([directory.stat().st_mtime, *(p.stat().st_mtime for p in files)]) >= cutoff:
+                            continue
+                        try:
+                            shutil.rmtree(directory)
+                            removed += 1
+                        except OSError as exc:
+                            errors.append(str(exc))
+        finally:
+            _slots.release()
+        return {**self.cache_usage(), "removed_directories": removed, "warnings": errors}
+
     def path(self, token):
         if not re.fullmatch(r"[a-f0-9]{64}", str(token)):
             raise ValueError("Invalid scene analysis identity")
@@ -90,7 +129,7 @@ class SceneAnalysis:
         self.store.assets.verify(source["id"], cancel=lambda: None)
         # Mapping/range are part of the result lease, not measurement identity.
         token = digest([DETECTOR_VERSION, COLOR_VERSION, analysis_backend(), _version(), source["id"], str(start), str(end), cfg,
-                        scope, p["selection"], [(t["role"], t.get("muted"), t["clips"]) for t in p["tracks"] if t["role"] == "retained"]])
+                        scope, p["selection"], [p["width"], p["height"]], [(t["role"], t.get("muted"), t["clips"]) for t in p["tracks"] if t["role"] == "retained"]])
         root = self.path(token)
         key = (str(self.root), token)
         with _lock:
@@ -205,12 +244,21 @@ class SceneAnalysis:
                         chosen.append(rid)
                 selected_ids = set(chosen)
                 chosen.extend(r for r in ranked if r not in selected_ids)
-                remap = {}
+                remap, warnings = {}, []
+                if len(chosen) > cfg["global_budget"]:
+                    warnings.append(f"Global reference budget omitted {len(chosen)-cfg['global_budget']} candidate(s). Increase the budget and reanalyse for more coverage.")
                 for ordinal, rid in enumerate(chosen[:cfg["global_budget"]]):
                     cancel()
                     candidate = pending[rid]
                     progress(stage="extract", shot=ordinal+1, shots=min(len(pending), cfg["global_budget"]), references=len(references))
-                    extracted = extract_reference(self.store, source, candidate, cfg, cancel=cancel)
+                    try:
+                        extracted = extract_reference(self.store, source, candidate, cfg, cancel=cancel,
+                                                      output_dimensions=(project["width"], project["height"]))
+                    except InterruptedError:
+                        raise
+                    except (ValueError, OSError) as exc:
+                        warnings.append(f"Skipped reference at PTS {candidate['pts']} × {candidate['time_base']}: {exc}")
+                        continue
                     h3 = next(x for x in extracted["assets"] if x["representation"] == "h3")
                     vlm = next(x for x in extracted["assets"] if x["representation"] == "vlm")
                     ref = {"id": extracted["id"], "asset_id": h3["id"], "vlm_asset_id": vlm["id"],
@@ -222,12 +270,12 @@ class SceneAnalysis:
                     shot["reference_ids"] = [remap[rid] for rid in shot["reference_ids"] if rid in remap]
                 result = {"schema": "h3_source_scene_analysis_v1", "id": token, "source_asset_id": source["id"],
                           "scope": scope, "project_range": project["selection"], "source_range": [str(start), str(end)],
-                          "settings": cfg, "summary": summary, "events": events, "shots": shots, "references": references,
+                          "settings": cfg, "summary": summary, "events": events, "shots": shots, "references": references, "warnings": warnings,
                           "metrics": {"elapsed_seconds": round(time.monotonic()-started, 3), "cached_frames": count_before,
                                       "decoded_frames": summary["frames"]-count_before, "descriptor_ram_frames": 32}}
                 cancel()
                 self.store.atomic_json(root/"result.json", result)
-                progress(stage="complete", fraction=1, result_available=True, references=len(references), **result["metrics"])
+                progress(stage="complete", fraction=1, result_available=True, references=len(references), warnings=warnings, **result["metrics"])
             finally:
                 db.close()
         except InterruptedError as exc:
@@ -240,9 +288,24 @@ class SceneAnalysis:
             with _lock:
                 _workers.pop((str(self.root), token), None)
 
-    def preview(self, project, token):
+    def preview(self, project, token, observations=None):
         p = validate(project)
         analysis = self.result(token)
+        # Results are immutable measurements. A preview explicitly selects
+        # model/context records, so another client's interpretation cannot win
+        # by overwriting shared result.json.
+        for shot_id, key in (observations or {}).items():
+            if not re.fullmatch(r"[a-f0-9]{64}", str(key)):
+                raise ValueError("Invalid observation cache identity")
+            shot = next((s for s in analysis["shots"] if s["id"] == shot_id), None)
+            if shot is None:
+                raise ValueError("Observation belongs to an unknown shot")
+            record = json.loads((self.path(token)/(key+".vlm.json")).read_text(encoding="utf-8"))
+            evidence = self.evidence(token, shot_id, record["model_id"], record["context_budget"])
+            if evidence["cache_key"] != key:
+                raise ValueError("Observation evidence does not match this shot/model/context")
+            shot["vlm"] = record
+            shot["visible_subjects"] = list(record["observation"]["subjects"])
         if analysis["source_asset_id"] not in {a["id"] for a in p["assets"]}:
             raise ValueError("Analysis source is no longer registered in this project")
         self.store.assets.verify(analysis["source_asset_id"], cancel=lambda: None)
@@ -285,12 +348,8 @@ class SceneAnalysis:
         value = validate_observation(value, [x["id"] for x in evidence["images"]])
         record = {"model_id": model_id, "observation": value, "description": observation_description(value),
                   "schema": "visual_observations_v1", "cache_key": evidence["cache_key"],
+                  "context_budget": context_budget,
                   "provenance": "model-generated; visual claims require human review"}
         with _lock:
-            result = self.result(token)
-            shot = next(s for s in result["shots"] if s["id"] == shot_id)
-            shot["vlm"] = record
-            shot["visible_subjects"] = list(value["subjects"])
             self.store.atomic_json(self.path(token)/(evidence["cache_key"]+".vlm.json"), record)
-            self.store.atomic_json(self.path(token)/"result.json", result)
         return record

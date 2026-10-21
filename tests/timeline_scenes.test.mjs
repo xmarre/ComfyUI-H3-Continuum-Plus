@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {History} from '../web/timeline/core.js';
-import {applySceneCandidate,installSceneQueueHandoff,SmartReferences} from '../web/timeline/smart_references.js';
+import {applySceneCandidate,cancelSceneVlm,setShotDescription,SmartReferences} from '../web/timeline/smart_references.js';
 
 test('scene Apply uses one History edit and rejects a concurrent timeline edit',()=>{
  const p={assets:[],prompts:{global:'Authored dialogue'},audio_generation_mode:'source_locked'};
@@ -14,12 +14,22 @@ test('scene Apply uses one History edit and rejects a concurrent timeline edit',
  assert.throws(()=>applySceneCandidate(editor,candidate,1),/timeline changed/);
 });
 
-test('normal ComfyUI queue waits for the owned VLM request to finish cancellation',async()=>{
- const order=[];const app={queuePrompt:async()=>{order.push('sample');return 7;}};
- installSceneQueueHandoff(app);const state=app[Symbol.for('h3.timeline.sceneVlmQueue')];
- let finish;state.clients.add({cancelVlm:()=>new Promise(resolve=>{order.push('cancel');finish=()=>{order.push('provider-stopped');resolve();};})});
- const pending=app.queuePrompt();await Promise.resolve();assert.deepEqual(order,['cancel']);finish();
+test('Studio queue handoff waits for its workers without modifying app or API queue methods',async()=>{
+ const order=[];const queue=async()=>{order.push('sample');return 7;};
+ const editor={app:{queuePrompt:queue},api:{queuePrompt:queue},sceneVlmClients:new Set()};
+ let finish;editor.sceneVlmClients.add({cancelVlm:()=>new Promise(resolve=>{order.push('cancel');finish=()=>{order.push('provider-stopped');resolve();};})});
+ const pending=(async()=>{await cancelSceneVlm(editor);return editor.api.queuePrompt();})();
+ await Promise.resolve();assert.deepEqual(order,['cancel']);finish();
  assert.equal(await pending,7);assert.deepEqual(order,['cancel','provider-stopped','sample']);
+ assert.equal(editor.app.queuePrompt,queue);assert.equal(editor.api.queuePrompt,queue);
+});
+
+test('editing model text preserves model provenance and the original description',()=>{
+ const shot={vlm:{description:'Model description.',model_id:'vision',cache_key:'key'}};
+ setShotDescription(shot,'Model description!');setShotDescription(shot,'A second edit.');
+ assert.deepEqual(shot.user.description_provenance,{kind:'edited_model',model_id:'vision',cache_key:'key',original_description:'Model description.'});
+ const authored={user:{description:'Authored.'},vlm:shot.vlm};setShotDescription(authored,'Edited authored.');
+ assert.equal(authored.user.description_provenance.kind,'authored');
 });
 
 test('runtime budgeting may change without relabelling already extracted pixels',()=>{

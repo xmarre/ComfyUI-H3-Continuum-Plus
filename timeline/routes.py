@@ -172,6 +172,33 @@ def register_routes():
             manifest, headers={"Cache-Control": "no-store"},
         )
 
+    @endpoint("get", "/scenes/cache")
+    async def scene_cache_usage(request):
+        from .scene_analysis import SceneAnalysis
+        return web.json_response(await asyncio.to_thread(SceneAnalysis(project_store()).cache_usage))
+
+    @endpoint("post", "/scenes/cache/prune")
+    async def prune_scene_cache(request):
+        from .scene_analysis import SceneAnalysis
+        return web.json_response(await asyncio.to_thread(SceneAnalysis(project_store()).prune_cache))
+
+    @endpoint("get", "/scenes/socket-sizes/{project_id}")
+    async def scene_socket_sizes(request):
+        from .nodes import takes
+        from .model import reference_slots_needed
+        sizes = [None]*8
+        for record in reversed(takes(project_store(), request.match_info["project_id"])):
+            known = record.get("reference_slot_sizes")
+            if not isinstance(known, list) or len(known) != 8:
+                continue
+            used = reference_slots_needed(record["project_snapshot"], record["indices"])
+            for i in used:
+                if sizes[i-1] is None:
+                    sizes[i-1] = known[i-1]
+            if all(n is not None for n in sizes):
+                break
+        return web.json_response({"slot_sizes": sizes})
+
     @endpoint("post", "/scenes/compile")
     async def compile_scene_preview(request):
         from .model import compile_window, reference_slots_for_chunk
@@ -231,7 +258,7 @@ def register_routes():
     async def preview_scenes(request):
         from .scene_analysis import SceneAnalysis
         data = await request.json()
-        candidate = await asyncio.to_thread(SceneAnalysis(project_store()).preview, data["project"], request.match_info["token"])
+        candidate = await asyncio.to_thread(SceneAnalysis(project_store()).preview, data["project"], request.match_info["token"], data.get("observations"))
         return web.json_response({"project": candidate, "analysis": SceneAnalysis(project_store()).result(request.match_info["token"])})
 
     @endpoint("post", "/scenes/{token}/evidence")
