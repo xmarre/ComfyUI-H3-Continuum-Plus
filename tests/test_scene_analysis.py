@@ -409,3 +409,33 @@ def test_stale_source_mapping_surfaces_warning_without_shot_conditioning():
     from ComfyUI_H3_Continuum_Join.timeline.scene_plan import allocate
     _,shots,_=allocate(p,0,168,1,[])
     assert 's1' not in {shot['id'] for shot in shots}
+
+
+def test_fixed_scene_shot_schedule_reaches_native_invocation_without_dialogue_duplication():
+    """Compile success is insufficient unless the native conditioning plan sees it."""
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    from ComfyUI_H3_Continuum_Join.v2.prompts import make_prompt_plan
+
+    p=plan_project()
+    authored='S2 <d>[English] We both do.</d>'
+    p['prompts']['global']=authored
+    native=make_prompt_plan(mode='Fixed',script=authored,chunks=2,chunk_seconds=7)
+    windows=[compile_window(p,i,picture_offset=1) for i in range(2)]
+    assert windows[0]['scene_schedule'] is True
+    assert windows[0]['timed_prompt'] is False
+    assert windows[1]['scene_schedule'] is False
+
+    provider=TimelineInputs(p,{'windows':windows,'range':[0,336]},None)
+    physical=provider.invocation_plan(native,0)
+    assert physical is not native
+    assert physical['source']['kind']=='timeline'
+    assert physical['prompts'][0].count(authored)==1
+    assert physical['prompts'][0].count('Shot plan:')==1
+    assert provider.invocation_plan(native,1) is native
+
+    # Without Smart References, native Fixed handling is unchanged.
+    bare=copy.deepcopy(p)
+    bare['scene_plan']['shots']=[]
+    bare_windows=[compile_window(bare,i,picture_offset=1) for i in range(2)]
+    normal=TimelineInputs(bare,{'windows':bare_windows,'range':[0,336]},None)
+    assert normal.invocation_plan(native,0) is native
