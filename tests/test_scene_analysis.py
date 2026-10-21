@@ -398,3 +398,12 @@ def test_rec709_midtone_codes_survive_reference_extraction(tmp_path):
         expected=round((value-16)*255/219)
         observed=float(np.median(pixels[:,index*32+8:index*32+24,:]))
         assert abs(observed-expected)<=4,(value,observed,expected)
+
+
+def test_stale_source_mapping_surfaces_warning_without_shot_conditioning():
+    p=plan_project()
+    p['scene_plan']['shots'][0]['mapping']={
+        'clip_id':'removed-source','source_in':'0','speed':'1','clip_start':0}
+    compiled=compile_window(p,0,picture_offset=1)
+    assert any('no longer valid' in warning for warning in compiled['warnings'])
+    assert '0-2.791666' not in compiled['prompt']
