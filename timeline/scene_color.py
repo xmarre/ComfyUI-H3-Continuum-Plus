@@ -14,7 +14,7 @@ import uuid
 from .media import MEDIA_FORMATS, probe, run_process
 from .model import rational, digest
 
-COLOR_VERSION = 2
+COLOR_VERSION = 3
 
 
 def limited_dimensions(width, height, megapixels):
@@ -75,8 +75,14 @@ def color_filter(metadata, settings):
     # zscale option spelling differs from ffprobe for RGB.
     matrix = "gbr" if matrix == "rgb" else matrix
     rng = {"tv": "limited", "pc": "full"}.get(metadata["range"], "full" if matrix == "gbr" else "limited")
-    # 125 nit SDR reference is explicit, not a brightness multiplier applied to
-    # already gamma-encoded PQ values. zscale linearizes before tone/gamut work.
+    # Preserve ordinary SDR transfer values. Re-encoding BT.1886
+    # linear light as sRGB visibly darkens shadow and midtone code values.
+    if trc not in {"smpte2084", "arib-std-b67"}:
+        if prim != "bt709":
+            warnings.append("Out-of-gamut SDR colors are clipped; perceptual gamut mapping is not provided.")
+        return (f"zscale=pin={prim}:tin={trc}:min={matrix}:rin={rng}:"
+                f"p=bt709:t={trc}:m=gbr:r=full:dither=error_diffusion,format=rgb48le", warnings)
+    # HDR must be linearized before tone mapping.
     linear = f"zscale=pin={prim}:tin={trc}:min={matrix}:rin={rng}:p={prim}:t=linear:m=gbr:r=full:npl={settings['sdr_nits']},format=gbrpf32le"
     if trc in {"smpte2084", "arib-std-b67"}:
         peak = None
@@ -113,6 +119,8 @@ def extract_reference(store, source, frame, settings, *, cancel):
     sar = rational(video.get("sample_aspect_ratio", "1:1").replace(":", "/")) if video.get("sample_aspect_ratio") not in {None, "N/A", "0:1"} else Fraction(1)
     display_width = max(1, round(width*sar))
     hw, hh = limited_dimensions(display_width, height, settings["h3_mp"])
+    if hw >= 32 and hh >= 32:
+        hw, hh = hw//32*32, hh//32*32
     vw, vh = limited_dimensions(display_width, height, settings["vlm_mp"])
     when = Fraction(frame["pts"])*rational(frame["time_base"])
     identity = digest([COLOR_VERSION, source["id"], frame["pts"], frame["time_base"], settings, _version(), metadata])
