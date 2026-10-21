@@ -81,7 +81,8 @@ def color_filter(metadata, settings):
         if prim != "bt709":
             warnings.append("Out-of-gamut SDR colors are clipped; perceptual gamut mapping is not provided.")
         return (f"zscale=pin={prim}:tin={trc}:min={matrix}:rin={rng}:"
-                f"p=bt709:t={trc}:m=gbr:r=full:dither=error_diffusion,format=rgb48le", warnings)
+                f"p=bt709:t={trc}:m=gbr:r=full,format=gbrpf32le,"
+                f"zscale=p=bt709:t={trc}:m=gbr:r=full:dither=error_diffusion,format=rgb48le", warnings)
     # HDR must be linearized before tone mapping.
     linear = f"zscale=pin={prim}:tin={trc}:min={matrix}:rin={rng}:p={prim}:t=linear:m=gbr:r=full:npl={settings['sdr_nits']},format=gbrpf32le"
     if trc in {"smpte2084", "arib-std-b67"}:
