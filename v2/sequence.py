@@ -1088,9 +1088,9 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                 trim_frames=int(chunk_plan["trim_frames"]), total_frames=geometry.total_frames)
             latent = apply_source_audio_lock(latent, locked_audio)
             chunk_plan["source_audio_lock"] = SOURCE_AUDIO_LOCK_CONTRACT
-            LOG.info("H3 target audio lock receipt contract=%s shape=%s movie_start_frame=%d frames=%d guide_keyframe=absent",
+            LOG.info("H3 target audio lock receipt contract=%s shape=%s movie_start_frame=%d frames=%d guide_keyframe=absent source_identity=%s",
                 SOURCE_AUDIO_LOCK_CONTRACT, tuple(locked_audio.shape),
-                timeline_inputs.offset + retained_frames - int(chunk_plan["trim_frames"]), geometry.total_frames)
+                timeline_inputs.offset + retained_frames - int(chunk_plan["trim_frames"]), geometry.total_frames, driving_audio_source.combined_hash)
             del locked_audio
         else:
             conditioning=attach_driving_audio(conditioning,driving_audio_latent)

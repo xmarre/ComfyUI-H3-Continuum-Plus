@@ -31,13 +31,13 @@ def prepare_locked_source(audio, audio_vae, *, start_frame, end_frame, required_
             or not waveform.is_floating_point()
             or type(rate) is not int or rate <= 0):
         raise ValueError("Source Audio Locked needs finite stereo AUDIO [1,2,samples] and a positive sample rate")
-    if not bool(torch.isfinite(waveform).all()):
-        raise ValueError("Source Audio Locked source PCM contains NaN or Inf")
     boundary = lambda f: round(Fraction(int(f) * rate, 24))
     a, b, required = map(boundary, (start_frame, end_frame, required_end_frame))
     if not 0 <= a < required <= b or waveform.shape[-1] < required:
         raise ValueError("Source Audio Locked source audio does not cover the authored window; native overhang alone may use silence")
     pcm = waveform[..., a:min(b, waveform.shape[-1])].detach().clone()
+    if not bool(torch.isfinite(pcm).all()):
+        raise ValueError("Source Audio Locked source PCM contains NaN or Inf")
     pcm = torch.nn.functional.pad(pcm, (0, b-a-pcm.shape[-1]))
     source = prepare_driving_audio_source(
         {"waveform": pcm, "sample_rate": rate}, audio_vae,

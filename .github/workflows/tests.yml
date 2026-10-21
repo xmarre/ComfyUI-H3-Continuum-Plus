@@ -185,6 +185,6 @@ jobs:
       - name: Install CPU Core imports
         run: |
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
-          python -m pip install numpy pillow safetensors scipy psutil einops tqdm transformers sentencepiece torchsde pyyaml 'comfy-kitchen==0.2.39' 'comfy-aimdo==0.5.6'
+          python -m pip install numpy pillow safetensors scipy psutil einops tqdm transformers sentencepiece torchsde pyyaml aiohttp av 'comfy-kitchen==0.2.39' 'comfy-aimdo==0.5.6'
       - name: Verify actual masks, schedule scales and joint attention
         run: python tools/verify_source_audio_lock_core.py --comfy-root core-audio-contract

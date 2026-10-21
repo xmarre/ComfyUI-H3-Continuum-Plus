@@ -211,18 +211,27 @@ class TimelineInputs:
         self.guide_mix_range = [a, b]
         rate = int(getattr(audio_vae, "audio_sample_rate", 32000))
         self.guide_rate = rate
+        authored_end = min(self.project["duration_frames"], self.project["selection"][1])
+        required_end = min(end, authored_end)
         if self.driving_audio is not None:
-            source = prepare_locked_source(self.driving_audio, audio_vae,
-                start_frame=a, end_frame=b, required_end_frame=min(end, self.project["duration_frames"], self.project["selection"][1]))
+            from .model import sample_boundary
+            direct_rate = int(self.driving_audio["sample_rate"])
+            authority = {
+                "waveform": self.driving_audio["waveform"][...,
+                    :sample_boundary(authored_end, direct_rate)],
+                "sample_rate": direct_rate,
+            }
+            source = prepare_locked_source(authority, audio_vae,
+                start_frame=a, end_frame=b, required_end_frame=required_end)
         else:
             if not any(w["guide"] for w in self.windows):
                 raise ValueError("Source Audio Locked requires a connected Driving Audio input or an active Timeline audio guide")
-            pcm = mix_audio(self.project, self.store.assets, a, b, rate, "guide")
+            pcm = mix_audio(self.project, self.store.assets, a, min(b, authored_end), rate, "guide")
             # prepare_locked_source uses the movie clock; this bounded mix has
             # its own origin, so validate and fingerprint in that local clock.
             source = prepare_locked_source(
                 {"waveform": torch.from_numpy(pcm)[None], "sample_rate": rate}, audio_vae,
-                start_frame=0, end_frame=b-a, required_end_frame=end-a)
+                start_frame=0, end_frame=b-a, required_end_frame=required_end-a)
         self.direct_audio_contract = source.contract
         return source
 
@@ -499,7 +508,9 @@ class TimelineInputs:
         if hasattr(self, "guide_rate"):
             from .model import sample_boundary, active_clips, clip_input
 
-            start = max(0, descriptor.retained_before - descriptor.context_frames)
+            start = descriptor.retained_before - descriptor.context_frames
+            if self.audio_generation_mode != "source_locked":
+                start = max(0, start)
             presentation["timeline_studio"]["audio_guide"] = {
                 "active": self.guide_active(index),
                 "input": "driving_audio"
@@ -539,6 +550,16 @@ class TimelineInputs:
                 ],
                 "gap_policy": "silence where no active guide clip; final mix is independent",
             }
+            if self.audio_generation_mode == "source_locked":
+                from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT
+                from ..temporal import audio_latent_t
+                receipt = presentation["timeline_studio"]["audio_guide"]
+                receipt.pop("latent_slice_ticks_40hz")
+                sample_start = sample_boundary(self.offset + start, self.guide_rate)
+                ticks = audio_latent_t(descriptor.total_frames)
+                receipt.update(mode="source_locked", contract=SOURCE_AUDIO_LOCK_CONTRACT,
+                    encoder="physical_pcm_window", target_audio_ticks=ticks,
+                    model_pcm_global_samples=[sample_start, sample_start + ticks * (self.guide_rate // 40)])
         # Reconstruct through the native descriptor factory to recalculate digest.
         from ..v2.physical_prompts import make_physical_sample_descriptor
 

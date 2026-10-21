@@ -207,3 +207,13 @@ def test_refine_transport_retains_full_audio_mask(monkeypatch):
     assert out[0]['noise_mask'].shape==(1,1,2,292)
     assert out[0]['noise_mask'].count_nonzero()==0
     assert out[0]['noise_mask'].data_ptr()!=mask.unbind()[1].data_ptr()
+
+
+def test_source_outside_authored_scene_cannot_leak_into_native_overhang():
+    vae=AudioVAE();p=blank_project()
+    p.update(audio_generation_mode='source_locked',duration_frames=168,selection=[0,168])
+    provider=TimelineInputs(p,compile_project(p)['jobs'][0],None)
+    provider.driving_audio=stereo(504)
+    source=provider.audio_source(vae)
+    provider.locked_audio_window(source,vae,retained_frames=0,trim_frames=0,total_frames=175)
+    assert vae.inputs[-1][:,224000:].count_nonzero()==0

@@ -646,3 +646,38 @@ def test_lock_mode_storage_resume_and_switch_never_reuses_guided_chunks(runtime,
     args['driving_audio']['waveform'][...,20]=.5
     changed=nodes.H3ContinuumTimelineSampler().sample(**args)
     assert changed[3]['reused_chunks']==0
+
+
+def test_source_lock_cross_job_native_overhang_keeps_original_pcm_clock(runtime,monkeypatch):
+    from tests.test_source_audio_lock import install_native
+    install_native(monkeypatch)
+    args,_,_,_,_=runtime
+    p=args['timeline']['project']
+    p.update(audio_generation_mode='source_locked',duration_frames=2040,selection=[0,2040])
+    args['timeline']=compile_project(p)
+    original=torch.linspace(-.9,.9,20400).expand(1,2,20400).clone()
+    args['driving_audio']={'waveform':original,'sample_rate':240}
+    first=nodes.H3ContinuumTimelineSampler().sample(**args)
+    args['job_index']=1
+    second=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert second[3]['output_range'][0]==first[3]['output_range'][1]
+    a,b=second[3]['output_range']
+    torch.testing.assert_close(second[-1]['waveform'],original[...,a*10:b*10],rtol=0,atol=0)
+    audio_receipt=second[3]['model_inputs'][0]['descriptor']['presentation_contract']['timeline_studio']['audio_guide']
+    assert audio_receipt['mode']=='source_locked'
+    assert audio_receipt['requested_global_samples'][0] < a*10
+    assert 'latent_slice_ticks_40hz' not in audio_receipt
+
+
+def test_generated_soundtrack_can_decode_the_same_guided_take_without_resampling(runtime):
+    args,calls,_,_,_=runtime
+    args['driving_audio']={'waveform':torch.ones(1,2,3600),'sample_rate':240}
+    original=nodes.H3ContinuumTimelineSampler().sample(**args)
+    p=args['timeline']['project'];p['final_audio_source']='generated'
+    args['timeline']=compile_project(p)
+    generated=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert generated[3]['reused_chunks']==3
+    assert generated[3]['chunk_hashes']==original[3]['chunk_hashes']
+    assert len(calls)==3
+    for a,b in zip(original[1],generated[1]):
+        torch.testing.assert_close(a['samples'],b['samples'],rtol=0,atol=0)

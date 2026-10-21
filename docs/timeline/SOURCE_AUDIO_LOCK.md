@@ -16,6 +16,14 @@ its movie timestamps. Generated selects decoded target audio. In locked mode,
 that target is a VAE reconstruction of the source; only Original preserves the
 source PCM directly. The final audio output must still reach Video Combine.
 
+To inspect the internally generated audio of a stored guided take, keep all
+sampling inputs and **H3 audio generation → Guided audio** unchanged. Set
+**Final audio for new takes → Generated H3 audio**, retain Run Storage and
+**Regenerate From = 0 (Auto)**, and queue the same job. Verify every chunk was
+reused and the stored chunk hashes match before treating it as a same-take
+comparison. A rejected take, changed input, disabled storage, missing payload,
+or an explicit reroll can cause new sampling and invalidate that comparison.
+
 ## Target and mask contract
 
 ```mermaid
