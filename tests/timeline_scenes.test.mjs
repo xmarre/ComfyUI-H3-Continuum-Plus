@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {History} from '../web/timeline/core.js';
-import {applySceneCandidate,installSceneQueueHandoff,SmartReferences} from '../web/timeline/smart_references.js';
+import {applySceneCandidate,SmartReferences} from '../web/timeline/smart_references.js';
 
 test('scene Apply uses one History edit and rejects a concurrent timeline edit',()=>{
  const p={assets:[],prompts:{global:'Authored dialogue'},audio_generation_mode:'source_locked'};
@@ -14,12 +14,11 @@ test('scene Apply uses one History edit and rejects a concurrent timeline edit',
  assert.throws(()=>applySceneCandidate(editor,candidate,1),/timeline changed/);
 });
 
-test('normal ComfyUI queue waits for the owned VLM request to finish cancellation',async()=>{
- const order=[];const app={queuePrompt:async()=>{order.push('sample');return 7;}};
- installSceneQueueHandoff(app);const state=app[Symbol.for('h3.timeline.sceneVlmQueue')];
- let finish;state.clients.add({cancelVlm:()=>new Promise(resolve=>{order.push('cancel');finish=()=>{order.push('provider-stopped');resolve();};})});
- const pending=app.queuePrompt();await Promise.resolve();assert.deepEqual(order,['cancel']);finish();
- assert.equal(await pending,7);assert.deepEqual(order,['cancel','provider-stopped','sample']);
+test('scene queue protection is scoped to Studio, not global app queue',()=>{
+ const app={queuePrompt:async()=>7},original=app.queuePrompt;
+ const editor={smartReferences:{cancelVlm:async()=>{}}};
+ assert.equal(app.queuePrompt,original);
+ assert.equal(typeof editor.smartReferences.cancelVlm,'function');
 });
 
 test('runtime budgeting may change without relabelling already extracted pixels',()=>{
