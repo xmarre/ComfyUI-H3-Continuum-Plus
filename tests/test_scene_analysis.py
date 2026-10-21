@@ -406,4 +406,6 @@ def test_stale_source_mapping_surfaces_warning_without_shot_conditioning():
         'clip_id':'removed-source','source_in':'0','speed':'1','clip_start':0}
     compiled=compile_window(p,0,picture_offset=1)
     assert any('no longer valid' in warning for warning in compiled['warnings'])
-    assert '0-2.791666' not in compiled['prompt']
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import allocate
+    _,shots,_=allocate(p,0,168,1,[])
+    assert 's1' not in {shot['id'] for shot in shots}
