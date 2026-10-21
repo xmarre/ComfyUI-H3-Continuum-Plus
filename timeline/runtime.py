@@ -304,6 +304,15 @@ class TimelineInputs:
             audio["waveform"] = F.pad(audio["waveform"], (0, padding))
         return audio
 
+    def invocation_text(self, original, index):
+        """Use authored window text plus scene evidence in legacy nominal mode.
+
+        When no scene schedule is active the pre-existing native Fixed/List
+        prompt remains identical, preserving unrelated sampler behavior.
+        """
+        window = self.windows[index]
+        return window["prompt"] if window.get("scene_schedule") else original
+
     def invocation_plan(self, original, index):
         """Native Timeline source for a window with timed prompt regions.
 
