@@ -140,6 +140,9 @@ def validate(project):
         ):
             raise ValueError("Assets require unique registered SHA256 identifiers")
         ids.add(a["id"])
+    if "scene_plan" in p:
+        from .scene_plan import validate_plan
+        validate_plan(p["scene_plan"], ids, duration)
     slot_masks = p.get("conveyor_reference_slots", {})
     if not isinstance(slot_masks, dict) or len(slot_masks) > 65536:
         raise ValueError("Invalid chunk reference selections")
@@ -400,6 +403,10 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         if i["role"] == "image_reference" and i["asset_id"] not in seen:
             seen.add(i["asset_id"])
             images.append(i)
+    from .scene_plan import allocate
+    smart_images, smart_shots, smart_warnings = allocate(p, start, end, picture_offset, images)
+    images.extend(i for i in smart_images if i["asset_id"] not in seen)
+    inputs.extend(smart_images)
     if len(images) + picture_offset > 8:
         raise ValueError(
             f"Chunk {index + 1} exceeds H3's eight active reference images"
@@ -567,7 +574,9 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             f"{seconds_text(s['range'][0] - start)}-{seconds_text(s['range'][1] - start)}s:\n{s['text']}"
             for s in segments
         )
-    warnings = []
+    from .scene_plan import augment_prompt
+    segments, text = augment_prompt(p, smart_shots, start, end, base, segments, text, picture_by_asset)
+    warnings = list(smart_warnings)
     if p.get("video_guidance_enabled", True) is False and re.search(r"<Video\s+\d+>", text):
         warnings.append(
             "The prompt refers to <Video N>, but H3 model video conditioning is Off. "
