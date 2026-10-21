@@ -243,18 +243,19 @@ class AssetStore:
             **info,
         }
 
-    def register(self, source, name=None):
+    def register(self, source, name=None, *, cancel=check_cancel):
         """Stream a file-like source into immutable content-addressed storage."""
         h = hashlib.sha256()
         temporary = self.upload_path()
         try:
             with temporary.open("xb") as out:
                 while block := source.read(1024 * 1024):
+                    cancel()
                     h.update(block)
                     out.write(block)
                 out.flush()
                 os.fsync(out.fileno())
-            return self.adopt(temporary, h.hexdigest(), name)
+            return self.adopt(temporary, h.hexdigest(), name, cancel=cancel)
         finally:
             temporary.unlink(missing_ok=True)
 
