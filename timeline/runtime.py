@@ -308,11 +308,15 @@ class TimelineInputs:
         """Native Timeline source for a window with timed prompt regions.
 
         Each window is an outer section on its exact job-clock chunk boundary;
-        timed regions are a strict inner partition of it. The physical
+        timed regions are a strict inner partition of it. A fixed prompt with
+        Smart References visual instructions must also use this plan; otherwise
+        the native sampler would consume the unaugmented original instead.
+        The physical
         compiler then re-bases them onto each invocation's own clock, including
         native context, without importing adjacent windows.
         """
-        if not self.windows[index].get("timed_prompt"):
+        if not (self.windows[index].get("timed_prompt") or
+                self.windows[index].get("scene_schedule")):
             return original
         if self.timeline_plan is None:
             from ..v2.prompts import make_prompt_plan
