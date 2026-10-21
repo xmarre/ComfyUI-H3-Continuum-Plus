@@ -134,10 +134,12 @@ Dedicated character images and authored replacement-character text retain
 priority. This priority is expressed through the conditioning/prompt contract;
 it is not a guarantee that H3 will never copy a source actor's appearance.
 
-The visual layer uses the existing timed physical-prompt compiler. Global text,
-dialogue, speaker identifiers, authored timing and imported prompt ownership are
-preserved. A visual schedule appears once without splitting or copying authored
-dialogue into every shot interval. Per-shot user corrections take precedence over
+The visual layer uses the native physical-prompt compiler, including Fixed
+prompts that otherwise have no timed segments. The compiler routes the augmented
+shot schedule to the actual H3 invocation, rather than displaying it only in
+the logical preview. Global text, dialogue, speaker identifiers, authored timing
+and imported prompt ownership are preserved. A visual schedule appears once
+without splitting or copying authored dialogue into every shot interval. Per-shot user corrections take precedence over
 VLM descriptions.
 Automatic descriptions are off until **Use reviewed VLM descriptions in prompts**
 is enabled. Dialogue is never supplied to or rewritten by the vision model.
