@@ -55,7 +55,7 @@ It retains the following independent representations:
 | Representation | Encoding | Purpose |
 | --- | --- | --- |
 | Native decoded master | Single-frame FFV1 Matroska, native sample depth and color tags | Archival decoded samples |
-| Source-size SDR conversion | 16-bit RGB PNG, sRGB transfer/Rec.709 primaries | Display-referred comparison |
+| Source-size SDR conversion | 16-bit RGB PNG; Rec.709 transfer preserved for SDR, mapped sRGB for HDR | Display-referred comparison |
 | H3 reference | Lossless 8-bit RGB PNG, independent MP ceiling | Actual registered model input |
 | VLM evidence | Lossless 8-bit RGB PNG, independent MP ceiling | Bounded semantic interpretation |
 | Preview | Lossless 8-bit RGB PNG, capped at 1 MP | Editor inspection |
@@ -67,19 +67,20 @@ Resizing uses the selected Lanczos, bicubic or spline filter. Source dimensions
 below the ceiling remain native. Anamorphic sources use square-pixel display
 geometry for derivatives; the native master retains decoded sample geometry.
 
-H3's reference pipeline requires a 32-pixel lattice. Smart references fit that
-lattice downward before the ordinary native preparation path, avoiding its
-nearest-multiple rounding enlargement. The prepared conditioning image may
-therefore be slightly smaller than the extracted PNG. Images below the native
-32-pixel minimum are omitted from automatic conditioning. Sampler reference-size
-settings can reduce the image further. Physical manifests record actual tensor
-shape, MP, image hash and Picture ordinal.
+H3's reference pipeline requires a 32-pixel lattice. Extracted H3 images
+are floored directly to that lattice when both dimensions are at least 32 pixels,
+avoiding a second resize solely for 32-pixel alignment. The sampler can still
+downscale for its output/reference size mode. Images below the native 32-pixel
+minimum are omitted from automatic conditioning. Physical manifests record actual
+tensor shape, MP, image hash and Picture ordinal.
 
-The default CPU path explicitly converts source matrix/range/transfer, linearizes
-with zscale at a 125-nit SDR reference, converts primaries, tone-maps PQ/HLG with
-Mobius/desaturation, and encodes full-range sRGB. Reported HDR peak metadata is
-used when available; otherwise the reference records an explicit 1000-nit peak
-assumption. Missing SDR tags produce visible Rec.709/RGB assumption diagnostics.
+For ordinary Rec.709 SDR the CPU path converts matrix/range without applying
+a BT.1886-to-sRGB gamma transformation, retaining source transfer code values.
+HDR PQ/HLG is linearized by zscale at the selected 125-nit SDR reference, converted
+to Rec.709 primaries, tone-mapped with Mobius/desaturation and encoded as full-range
+sRGB. Out-of-gamut conversion is clipped, not perceptually gamut-mapped. Reported
+HDR peak metadata is used when available; otherwise a 1000-nit peak assumption
+is recorded. Missing SDR tags produce visible Rec.709/RGB assumption diagnostics.
 BT.2020 SDR, HDR10/PQ and HLG have explicit conversion paths. Static metadata
 available only on decoded frames may not be exposed by the stream probe; check
 peak assumptions on difficult material.
@@ -135,7 +136,9 @@ it is not a guarantee that H3 will never copy a source actor's appearance.
 
 The visual layer uses the existing timed physical-prompt compiler. Global text,
 dialogue, speaker identifiers, authored timing and imported prompt ownership are
-preserved. Per-shot user corrections take precedence over VLM descriptions.
+preserved. A visual schedule appears once without splitting or copying authored
+dialogue into every shot interval. Per-shot user corrections take precedence over
+VLM descriptions.
 Automatic descriptions are off until **Use reviewed VLM descriptions in prompts**
 is enabled. Dialogue is never supplied to or rewritten by the vision model.
 Raw JSON, confidence values and detector diagnostics do not enter the prompt.
@@ -177,9 +180,10 @@ cached by source/processing identity, selected images, schema, model and context
 budget. Repeated evidence reuses observations. Retry resumes from complete cached
 work; cancellation preserves both completed records and active timeline edits.
 
-The ordinary ComfyUI queue waits for this workspace's VLM cancellation to finish.
-The backend starts only while ComfyUI is idle and watches for externally queued
-work; another client's queue can race that polling boundary. Writer's existing
+Timeline Studio's actual `api.queuePrompt` submission waits for its VLM worker
+to cancel without mutating global `app.queuePrompt`. The backend starts only
+while ComfyUI is idle and watches for externally queued work; another client's
+queue can race that polling boundary. Writer's existing
 VRAM handoff still owns its local-model lifecycle. LM Studio remains externally
 managed: cancelling an API request does not unload its resident model. Manage
 that residency in LM Studio before sampling if its allocation leaves insufficient
@@ -192,7 +196,10 @@ analysis/source identity, settings, reference records and shot occurrences.
 Each occurrence stores exact source PTS/timebase, rational half-open source
 interval, integer half-open project-frame interval, clip mapping, separate scene
 and camera-setup IDs, measured event provenance, selected reference IDs, VLM
-observations and user corrections. It does not confuse source time with logical
+observations and user corrections. Reanalysis preserves other source scenes and
+unselected intervals; a manual split carries a durable interval override marker.
+Observations are kept per model, and user-edited descriptions retain editing
+provenance. It does not confuse source time with logical
 chunk time or native latent time. The runtime manifest explicitly records that
 shot timing is not structurally enforced. Apply rejects a newer editor revision;
 analysis workers only publish immutable media/analysis candidates, never the
@@ -213,7 +220,11 @@ one-hour PTS origins, resume/cache behavior, flash/motion/fade checks, PQ/HLG
 10-bit codec conversion, no-upscale MP/lattice behavior, physical image transport,
 identity budgeting, aliases, prompt/hash invariants, user correction persistence,
 production HTTP/Chromium editing and packaged Windows execution. These establish
-software contracts, not representative-frame quality on real films. Outstanding
-acceptance includes real therapy/source footage, difficult dissolves/occlusions,
+software contracts, not representative-frame quality on real films. Measurement
+databases and extracted-reference caches do not yet have automatic disk pruning.
+Each independently analysed selection range may create another SQLite cache,
+so full-film storage use is not bounded by the reference-image budget alone.
+Two-hour 1080p/4K CPU throughput and disk-use measurements remain unqualified.
+Outstanding acceptance includes real therapy/source footage, difficult dissolves/occlusions,
 matched MPC HDR/Dolby Vision captures, live LM Studio semantics, trained-H3 cut
 fidelity, accelerator combinations and end-to-end GPU performance.
