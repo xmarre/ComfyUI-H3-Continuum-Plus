@@ -231,7 +231,7 @@ def register_routes():
     async def preview_scenes(request):
         from .scene_analysis import SceneAnalysis
         data = await request.json()
-        candidate = await asyncio.to_thread(SceneAnalysis(project_store()).preview, data["project"], request.match_info["token"])
+        candidate = await asyncio.to_thread(SceneAnalysis(project_store()).preview, data["project"], request.match_info["token"], data.get("model_id"))
         return web.json_response({"project": candidate, "analysis": SceneAnalysis(project_store()).result(request.match_info["token"])})
 
     @endpoint("post", "/scenes/{token}/evidence")
