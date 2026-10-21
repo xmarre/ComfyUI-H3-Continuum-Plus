@@ -452,7 +452,7 @@ def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
     from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
     from ComfyUI_H3_Continuum_Join.v2.prompts import make_prompt_plan
     from ComfyUI_H3_Continuum_Join.v2.physical_prompts import (
-        compile_physical_prompt, make_physical_sample_descriptor,
+        make_physical_sample_descriptor,
     )
     from ComfyUI_H3_Continuum_Join.v2.physical_runtime import compile_invocation_prompt
 
@@ -482,7 +482,14 @@ def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
         initial_state_origin='previous_chunk', include_first=False,
         include_last=False, presentation_contract={},
     )
-    emitted = compile_physical_prompt(physical, descriptor).text
+    # Use the actual runtime logical scope; bare compile_physical_prompt
+    # would correctly include earlier authored Timeline sections in context.
+    compiled = compile_invocation_prompt(
+        physical, descriptor, legacy_text=provider.invocation_text(authored, 1),
+        candidate=True,
+    )
+    emitted = compiled.text
+    assert any(d.get('code') == 'H3C-PT240' for d in compiled.diagnostics)
     assert emitted.count('Shot plan:') == 1
     assert '1.416667-4.208333s:' in emitted  # 34/24 -> (34+67)/24
     assert '4.208333-7.791667s:' in emitted  # (34+67)/24 -> (34+153)/24
@@ -501,4 +508,7 @@ def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
     assert nominal.count(authored) == 1
 
     # The compiler is also used by the next-chunk conditioning lookahead.
-    assert compile_physical_prompt(provider.invocation_plan(native, 1), descriptor).text == emitted
+    assert compile_invocation_prompt(
+        provider.invocation_plan(native, 1), descriptor,
+        legacy_text=provider.invocation_text(authored, 1), candidate=True,
+    ).text == emitted

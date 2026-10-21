@@ -1035,6 +1035,7 @@ def compile_physical_prompt(
 
     segments = _join_segments(segments)
     preamble = str(source.get("preamble", "")).strip()
+    explicit_aliases = _explicit_subject_aliases(preamble)
     scene_schedule = _render_physical_scene_schedule(source, descriptor)
     if scene_schedule:
         preamble = f"{preamble}\n\n{scene_schedule}" if preamble else scene_schedule
@@ -1045,7 +1046,6 @@ def compile_physical_prompt(
             "context_frames": descriptor.context_frames,
             "logical_indices": list(descriptor.logical_indices),
         })
-    explicit_aliases = _explicit_subject_aliases(preamble)
     canonicalized_mentions = 0
     if explicit_aliases:
         for segment in segments:
