@@ -137,7 +137,10 @@ it is not a guarantee that H3 will never copy a source actor's appearance.
 The visual layer uses the native physical-prompt compiler, including Fixed
 prompts that otherwise have no timed segments. The compiler routes the augmented
 shot schedule to the actual H3 invocation, rather than displaying it only in
-the logical preview. Global text, dialogue, speaker identifiers, authored timing
+the logical preview. When the experimental physical compiler is disabled,
+the legacy nominal conditioner also receives the augmented scene text (including
+for next-chunk lookahead), while scene-free windows retain their original prompt.
+Global text, dialogue, speaker identifiers, authored timing
 and imported prompt ownership are preserved. A visual schedule appears once
 without splitting or copying authored dialogue into every shot interval. Per-shot user corrections take precedence over
 VLM descriptions.
