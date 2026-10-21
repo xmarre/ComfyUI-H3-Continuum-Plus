@@ -3,7 +3,6 @@
 import { clone } from "./core.js";
 import { referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v27";
 const BASE="/h3_continuum/timeline";
-const QUEUE=Symbol.for("h3.timeline.sceneVlmQueue");
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag);
   for(const [key,value] of Object.entries(attrs)) {
@@ -20,16 +19,7 @@ async function json(api,path,body,method=body===undefined?"GET":"POST") {
   if(!r.ok)throw Error(typeof data.error==="string"?data.error:data.error?.message||"Scene analysis request failed ("+r.status+")");
   return data;
 }
-export function installSceneQueueHandoff(app) {
-  if(!app?.queuePrompt || app[QUEUE])return;
-  const state={clients:new Set(),original:app.queuePrompt};app[QUEUE]=state;
-  app.queuePrompt=async function(...args) {
-    // Wait for the provider worker to finish cancellation before handing the
-    // graph to ComfyUI. This does not pretend to unload LM Studio's model.
-    await Promise.all([...state.clients].map(client=>client.cancelVlm()));
-    return state.original.apply(this,args);
-  };
-}
+
 export function applySceneCandidate(editor,candidate,version) {
   if(editor.closed||editor.editVersion!==version)
     throw Error("The timeline changed during analysis. Preview again before applying the shot plan.");
@@ -68,7 +58,7 @@ export class SmartReferences {
         button("Undo applied plan",()=>this.guard(()=>{if(this.appliedVersion!==editor.editVersion)throw Error("Only the most recently applied shot-plan edit can be undone here. Use Timeline Undo for later edits.");editor.undo();this.appliedVersion=null;this.version=editor.editVersion;this.candidate=clone(editor.p);this.renderShots();})),
         button("Revert pending edits",()=>{this.candidate=clone(editor.p);this.renderShots();})));
     document.body.append(this.root);this.root.showModal();this.renderControls();this.renderShots();
-    installSceneQueueHandoff(editor.app);editor.app?.[QUEUE]?.clients.add(this);
+    editor.smartReferences=this;
     this.guard(()=>this.loadModels());
   }
   async guard(fn){try{return await fn();}catch(error){this.status.textContent=error.message;}}
@@ -127,18 +117,18 @@ export class SmartReferences {
     // A new preview intentionally rebases onto the latest project, then holds
     // that exact revision until Apply. No old snapshot replaces unrelated edits.
     const version=this.editor.editVersion;
-    const result=await json(this.api,BASE+"/scenes/"+this.job+"/preview",{project:this.pendingInterpretation?this.candidate:this.editor.p});
+    const result=await json(this.api,BASE+"/scenes/"+this.job+"/preview",{project:this.pendingInterpretation?this.candidate:this.editor.p,model_id:this.modelChoices?.find(m=>m.id===this.models.value)?.id||null});
     if(this.editor.editVersion!==version)throw Error("Timeline changed during preview. Preview again.");
     if(this.closed)return;
     this.version=version;this.candidate=result.project;this.analysis=result.analysis;
-    this.renderShots();this.status.textContent=this.candidate.scene_plan.shots.length+" mapped shots · review before Apply";
+    this.renderShots();this.status.textContent=this.candidate.scene_plan.shots.length+" mapped shots · review before Apply"+(this.analysis.warnings?.length?" · "+this.analysis.warnings.join(" · "):"");
   }
   async loadModels(){
     try{
       const result=await json(this.api,"/h3studio/scene-analysis/capabilities");
       if(result.version!==1||result.schema!=="visual_observations_v1")throw Error("Prompt Writer scene API version is incompatible");
       this.modelChoices=result.models||[];
-      this.models.replaceChildren(...this.modelChoices.map(m=>el("option",{value:m.id,text:m.name+" · "+m.api_preset})));
+      this.models.replaceChildren(...this.modelChoices.map(m=>el("option",{value:m.id,text:m.name+" · "+m.api_preset+(m.remote?" · remote API":" · local")})));
       this.provider.textContent=this.modelChoices.length?"Prompt Writer connected vision models":"Connect a vision model in Prompt Writer → Settings → API providers";
     }catch(error){this.provider.textContent="VLM unavailable · "+error.message+". Deterministic analysis remains available.";}
   }
@@ -147,6 +137,7 @@ export class SmartReferences {
     if(!this.analysis)throw Error("Analyze footage before VLM interpretation");
     const model=this.modelChoices?.find(m=>m.id===this.models.value);
     if(!model)throw Error("Connect and select a vision model in Prompt Writer");
+    if(model.remote && !window.confirm("This sends extracted frames from the selected scene to the external "+model.api_preset+" provider. Continue?"))return;
     this.vlmStop=false;
     const work=async()=>{
       const unique=new Map();
@@ -195,7 +186,7 @@ export class SmartReferences {
       enabled.onchange=()=>{shot.user||={};shot.user.enabled=enabled.checked;};
       const area=el("textarea",{"aria-label":"Shot description "+shot.id,rows:3});
       area.value=shot.user?.description??shot.vlm?.description??"";
-      area.oninput=()=>{shot.user||={};shot.user.description=area.value;};
+      area.oninput=()=>{shot.user||={};shot.user.description=area.value;shot.user.description_provenance="edited model observation";};
       const location=el("input",{"aria-label":"Physical scene identity "+shot.id,placeholder:"Unverified location"});
       location.value=shot.scene_id||"";
       location.onchange=()=>{shot.scene_id=location.value||null;shot.user||={};shot.user.scene_id=shot.scene_id;};
@@ -265,6 +256,6 @@ export class SmartReferences {
     this.guard(()=>this.cancelAnalysis());this.guard(()=>this.cancelVlm());
     // Keep a live client registered until cancellation really finishes so a
     // simultaneous queue cannot bypass the handoff by closing this window.
-    Promise.resolve(this.cancelVlm()).finally(()=>this.editor.app?.[QUEUE]?.clients.delete(this));
+    Promise.resolve(this.cancelVlm()).finally(()=>{if(this.editor.smartReferences===this)this.editor.smartReferences=null;});
   }
 }
