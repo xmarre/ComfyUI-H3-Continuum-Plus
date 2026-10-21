@@ -213,8 +213,15 @@ def allocate(project, start, end, persistent_count, manual_images):
     if not plan:
         return [], [], []
     cfg = settings(plan["settings"])
-    shots = [s for s in plan["shots"] if s["range"][0] < end and start < s["range"][1]
-             and s.get("user", {}).get("enabled", True) and mapping_valid(project, s)]
+    candidates = [s for s in plan["shots"] if s["range"][0] < end and start < s["range"][1]
+                  and s.get("user", {}).get("enabled", True)]
+    shots = []
+    invalid = 0
+    for shot in candidates:
+        if mapping_valid(project, shot):
+            shots.append(shot)
+        else:
+            invalid += 1
     existing = {i["asset_id"] for i in manual_images}
     capacity = max(0, min(cfg["scene_budget"], 8-max(persistent_count, cfg["reserved_identity_slots"])-len(existing)))
     ranked = {}
@@ -241,6 +248,8 @@ def allocate(project, start, end, persistent_count, manual_images):
                        "range": [start, end], "scene_reference_id": rid, "audio_role": "neither"})
     omitted = sorted(set(ranked)-set(chosen))
     warnings = [f"Scene-reference budget omitted {len(omitted)} candidate(s); existing identity/manual references retain their slots."] if omitted else []
+    if invalid:
+        warnings.append(f"Skipped {invalid} scene shot(s) because their source clip mapping is no longer valid.")
     return images, shots, warnings
 
 
