@@ -575,7 +575,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             for s in segments
         )
     from .scene_plan import augment_prompt
-    segments, text = augment_prompt(p, smart_shots, start, end, base, segments, text, picture_by_asset)
+    segments, text, scene_schedule = augment_prompt(p, smart_shots, start, end, base, segments, text, picture_by_asset)
     warnings = list(smart_warnings)
     if p.get("video_guidance_enabled", True) is False and re.search(r"<Video\s+\d+>", text):
         warnings.append(
@@ -677,6 +677,7 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         "index": index,
         "range": [start, end],
         "timed_prompt": segments is not None,
+        "scene_schedule": scene_schedule,
         "warnings": warnings,
         **semantic,
         "aliases": aliases,
