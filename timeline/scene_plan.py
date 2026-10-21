@@ -85,12 +85,44 @@ def mapped_plan(project, analysis):
     This is a detached candidate. The browser applies it under its edit-version
     lease as one History transaction; no job writes an active project.
     """
+    old = project.get("scene_plan") or {}
+    prior = old if old.get("schema") == SCHEMA else {}
     plan = {"schema": SCHEMA, "analysis_id": analysis["id"], "source_asset_id": analysis["source_asset_id"],
-            "settings": analysis["settings"], "references": copy.deepcopy(analysis["references"]),
+            "settings": analysis["settings"],
+            "references": {**copy.deepcopy(prior.get("references", {})), **copy.deepcopy(analysis["references"])},
             "shots": [], "timing": {"detected": "source PTS", "requested": "project frame intervals",
                                      "enforced": False, "generated_measurements": None}}
-    old = project.get("scene_plan", {})
-    corrections = {(s["source_asset_id"], s["source_start"], s["source_end"], tuple(s["range"])): s for s in old.get("shots", [])}
+    corrections = {(s["source_asset_id"], s["source_start"], s["source_end"], tuple(s["range"])): s
+                   for s in prior.get("shots", [])}
+    target = analysis["source_asset_id"]
+    selection = analysis.get("project_range", project["selection"])
+
+    def trim(shot, a, b):
+        part = copy.deepcopy(shot)
+        part["range"] = [a, b]
+        if [a, b] != shot["range"]:
+            part["id"] = digest([shot["id"], a, b, "preserved"])
+            mapping = part.get("mapping")
+            if mapping:
+                x, y = (rational(mapping["source_in"]) +
+                        Fraction(v-mapping["clip_start"], 24)*rational(mapping["speed"])
+                        for v in (a, b))
+                part["source_start"], part["source_end"] = str(min(x, y)), str(max(x, y))
+        return part
+
+    for shot in prior.get("shots", []):
+        if shot["source_asset_id"] != target:
+            plan["shots"].append(copy.deepcopy(shot))
+        elif analysis["scope"] == "selection":
+            a, b = shot["range"]
+            left, right = selection
+            if b <= left or a >= right:
+                plan["shots"].append(copy.deepcopy(shot))
+            else:
+                if a < left:
+                    plan["shots"].append(trim(shot, a, left))
+                if right < b:
+                    plan["shots"].append(trim(shot, right, b))
     for track in project["tracks"]:
         if track["role"] != "retained" or track.get("muted"):
             continue
@@ -105,7 +137,7 @@ def mapped_plan(project, analysis):
                 if low >= high:
                     continue
                 endpoints = [Fraction(clip["start"]) + (v-source_a)*24/speed for v in (low, high)]
-                a, b = max(clip["start"], round(min(endpoints))), min(clip["end"], round(max(endpoints)))
+                a, b = max(clip["start"], math.ceil(min(endpoints)-Fraction(1, 2))), min(clip["end"], math.ceil(max(endpoints)-Fraction(1, 2)))
                 if analysis["scope"] == "selection":
                     a, b = max(a, analysis["project_range"][0]), min(b, analysis["project_range"][1])
                 if a >= b:
@@ -130,12 +162,17 @@ def mapped_plan(project, analysis):
                 or not mapping_valid(project, corrected)):
             continue
         a, b = corrected["range"]
+        if analysis["scope"] == "selection":
+            a, b = max(a, selection[0]), min(b, selection[1])
+            if a >= b:
+                continue
+            corrected = trim(corrected, a, b)
         if not any(s["range"][0] < b and a < s["range"][1] for s in plan["shots"]):
             continue
         remaining = []
         for new in plan["shots"]:
             x, y = new["range"]
-            if y <= a or x >= b:
+            if new["source_asset_id"] != target or y <= a or x >= b:
                 remaining.append(new)
                 continue
             for left, right in [(x, min(y, a)), (max(x, b), y)]:
@@ -227,25 +264,27 @@ def shot_instructions(shot, plan, picture_by_asset):
 
 
 def augment_prompt(project, shots, start, end, base, segments, text, picture_by_asset):
-    """Add a lower-priority visual layer without parsing/rephrasing dialogue."""
-    if not shots or not any(shot_instructions(s, project["scene_plan"], picture_by_asset) for s in shots):
+    """Preserve authored partitions and dialogue; add a shared visual shot schedule."""
+    plan = project.get("scene_plan")
+    if not plan:
         return segments, text
-    plan = project["scene_plan"]
-    intervals = segments or [{"range": [start, end], "text": text}]
-    cuts = sorted({start, end, *(max(start, s["range"][0]) for s in shots),
-                   *(min(end, s["range"][1]) for s in shots), *(v for s in intervals for v in s["range"])})
-    result = []
-    for a, b in zip(cuts, cuts[1:]):
-        authored = next((s["text"] for s in intervals if s["range"][0] <= a < s["range"][1]), base)
-        visual = [shot_instructions(s, plan, picture_by_asset) for s in shots if s["range"][0] < b and a < s["range"][1]]
-        extra = "\n".join(dict.fromkeys(x for x in visual if x))
-        body = ("Visual shot request (timing advisory; authored instructions take precedence):\n"+extra+"\n\n" if extra else "")+authored
-        if result and result[-1]["text"] == body:
-            result[-1]["range"][1] = b
-        else:
-            result.append({"range": [a, b], "text": body})
     from .model import seconds_text
-    return result, "\n".join(f"{seconds_text(s['range'][0]-start)}-{seconds_text(s['range'][1]-start)}s:\n{s['text']}" for s in result)
+    schedule = []
+    for shot in sorted(shots, key=lambda s: (s["range"], s["id"])):
+        detail = shot_instructions(shot, plan, picture_by_asset)
+        a, b = max(start, shot["range"][0]), min(end, shot["range"][1])
+        if detail and a < b:
+            schedule.append(f"{seconds_text(a-start)}-{seconds_text(b-start)}s: {detail}")
+    if not schedule:
+        return segments, text
+    advisory = "Shot plan (visual composition; timing is approximate):\n" + "\n".join(schedule)
+    if segments is None:
+        return None, advisory + "\n\n" + text
+    result = copy.deepcopy(segments)
+    result[0]["text"] = advisory + "\n\n" + result[0]["text"]
+    return result, "\n".join(
+        f"{seconds_text(s['range'][0]-start)}-{seconds_text(s['range'][1]-start)}s:\n{s['text']}"
+        for s in result)
 
 
 def edit_plan(project, operation, shot_id, *, frame=None, other_id=None, reference_ids=None, setup_id=None):
@@ -277,6 +316,8 @@ def edit_plan(project, operation, shot_id, *, frame=None, other_id=None, referen
             part["events"] = [e for e in shot.get("events", [])
                               if low <= Fraction(e["pts"])*rational(e["time_base"]) < high]
         left["provenance"] = right["provenance"] = "user-split"
+        for part in (left, right):
+            part.setdefault("user", {})["interval_overridden"] = True
         plan["shots"] = [s for s in plan["shots"] if s["id"] != shot_id]+[left, right]
     elif operation == "merge":
         other = next((s for s in plan["shots"] if s["id"] == other_id), None)
@@ -294,7 +335,7 @@ def edit_plan(project, operation, shot_id, *, frame=None, other_id=None, referen
         merged["reference_ids"] = list(dict.fromkeys(left["reference_ids"]+right["reference_ids"]))
         # Never silently discard either user correction.
         merged["user"] = {**left.get("user", {}), "description": "\n".join(dict.fromkeys(
-            s.get("user", {}).get("description", "") for s in [left, right])).strip(), "references_overridden": True}
+            s.get("user", {}).get("description", "") for s in [left, right])).strip(), "references_overridden": True, "interval_overridden": True}
         plan["shots"] = [s for s in plan["shots"] if s["id"] not in {left["id"], right["id"]}]+[merged]
     elif operation == "references":
         if not isinstance(reference_ids, list) or len(reference_ids) > 8 or any(r not in plan["references"] for r in reference_ids):
