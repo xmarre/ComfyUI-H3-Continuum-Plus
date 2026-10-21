@@ -52,6 +52,7 @@ class TimelineInputs:
         self.store = store
         self.windows = self.job["windows"]
         self.manifests = []
+        self.scene_materialized = {}
         self.conditioning_cache = {}
         self.timeline_plan = None
         self.reference_cache = OrderedDict()
@@ -361,13 +362,18 @@ class TimelineInputs:
 
         prepared = []
         for item in w["images"]:
-            key = (item["asset_id"], width, height, self.reference_size)
+            key = (item["asset_id"], width, height, self.reference_size, item.get("scene_native", False))
             cached = self.reference_cache.pop(key, None)
             if cached is None:
                 from PIL import Image
                 import numpy as np
 
                 with Image.open(self.store.assets.verify(item["asset_id"])) as im:
+                    if item.get("scene_native"):
+                        from .scene_color import native_reference_dimensions
+                        size = native_reference_dimensions(im.width, im.height, width, height, self.reference_size)
+                        if size != im.size:
+                            im = im.resize(size, Image.Resampling.LANCZOS)
                     image = (
                         torch.from_numpy(np.asarray(im.convert("RGB")).copy()).float()[
                             None
@@ -417,6 +423,16 @@ class TimelineInputs:
                 ),
                 self.reference_size,
             )
+        if any(item.get("scene_native") for item in w["images"]):
+            offset = self.picture_offset_for(w["index"])
+            self.scene_materialized[index] = [
+                {"asset_id": item["asset_id"], "picture": f"<Picture {offset+n+1}>",
+                 "shape": list(prepared[n][0].images[0].shape),
+                 "image_sha256": prepared[n][0].image_hashes[0],
+                 "megapixels": prepared[n][0].images[0].shape[1]*prepared[n][0].images[0].shape[2]/1e6,
+                 "scene_native": bool(item.get("scene_native"))}
+                for n, item in enumerate(w["images"])
+            ]
         video_source = video_assets = None
         if w["video"]:
             # Timeline video lanes compose by explicit top-track precedence.
@@ -505,6 +521,9 @@ class TimelineInputs:
                 + self.offset,
             ],
         }
+        if index in self.scene_materialized:
+            presentation["timeline_studio"]["reference_inputs"] = self.scene_materialized[index]
+            presentation["timeline_studio"]["shot_timing_enforced"] = False
         if hasattr(self, "guide_rate"):
             from .model import sample_boundary, active_clips, clip_input
 

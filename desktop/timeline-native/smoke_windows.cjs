@@ -1,116 +1,53 @@
 "use strict";
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const http = require("node:http");
-const os = require("node:os");
-const path = require("node:path");
-const { spawn } = require("node:child_process");
-const { toWSLPath } = require("./native_link.cjs");
-const { NATIVE_PATH_CONTRACT } = require("./connection.cjs");
-
-// This is a Windows-only CI runner smoke: actually execute the packaged
-// Electron app, render a mock ComfyUI page, supply a real disk-backed File
-// through Chromium's DOM file-input protocol, and verify native path IPC.
-async function main() {
-  if (process.platform !== "win32") {
-    throw new Error("The packaged native desktop smoke requires Windows");
-  }
-  const dist = path.join(__dirname, "dist");
-  const filename = fs.readdirSync(dist).find(name =>
-    /^Continuum-Timeline-Desktop-.*\.exe$/i.test(name));
-  if (!filename) throw new Error("Windows portable executable not found");
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "h3-native-desktop-"));
-  const file = path.join(temp, "small-smoke.mkv");
-  fs.writeFileSync(file, "H3_TEST_ONLY; not real media");
-  const expectedPath = toWSLPath(file);
-  let linked = 0;
-  const server = http.createServer((req,res) => {
-    if (req.url === "/system_stats") {
-      res.writeHead(200, {"content-type":"application/json"});
-      res.end(JSON.stringify({system:{os:"windows-stub"},devices:[]}));
-    } else if (req.url === "/h3_continuum/timeline/runtime") {
-      res.writeHead(200, {"content-type":"application/json","cache-control":"no-store"});
-      res.end(JSON.stringify({
-        contract:NATIVE_PATH_CONTRACT,
-        transport:"native-selected-path",
-        drive_scan:false,browser_movie_upload:false,
-        editor_url:"/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js",
-        entry_url:"/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js",
-      }));
-    } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline/editor.js") {
-      res.writeHead(200, {"content-type":"text/javascript"});
-      res.end(fs.readFileSync(path.resolve(__dirname, "../../web/timeline/editor.js"), "utf8"));
-    } else if (req.url === "/extensions/ComfyUI-H3-Continuum-Plus/timeline_studio.js") {
-      res.writeHead(200, {"content-type":"text/javascript"});
-      res.end(fs.readFileSync(path.resolve(__dirname, "../../web/timeline_studio.js"), "utf8"));
-    } else if (req.url === "/") {
-      res.writeHead(200, {"content-type":"text/html; charset=utf-8"});
-      res.end("<!doctype html><title>ComfyUI smoke</title><body>" +
-        "H3_SMOKE_READY<input id='h3-smoke-file' type='file'></body>");
-    } else if (req.url === "/h3_continuum/timeline/link") {
-      assert.equal(req.method, "POST");
-      const parts = [];
-      let bytes = 0;
-      req.on("data", data => {
-        bytes += data.length;
-        if (bytes > 4096) req.destroy();
-        else parts.push(data);
-      });
-      req.on("end", () => {
-        const body = JSON.parse(Buffer.concat(parts).toString("utf8"));
-        assert.deepEqual(body, {path:expectedPath});
-        linked++;
-        res.writeHead(200, {"content-type":"application/json"});
-        res.end(JSON.stringify({id:"h3-smoke-asset",storage:"linked"}));
-      });
-    } else {
-      res.writeHead(404);
-      res.end("Unknown endpoint");
-    }
-  });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  let child;
-  let timer;
-  try {
-    const port = server.address().port;
-    const exe = path.join(dist, filename);
-    const output = [];
-    child = spawn(exe, [
-      "--comfy-url=http://127.0.0.1:" + port + "/",
-      "--h3-smoke-file=" + file,
-    ], {
-      cwd: __dirname,
-      windowsHide: true,
-      env: {...process.env, H3_TIMELINE_DESKTOP_SMOKE:"1"},
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stdout.on("data", data => output.push(String(data)));
-    child.stderr.on("data", data => output.push(String(data)));
-    const exit = new Promise((resolve,reject) => {
-      child.on("error",reject);
-      child.on("exit", (code,signal) => resolve({code,signal}));
-    });
-    const timeout = new Promise((_resolve,reject) => {
-      timer = setTimeout(() => {
-        child.kill();
-        reject(new Error("Packaged Electron startup did not complete in 120 seconds"));
-      }, 120000);
-    });
-    const result = await Promise.race([exit,timeout]);
-    if (result.code !== 0 || linked !== 1) {
-      throw new Error("Packaged desktop startup/native File IPC failed: " +
-        JSON.stringify({exit:result,linked,output:output.join("").slice(-8000)}));
-    }
-    console.log("Packaged Electron displayed the UI, resolved a genuine OS-backed " +
-      "File through its preload, and linked only the original path over IPC.");
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (child && child.exitCode === null) child.kill();
-    await new Promise(resolve => server.close(resolve));
-    fs.rmSync(temp, {recursive:true,force:true});
-  }
+// Execute the packaged app against production Python routes and the actual
+// served frontend. Only ComfyUI's graph and the native path-link reply are
+// stand-ins; shot analysis/extraction/compiler/History use production code.
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const http=require('node:http');
+const os=require('node:os');
+const path=require('node:path');
+const {spawn}=require('node:child_process');
+const {toWSLPath}=require('./native_link.cjs');
+async function main(){
+ if(process.platform!=='win32')throw Error('Packaged desktop smoke requires Windows');
+ const dist=path.join(__dirname,'dist');
+ const filename=fs.readdirSync(dist).find(name=>/^Continuum-Timeline-Desktop-.*\.exe$/i.test(name));
+ if(!filename)throw Error('Windows portable executable not found');
+ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'h3-native-scene-'));
+ const file=path.join(temp,'native-path-smoke.mkv');fs.writeFileSync(file,'Native file bridge identity fixture');
+ const expectedPath=toWSLPath(file);let linked=0;let timer;let appChild;let proxy;
+ const mediaHost=spawn(process.env.PYTHON||'python',[path.resolve(__dirname,'../../tests/scene_test_server.py')],{stdio:['ignore','pipe','pipe'],windowsHide:true});
+ const output=[];mediaHost.stderr.on('data',x=>output.push(String(x)));
+ try{
+  const host=await new Promise((resolve,reject)=>{
+   let data='';mediaHost.stdout.on('data',x=>{data+=x;if(data.includes('\n'))try{resolve(JSON.parse(data.split('\n')[0]).url);}catch(error){reject(error);}});
+   mediaHost.on('error',reject);mediaHost.on('exit',code=>reject(Error('Production media host exited '+code+' '+output.join(''))));
+   timer=setTimeout(()=>reject(Error('Production media host timed out '+output.join(''))),30000);
+  });clearTimeout(timer);
+  proxy=http.createServer((req,res)=>{
+   if(req.url==='/h3_continuum/timeline/link'){
+    const chunks=[];req.on('data',data=>chunks.push(data));req.on('end',()=>{
+     assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()),{path:expectedPath});linked++;
+     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:'h3-smoke-asset',storage:'linked'}));
+    });return;
+   }
+   const forward=http.request(new URL(req.url,host),{method:req.method,headers:req.headers},upstream=>{
+    res.writeHead(upstream.statusCode,upstream.headers);upstream.pipe(res);
+   });forward.on('error',error=>{res.writeHead(502);res.end(error.message);});req.pipe(forward);
+  });await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+  appChild=spawn(path.join(dist,filename),['--comfy-url=http://127.0.0.1:'+proxy.address().port+'/', '--h3-smoke-file='+file],
+   {cwd:__dirname,windowsHide:true,env:{...process.env,H3_TIMELINE_DESKTOP_SMOKE:'1'},stdio:['ignore','pipe','pipe']});
+  appChild.stdout.on('data',x=>output.push(String(x)));appChild.stderr.on('data',x=>output.push(String(x)));
+  const exit=new Promise((resolve,reject)=>{appChild.on('error',reject);appChild.on('exit',(code,signal)=>resolve({code,signal}));});
+  const timeout=new Promise((_resolve,reject)=>{timer=setTimeout(()=>{appChild.kill();reject(Error('Packaged production-scene smoke timed out '+output.join('').slice(-8000)));},120000);});
+  const result=await Promise.race([exit,timeout]);
+  if(result.code!==0||linked!==1||!output.join('').includes('H3_SCENE_WORKSPACE_SMOKE_PASSED'))
+   throw Error('Packaged production-scene/native-file smoke failed '+JSON.stringify({result,linked,output:output.join('').slice(-8000)}));
+  console.log('Packaged Windows app: real backend/frontend contract, scene detection/extraction, reference aliases, Apply/Undo/Redo, stale-edit rejection and native File IPC passed.');
+ }finally{
+  clearTimeout(timer);if(appChild&&appChild.exitCode===null)appChild.kill();mediaHost.kill();
+  if(proxy)await new Promise(resolve=>proxy.close(resolve));fs.rmSync(temp,{recursive:true,force:true});
+ }
 }
-main().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
-});
+main().catch(error=>{console.error(error);process.exitCode=1;});

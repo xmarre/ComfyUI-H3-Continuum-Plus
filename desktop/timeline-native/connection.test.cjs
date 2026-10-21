@@ -172,7 +172,7 @@ test("desktop contract matches checked-in Python backend and real frontend modul
 test("old ComfyUI Patcher overlay is explicitly rejected before editor load", async () => {
   await assert.rejects(verifyTimelineRuntime("http://127.0.0.1:8188/",
     {fetchImpl:runtimeFetch({backend:false}).fetchImpl}),
-    /Apply the current PR #51.*restart the ComfyUI Python process/);
+    /Timeline Studio through ComfyUI Patcher.*restart the ComfyUI Python process/);
 });
 
 test("stale browser editor or entry modules fail closed without scanning", async () => {
