@@ -276,7 +276,7 @@ def augment_prompt(project, shots, start, end, base, segments, text, picture_by_
     """Preserve authored partitions and dialogue; add a shared visual shot schedule."""
     plan = project.get("scene_plan")
     if not plan:
-        return segments, text
+        return segments, text, False
     from .model import seconds_text
     schedule = []
     for shot in sorted(shots, key=lambda s: (s["range"], s["id"])):
@@ -285,15 +285,15 @@ def augment_prompt(project, shots, start, end, base, segments, text, picture_by_
         if detail and a < b:
             schedule.append(f"{seconds_text(a-start)}-{seconds_text(b-start)}s: {detail}")
     if not schedule:
-        return segments, text
+        return segments, text, False
     advisory = "Shot plan:\n" + "\n".join(schedule)
     if segments is None:
-        return None, advisory + "\n\n" + text
+        return None, advisory + "\n\n" + text, True
     result = copy.deepcopy(segments)
     result[0]["text"] = advisory + "\n\n" + result[0]["text"]
     return result, "\n".join(
         f"{seconds_text(s['range'][0]-start)}-{seconds_text(s['range'][1]-start)}s:\n{s['text']}"
-        for s in result)
+        for s in result), True
 
 
 def edit_plan(project, operation, shot_id, *, frame=None, other_id=None, reference_ids=None, setup_id=None):
