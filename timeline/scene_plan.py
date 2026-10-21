@@ -286,7 +286,7 @@ def augment_prompt(project, shots, start, end, base, segments, text, picture_by_
             schedule.append(f"{seconds_text(a-start)}-{seconds_text(b-start)}s: {detail}")
     if not schedule:
         return segments, text
-    advisory = "Shot plan (visual composition; timing is approximate):\n" + "\n".join(schedule)
+    advisory = "Shot plan:\n" + "\n".join(schedule)
     if segments is None:
         return None, advisory + "\n\n" + text
     result = copy.deepcopy(segments)
