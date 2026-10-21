@@ -1,7 +1,7 @@
 import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-audio-lock-v24";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-workspace-v25";
 import {
   History,
   clone,
@@ -27,8 +27,9 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js?v=h3-timeline-explicit-video-v22";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-audio-lock-v24";
-import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls } from "./chunk_ui.js?v=h3-timeline-workspace-v25";
+import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-workspace-v25";
+import { captureWorkspace, saveViewerFrame } from "./capture.js?v=h3-timeline-workspace-v25";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-explicit-video-v22";
 import { selectedChunkPage } from "./chunk_workspace.js?v=h3-timeline-explicit-video-v22";
 import { ImportDialog } from "./import_dialog.js?v=h3-timeline-explicit-video-v22";
@@ -104,7 +105,12 @@ export class TimelineEditor {
 
     this.previewMode = view.previewMode || "composed";
     this.chunkPage = view.chunkPage || 0;
-    this.layout = layoutView(view.layout);
+    this.layout = view.layout?.version===2 ? layoutView(view.layout) :
+      layoutView({thumb:view.layout?.thumb,track:view.layout?.track});
+    this.sidebarTab = ["scene","prompts","media","inspector"].includes(view.sidebarTab) ? view.sidebarTab : "scene";
+    this.timelineOpen = view.timelineOpen ?? true;
+    this.sidebarOpen = view.sidebarOpen ?? innerWidth >= 1400;
+    this.workspaceFocus = ["chunks","viewer"].includes(view.workspaceFocus) ? view.workspaceFocus : "both";
     this.layoutDrag = null;
     this.chunkInspectionEpoch = 0;
     this.chunkCompileTimer = null;
@@ -231,37 +237,45 @@ export class TimelineEditor {
   // Resizers operate only on DOM view geometry. They never edit the H3
   // project or trigger model input compilation.
   layoutAvailableHeight() {
-    const sized=new Set([this.main,this.chunkBoard,this.scroller,
-      this.previewDivider,this.chunkDivider]);
-    const fixed=[...this.root.children].filter(el=>!sized.has(el))
-      .reduce((sum,el)=>sum+el.getBoundingClientRect().height,0);
-    const grips=(this.previewDivider?.offsetHeight||8)+
-      (this.chunkDivider?.offsetHeight||8);
-    return Math.max(0,this.root.clientHeight-fixed-grips);
+    const sized=new Set([this.main,this.scroller,this.previewDivider]);
+    const fixed=[...this.root.children].filter(node=>!sized.has(node))
+      .reduce((sum,node)=>sum+node.getBoundingClientRect().height,0);
+    return Math.max(0,this.root.clientHeight-fixed-(this.timelineOpen ? (this.previewDivider?.offsetHeight??8) : 0));
   }
   applyLayout() {
     if (!this.main || !this.chunkBoard || !this.scroller || this.closed) return;
-    const vertical=normalizeVertical(
-      this.layoutAvailableHeight(),this.layout.preview,this.layout.chunk);
-    const horizontal=normalizeHorizontal(
-      this.main.clientWidth||this.root.clientWidth,
-      this.layout.left,this.layout.right);
-    this.displayLayout={...vertical,...horizontal};
+    this.root.dataset.timeline=String(this.timelineOpen);
+    const geometry=workspaceGeometry(this.root.clientWidth,this.layoutAvailableHeight(),
+      this.layout,{sidebar:this.sidebarOpen,focus:this.workspaceFocus,timeline:this.timelineOpen});
+    this.displayLayout=geometry;
     const style=this.root.style;
-    style.setProperty("--h3ts-preview-h",vertical.preview+"px");
-    style.setProperty("--h3ts-chunk-h",vertical.chunk+"px");
-    style.setProperty("--h3ts-left-w",horizontal.left+"px");
-    style.setProperty("--h3ts-right-w",horizontal.right+"px");
-    style.setProperty("--h3ts-card-min", (this.layout.card??DEFAULTS.card)+"px");
-    style.setProperty("--h3ts-ref-size", (this.layout.thumb??DEFAULTS.thumb)+"px");
-    style.setProperty("--h3ts-track-h", (this.layout.track??DEFAULTS.track)+"px");
-    for(const [name,node] of Object.entries(this.splitters||{})){
-      const key={preview:"preview",chunk:"chunk",
-        left:"left",right:"right"}[name];
-      node.setAttribute("aria-valuenow",String(Math.round(this.displayLayout[key])));
+    style.setProperty("--h3ts-workspace-h",geometry.preview+"px");
+    style.setProperty("--h3ts-timeline-h",geometry.timeline+"px");
+    style.setProperty("--h3ts-left-w",geometry.left+"px");
+    style.setProperty("--h3ts-viewer-w",geometry.viewer+"px");
+    style.setProperty("--h3ts-ref-size",(this.layout.thumb??DEFAULTS.thumb)+"px");
+    style.setProperty("--h3ts-track-h",(this.layout.track??DEFAULTS.track)+"px");
+    this.root.dataset.focus=this.workspaceFocus;
+    this.root.dataset.sidebar=String(this.sidebarOpen);
+    for(const [name,node] of Object.entries(this.splitters||{}))
+      node.setAttribute("aria-valuenow",String(Math.round(geometry[name]||0)));
+  }
+  showSidebar(tab=this.sidebarTab) {
+    this.sidebarTab=tab;
+    this.sidebarOpen=true;
+    this.updateWorkspaceView();
+  }
+  updateWorkspaceView() {
+    for(const [name,panel] of Object.entries(this.sidebarPanels||{})) {
+      panel.hidden=name!==this.sidebarTab;
+      this.sidebarButtons[name].setAttribute("aria-selected",String(name===this.sidebarTab));
+      this.sidebarButtons[name].tabIndex=name===this.sidebarTab?0:-1;
     }
-    // The dedicated scroller ResizeObserver already coalesces visible
-    // timeline redraws. Do not rebuild filmstrip DOM on every drag pixel.
+    if(this.focusSelect)this.focusSelect.value=this.workspaceFocus;
+    this.timelineToggle?.setAttribute("aria-expanded",String(this.timelineOpen));
+    this.sidebarToggle?.setAttribute("aria-expanded",String(this.sidebarOpen));
+    this.applyLayout();
+    this.persistView();
   }
   updateLayout(name,value,{persist=true}={}) {
     this.layout=setLayoutDimension(this.layout,name,value);
@@ -292,7 +306,7 @@ export class TimelineEditor {
         const isMax=e.key==="End";
         const bounds={
           preview:[LIMITS.preview,10000],chunk:[LIMITS.chunks,10000],
-          left:[LIMITS.sidebar,600],right:[LIMITS.sidebar,600],
+          left:[LIMITS.sidebar,600],right:[LIMITS.sidebar,600],viewer:[240,2400],
         }[name];
         this.updateLayout(name,isMax?bounds[1]:bounds[0]);
       }
@@ -346,7 +360,9 @@ export class TimelineEditor {
       chunkFocus: this.chunkFocus,
       chunkPage: this.chunkPage,
       exportResolution: this.exportResolutionChoice,
-      layout: {...this.layout},
+      layout: {...this.layout,version:2},
+      sidebarTab:this.sidebarTab, sidebarOpen:this.sidebarOpen, timelineOpen:this.timelineOpen,
+      workspaceFocus:this.workspaceFocus,
     };
   }
   persistWidget() {
@@ -420,13 +436,15 @@ export class TimelineEditor {
       el(
         "header",
         {},
-        el("strong", { text: "CONTINUUM / TIMELINE STUDIO" }),
+        el("strong", { text: "CONTINUUM" }),
         this.title,
         button("Link original media", () => file.click()),
         file,
         button("Import…", () => this.openImport(),
           "Preview and selectively import ZIP, JSON, text, media or State Manager prompts"),
         pack,
+        button("Screenshot", () => this.guard(() => captureWorkspace(this)),
+          "Capture the visible editor as PNG; saved locally, never sent automatically"),
         button("Save", () => this.guard(() => this.save())),
         button("Reload", () => this.guard(() => this.reload())),
         button("Close", () => this.close()),
@@ -520,7 +538,7 @@ export class TimelineEditor {
       this.stopPlayback();
       this.guard(() => this.preview());
     };
-    const center = el(
+    const center = this.viewer = el(
       "section",
       { class: "h3ts-viewer" },
       el("div", { class: "h3ts-preview" },
@@ -534,6 +552,8 @@ export class TimelineEditor {
         button("+1 frame", () => this.seek(this.playhead + 1)),
         this.counter,
         this.compare,
+        button("Save frame", () => this.guard(() => saveViewerFrame(this)),
+          "Download the currently displayed picture as PNG"),
         button("Source-window proxy", () =>
           this.guard(() => this.preview(true)),
         ),
@@ -541,13 +561,14 @@ export class TimelineEditor {
     );
     this.splitters={
       left:this.splitter("vertical","left","Resize media library width"),
-      right:this.splitter("vertical","right","Resize inspector width"),
+      viewer:this.splitter("vertical","viewer","Resize preview and chunk widths"),
     };
     this.main=el("main", {},this.assets,this.splitters.left,
-      center,this.splitters.right,this.inspector);
+      center,this.splitters.viewer,this.inspector);
     this.root.append(this.main);
     this.previewDivider=this.splitter("horizontal","preview",
       "Resize media preview and upper workspace height");
+    this.splitters.preview=this.previewDivider;
     this.root.append(this.previewDivider);
     const role = el(
       "select",
@@ -627,7 +648,7 @@ export class TimelineEditor {
         id:uid(),frame:this.playhead,name:"Marker"}))),
       el("span",{text:"Manual render [in,out)"}),
       this.rangeA,this.rangeB,
-      button("Inspect inputs",()=>this.guard(()=>this.inspectInputs())),
+      button("Refresh input diagnostics",()=>this.guard(()=>this.inspectInputs())),
       button("Guide H3 with selected clip",()=>this.guard(()=>
         this.guideSelectedClip())),
       button("Reroll selection",()=>this.guard(()=>this.queue(true)))
@@ -638,9 +659,7 @@ export class TimelineEditor {
     this.root.append(this.inputRoute);
     this.chunkBoard = el("section", {class:"h3ts-chunk-workspace"});
     this.root.append(this.chunkBoard);
-    this.chunkDivider=this.splitter("horizontal","chunk",
-      "Resize chunk editor and track timeline height");
-    this.root.append(this.chunkDivider);
+
     this.scroller = el("div", { class: "h3ts-scroll" });
     this.timeline = el("div", { class: "h3ts-timeline" });
     this.scroller.append(this.timeline);
@@ -733,16 +752,83 @@ export class TimelineEditor {
       ),
       details,
     );
+    // Workspace structure: settings scroll independently of the preview and
+    // selected chunk. Only the track timeline occupies the lower band.
+    this.sceneSettings=el("section",{class:"h3ts-scene-settings"});
+    this.promptSettings=el("section",{class:"h3ts-prompt-settings"});
+    const inspectorPanel=el("section",{},this.inspector,advanced,
+      el("details",{},el("summary",{text:"Routing reference"}),this.inputRoute),details);
+    this.sidebarPanels={scene:this.sceneSettings,prompts:this.promptSettings,
+      media:this.assets,inspector:inspectorPanel};
+    this.sidebarButtons={};
+    const tabs=el("nav",{class:"h3ts-panel-tabs",role:"tablist","aria-label":"Workspace settings"});
+    for(const [name,label] of [["scene","Scene"],["prompts","Global"],["media","Media"],["inspector","Inspect"]]) {
+      const tab=button(label,()=>this.showSidebar(name));
+      tab.setAttribute("role","tab");
+      tab.addEventListener("keydown",event=>{
+        const names=Object.keys(this.sidebarPanels),index=names.indexOf(name);
+        const next=event.key==="ArrowRight"?names[(index+1)%names.length]:
+          event.key==="ArrowLeft"?names[(index+names.length-1)%names.length]:
+          event.key==="Home"?names[0]:event.key==="End"?names.at(-1):null;
+        if(next){event.preventDefault();this.showSidebar(next);this.sidebarButtons[next].focus();}
+      });
+      tab.id="h3ts-tab-"+name;
+      const panel=this.sidebarPanels[name];
+      panel.id="h3ts-panel-"+name;
+      panel.setAttribute("role","tabpanel");
+      panel.setAttribute("aria-labelledby",tab.id);
+      tab.setAttribute("aria-controls",panel.id);
+      this.sidebarButtons[name]=tab;
+      tabs.append(tab);
+    }
+    this.sidebar=el("section",{class:"h3ts-sidebar"},tabs,
+      el("div",{class:"h3ts-sidebar-content"},...Object.values(this.sidebarPanels)));
+    this.main.replaceChildren(this.sidebar,this.splitters.left,center,
+      this.splitters.viewer,this.chunkBoard);
+    this.sidebarToggle=button("Settings",()=>{
+      this.sidebarOpen=!this.sidebarOpen;this.updateWorkspaceView();
+    },"Show or hide scene settings, global prompt, media and inspector");
+    this.focusSelect=el("select",{"aria-label":"Workspace focus"},
+      el("option",{value:"both",text:"Preview + chunks"}),
+      el("option",{value:"chunks",text:"Focus chunks"}),
+      el("option",{value:"viewer",text:"Focus preview"}));
+    this.focusSelect.onchange=()=>{
+      this.workspaceFocus=this.focusSelect.value;this.updateWorkspaceView();
+    };
+    this.timelineToggle=button("Timeline",()=>{
+      this.timelineOpen=!this.timelineOpen;this.updateWorkspaceView();
+    },"Show or hide the track timeline to give the workspace more height");
+    const actions=el("nav",{class:"h3ts-workspace-actions"},
+      this.sidebarToggle,this.focusSelect,this.timelineToggle,
+      button("Global prompt",()=>this.showSidebar("prompts")),
+      button("Inspect inputs",()=>{
+        this.showSidebar("inspector");this.guard(()=>this.inspectInputs());
+      }),
+      button("Reset layout",()=>{
+        this.layout={};this.workspaceFocus="both";
+        this.sidebarOpen=innerWidth>=1400;this.timelineOpen=true;this.updateWorkspaceView();
+      }),
+      el("span",{class:"h3ts-action-spacer"}),
+      button("Queue scene",()=>this.guard(()=>this.queue())),
+      button("Cancel sampling",()=>this.guard(()=>this.cancelSampling())));
+    const timelineTools=this.root.querySelector(":scope > .h3ts-tools");
+    // Keep queue actions in the workspace header, and time-navigation actions
+    // directly above the timeline they operate on.
+    for(const item of [...timelineTools.querySelectorAll("button")])
+      if(["Queue scene","Cancel sampling"].includes(item.textContent))item.remove();
+    const footer=this.root.querySelector(":scope > footer");
+    footer.classList.add("h3ts-delivery");
+    this.root.insertBefore(actions,this.main);
+    this.root.insertBefore(timelineTools,this.scroller);
+    this.updateWorkspaceView();
     this.resize = new ResizeObserver(() => this.scheduleDraw());
     this.resize.observe(this.scroller);
     this.layoutObserver=new ResizeObserver(() => this.applyLayout());
     this.layoutObserver.observe(this.root);
-    // Wrapping toolbars/footer can change fixed-height chrome while dialog
-    // width/height stays constant; remeasure available pane height then.
     for (const child of this.root.children)
-      if (![this.main,this.chunkBoard,this.scroller,
-            this.previewDivider,this.chunkDivider].includes(child))
+      if (![this.main,this.scroller,this.previewDivider].includes(child))
         this.layoutObserver.observe(child);
+
   }
   render() {
     this.renderAssets();
@@ -2097,7 +2183,9 @@ export class TimelineEditor {
     if (this.closed || !this.chunkBoard) return;
     // Preserve a currently edited prompt until the field's change event
     // commits the value to its chunk track.
-    if (this.chunkBoard.contains(document.activeElement) &&
+    if ((this.chunkBoard.contains(document.activeElement) ||
+        this.promptSettings?.contains(document.activeElement) ||
+        this.sceneSettings?.contains(document.activeElement)) &&
         ["TEXTAREA","INPUT"].includes(document.activeElement?.tagName)) return;
     renderChunkWorkspace(this);
   }
@@ -2110,7 +2198,7 @@ export class TimelineEditor {
         // For a multi-hour selected job, inspect only the visible chunk page.
         // This endpoint is for authored input summaries, not the physical
         // per-job audio encoder contract or final queue identity.
-        const page = selectedChunkPage(this.p, this.chunkPage || 0, 8);
+        const page = selectedChunkPage(this.p, this.chunkPage || 0, 1);
         const previewProject = page.total > 16 ? {
           ...this.p,
           selection: [page.chunks[0].start, page.chunks.at(-1).end],

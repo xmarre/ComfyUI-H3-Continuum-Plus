@@ -28,6 +28,10 @@ function button(text, action, title = text) {
   node.addEventListener("click", action);
   return node;
 }
+function help(attrs) {
+  return el("details",{class:"h3ts-setting-help"},
+    el("summary",{text:"How this routing works"}),el("small",attrs));
+}
 function frameTime(f) {
   const seconds = f / 24;
   const h = Math.floor(seconds / 3600);
@@ -444,15 +448,19 @@ export function renderChunkWorkspace(editor) {
   const host = editor.chunkBoard;
   if (!host) return;
   const p = editor.p;
-  const page = selectedChunkPage(p,editor.chunkPage || 0,8);
+  const page = selectedChunkPage(p,editor.chunkPage || 0,1);
   editor.chunkPage = page.page;
   const sampler = samplerInputDescription(editor);
   const referenceSources = referenceSocketSources(editor);
   editor.conveyorSignature=JSON.stringify(referenceSources);
   host.replaceChildren();
+  const config=editor.sceneSettings || host;
+  const prompts=editor.promptSettings || config;
+  if(config!==host)config.replaceChildren();
+  if(prompts!==config)prompts.replaceChildren();
   const heading=el("div",{class:"h3ts-chunk-heading"},
     el("strong",{text:"SCENE SETUP"}),
-    el("span",{text:"Choose the first source frame. Video, driving audio and all following H3 chunks are automatic."}));
+    el("span",{text:"Set the source window and model conditioning."}));
   const draft=editor.sceneDraft||{};
   const count=el("input",{type:"number",min:"1",max:"65536",step:"1",
     value:String(draft.count??selectionChunks(p)),
@@ -511,15 +519,15 @@ export function renderChunkWorkspace(editor) {
   // requested start behind an outdated UI label.
   editor.updateScenePreview=update;
   heading.append(controls,summary);
-  host.append(heading);
+  config.append(heading);
   const videoMode=el("select",{"aria-label":"H3 model video conditioning"},
-    el("option",{value:"on",text:"Enabled — authored video guides / Recreate source"}),
-    el("option",{value:"off",text:"Off — no model video reference (audio retained)"}));
+    el("option",{value:"on",text:"Enabled · authored video guides"}),
+    el("option",{value:"off",text:"Off · generate video motion"}));
   videoMode.value=p.video_guidance_enabled===false?"off":"on";
   videoMode.addEventListener("change",()=>editor.edit(project=>{
     project.video_guidance_enabled=videoMode.value==="on";
   }));
-  host.append(control("H3 model video conditioning",videoMode),el("small",{
+  config.append(control("H3 model video conditioning",videoMode),help({
     text:"Off suppresses all H3 video-reference conditioning, including Timeline video-guide lanes, Recreate-derived guidance, and a connected reference_video_1 sampler socket. It preserves video tracks, source audio, guide audio, and final soundtrack routing. Queue a new take after changing it; check the runtime video routing receipt for origin=none."
   }));
   const source=el("div",{class:"h3ts-prompt-source"},
@@ -531,27 +539,27 @@ export function renderChunkWorkspace(editor) {
     button(p.prompt_source?.mode==="studio"?"Use connected prompts again":"Use Studio prompt fields",()=>editor.edit(project=>{
       project.prompt_source={mode:project.prompt_source?.mode==="studio"?"connected":"studio"};
     })));
-  host.append(source);
-  if(p.import_notes?.length) host.append(el("details",{class:"h3ts-import-notes"},
+  prompts.append(source);
+  if(p.import_notes?.length) config.append(el("details",{class:"h3ts-import-notes"},
     el("summary",{text:"Clip-pack import receipt · timing and soundtrack ("+p.import_notes.length+")"}),
     ...p.import_notes.map(text=>el("p",{text}))));
   const audioMode=el("select",{"aria-label":"H3 audio generation"},
-    el("option",{value:"guided",text:"Guided audio — existing behavior"}),
-    el("option",{value:"source_locked",text:"Source Audio Locked — experimental"}),
-    el("option",{value:"generated",text:"Generated audio — no driving audio"}));
+    el("option",{value:"guided",text:"Guided audio"}),
+    el("option",{value:"source_locked",text:"Source Audio Locked"}),
+    el("option",{value:"generated",text:"Generated · no driving audio"}));
   audioMode.value=p.audio_generation_mode||"guided";
   audioMode.addEventListener("change",()=>editor.edit(project=>{
     project.audio_generation_mode=audioMode.value;
   }));
-  host.append(control("H3 audio generation",audioMode),el("small",{
-    text:"Source Audio Locked holds the entire target audio latent at encoded source audio while generating video. Requires source audio and Core native masks. Lip synchronization is unverified. Generated disables driving audio; voice references remain independent. Queue a new take after changing this mode."
+  config.append(control("H3 audio generation",audioMode),help({
+    text:"Source Audio Locked holds the entire target audio latent at encoded source audio while generating video. Requires source audio and Core native masks. Audio lock does not constrain head, body or camera motion. Generated disables driving audio; voice references remain independent. Queue a new take after changing this mode."
   }));
   const outputAudio=el("select",{"aria-label":"Final audio for new takes"},
     el("option",{value:"original",text:"Original soundtrack"}),
     el("option",{value:"generated",text:"Generated H3 audio"}));
   outputAudio.value=p.final_audio_source||"original";
   outputAudio.addEventListener("change",()=>editor.edit(project=>setFinalAudioSource(project,outputAudio.value)));
-  host.append(control("Final audio for new takes",outputAudio),el("small",{
+  config.append(control("Final audio for new takes",outputAudio),help({
     text:"Output selection is independent of H3 audio generation. Original uses a complete routed source soundtrack, otherwise generated audio. Saved takes keep their audio; queue and save a new take after changing this choice."}));
   const globalPrompt=el("textarea",{
     class:"h3ts-global-prompt",rows:"3","aria-label":"Global prompt for every chunk",
@@ -564,7 +572,7 @@ export function renderChunkWorkspace(editor) {
     project.prompts.global=globalPrompt.value;
   },"global"));
   globalPrompt.addEventListener("blur",()=>{editor.promptEditKey=null;});
-  host.append(el("label",{class:"h3ts-global-prompt-field"},
+  prompts.append(el("label",{class:"h3ts-global-prompt-field"},
     el("strong",{text:"Global prompt · prepended to every chunk"}),globalPrompt,
     el("span",{text:"Applies with connected sequence_prompt and per-chunk overrides. Text before the first timed section is also shared."})));
   const viewTools=el("details",{class:"h3ts-scene-view-tools"});
@@ -582,7 +590,6 @@ export function renderChunkWorkspace(editor) {
   });
   tools.append(refreshInputs);
   for (const [name,title,min,max,step,defaultSize] of [
-    ["card","Chunk card minimum width",275,900,25,390],
     ["thumb","Reference thumbnail size",54,260,10,100],
     ["track","Timeline track height",44,160,4,60],
   ]) {
@@ -613,7 +620,7 @@ export function renderChunkWorkspace(editor) {
     renderChunkWorkspace(editor);
   }));
   viewTools.append(tools);
-  host.append(viewTools);
+  config.append(viewTools);
   const settings=el("details",{class:"h3ts-chunk-settings"});
   settings.open=!!editor.samplerDetailsOpen;
   settings.append(el("summary",{text:sampler.warning ||
@@ -633,15 +640,22 @@ export function renderChunkWorkspace(editor) {
   }
   settings.append(details);
   settings.addEventListener("toggle",()=>{editor.samplerDetailsOpen=settings.open;});
-  host.append(settings);
-  const pager = el("div",{class:"h3ts-chunk-pager"},
-    button("Previous chunks",()=>{editor.chunkPage--;renderChunkWorkspace(editor);editor.scheduleChunkCompile();}),
-    el("span",{text:"Page "+(page.page+1)+" / "+page.pages+
-      " · select a chunk to seek or fill its input slots"}),
-    button("Next chunks",()=>{editor.chunkPage++;renderChunkWorkspace(editor);editor.scheduleChunkCompile();}));
-  pager.firstChild.disabled=page.page===0;
-  pager.lastChild.disabled=page.page>=page.pages-1;
-  host.append(pager);
+  config.append(settings);
+  const chunkNumber=el("input",{type:"number",min:1,max:page.total,
+    value:page.page+1,"aria-label":"Go to scene chunk"});
+  const navigate=(number)=>{
+    editor.chunkPage=Math.max(0,Math.min(page.pages-1,number));
+    renderChunkWorkspace(editor);editor.scheduleChunkCompile();editor.persistView();
+  };
+  chunkNumber.addEventListener("change",()=>{
+    if(Number.isFinite(chunkNumber.valueAsNumber))navigate(Math.round(chunkNumber.valueAsNumber)-1);
+  });
+  const previous=button("Previous chunk",()=>navigate(page.page-1));
+  const next=button("Next chunk",()=>navigate(page.page+1));
+  previous.disabled=page.page===0;next.disabled=page.page>=page.pages-1;
+  host.append(el("nav",{class:"h3ts-chunk-pager","aria-label":"Chunk navigation"},
+    el("strong",{text:"CHUNKS"}),previous,
+    el("label",{},chunkNumber," / "+page.total),next));
   const cards=el("div",{class:"h3ts-chunk-cards"});
   for (const chunk of page.chunks) {
     // Show muted media as well so the user can reactivate it. The compiled
@@ -687,7 +701,8 @@ export function renderChunkWorkspace(editor) {
       "data-compiled-chunk":chunk.index});
     compiledLine(preview,editor.compiledWindows?.get(chunk.index),sampler,
       imported.filter(r=>!r.muted).map(r=>r.text).join("\n"), chunk.index);
-    card.append(preview);
+    card.append(el("details",{class:"h3ts-compiled-details"},
+      el("summary",{text:"Compiled prompt and input receipt"}),preview));
     card.append(conveyorReferenceControls(editor,chunk.index,referenceSources));
     const video=sectionForRole(editor,chunk.index,"video_guide");
     const audioRoute=el("select",{"aria-label":"Chunk audio routing"},
@@ -805,6 +820,7 @@ export function renderChunkWorkspace(editor) {
           editor.selected=[clip.id];
           editor.seek(Math.max(clip.start,chunk.start));
           editor.renderInspector();
+          editor.showSidebar?.("inspector");
         }));
       media.append(row);
     }

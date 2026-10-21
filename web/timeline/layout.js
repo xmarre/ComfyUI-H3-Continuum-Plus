@@ -44,6 +44,7 @@ export function setLayoutDimension(layout,name,value) {
     track:[44,160],
     preview:[LIMITS.preview,2400],
     chunk:[LIMITS.chunks,2400],
+    viewer:[240,2400],
   };
   const bounds=options[name];
   if(!bounds || !Number.isFinite(Number(value)))
@@ -53,9 +54,24 @@ export function setLayoutDimension(layout,name,value) {
 export function layoutView(raw) {
   const input=raw && typeof raw==="object" ? raw : {};
   const out={};
-  for(const key of ["preview","chunk","left","right","card","thumb","track"]){
+  for(const key of ["preview","chunk","left","right","card","thumb","track","viewer"]){
     if(input[key]==null)continue;
     try{out[key]=setLayoutDimension({},key,input[key])[key]}catch{}
   }
   return out;
+}
+
+// v25 has two side-by-side work areas above one timeline, rather than three
+// competing vertical bands. Legacy geometry must not restore a crushed pane.
+export function workspaceGeometry(width,height,layout={}, {sidebar=true,focus="both",timeline=true}={}) {
+  width=Math.max(0,Math.floor(width));height=Math.max(0,Math.floor(height));
+  const timelineMin=Math.min(110,Math.floor(height*.3));
+  const workspaceMin=Math.min(280,Math.floor(height*.65));
+  const preview=timeline ? clamp(Math.round(layout.preview??height-(height<600?150:190)),workspaceMin,height-timelineMin) : height;
+  const left=sidebar?clamp(layout.left??280,210,Math.max(210,width*.36)):0;
+  const content=Math.max(0,width-left-(sidebar?8:0)-(focus==="both"?8:0));
+  const minimum=Math.min(280,Math.floor(content*.4));
+  const viewer=focus==="both"?clamp(Math.round(layout.viewer??content*.47),minimum,content-minimum)
+    : focus==="viewer"?content:0;
+  return {preview,timeline:height-preview,left,viewer,chunk:content-viewer};
 }

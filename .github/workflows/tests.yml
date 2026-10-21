@@ -188,3 +188,32 @@ jobs:
           python -m pip install numpy pillow safetensors scipy psutil einops tqdm transformers sentencepiece torchsde pyyaml aiohttp av 'comfy-kitchen==0.2.39' 'comfy-aimdo==0.5.6'
       - name: Verify actual masks, schedule scales and joint attention
         run: python tools/verify_source_audio_lock_core.py --comfy-root core-audio-contract
+
+  timeline-workspace-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Install browser test runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/timeline-browser" --no-audit --no-fund playwright@1.51.1
+          "$RUNNER_TEMP/timeline-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Check real editor geometry, editing and captures
+        run: |
+          NODE_PATH="$RUNNER_TEMP/timeline-browser/node_modules" \
+          H3_TIMELINE_SCREENSHOTS="$RUNNER_TEMP/timeline-screenshots" \
+          node tests/timeline_workspace_browser.cjs
+      - name: Upload workspace screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Timeline-Workspace-Screenshots
+          path: ${{ runner.temp }}/timeline-screenshots
+          if-no-files-found: ignore

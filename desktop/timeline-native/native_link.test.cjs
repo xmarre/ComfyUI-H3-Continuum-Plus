@@ -60,7 +60,7 @@ function loadPreload({ nativePath = "D:\\Movies\\film.mkv", wait } = {}) {
 
 test("bundled preload obtains native File path but transfers only allowlisted path by IPC", async () => {
   const { bridge, calls } = loadPreload();
-  assert.deepEqual(Object.keys(bridge).sort(), ["cancelLink", "linkFile"]);
+  assert.deepEqual(Object.keys(bridge).sort(), ["cancelLink", "captureEditor", "linkFile"]);
   const asset = await bridge.linkFile({ name: "film.mkv", size: 25_000_000_000 }, "native-1");
   assert.equal(asset.storage, "linked");
   assert.equal(calls.length, 1);
@@ -104,4 +104,13 @@ test("duplicate and invalid native transaction IDs are rejected", async () => {
   await assert.rejects(bridge.linkFile({name:"film.mkv"}, "../x"), /Invalid/);
   resolve({storage:"linked",id:"a"});
   await pending;
+});
+
+
+test("preload exposes one editor capture action without arbitrary IPC arguments",async()=>{
+  const {bridge,calls}=loadPreload();
+  await bridge.captureEditor({ignored:"untrusted path"});
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].channel,"h3-timeline:capture-editor");
+  assert.equal(calls[0].payload,undefined);
 });

@@ -77,12 +77,19 @@ else {
             '    throw new Error("Sandboxed native preload did not load");' +
             '  const input = document.querySelector("#h3-smoke-file");' +
             '  const asset = await window.h3NativeMedia.linkFile(input.files[0], "smoke");' +
-            '  return { id: asset.id, storage: asset.storage };' +
+            '  const png = await window.h3NativeMedia.captureEditor();' +
+            '  if (!png.startsWith("data:image/png;base64,")) throw new Error("Editor capture did not return PNG");' +
+            '  const bytes = Uint8Array.from(atob(png.split(",")[1]), c => c.charCodeAt(0));' +
+            '  const view = new DataView(bytes.buffer);' +
+            '  const captureWidth = view.getUint32(16), captureHeight = view.getUint32(20);' +
+            '  if (captureWidth < 100 || captureHeight < 100) throw new Error("Empty editor capture");' +
+            '  return { id: asset.id, storage: asset.storage, captureWidth, captureHeight };' +
             '})()',
           );
           if (result.id !== "h3-smoke-asset" || result.storage !== "linked") {
             throw new Error("Packaged native path IPC returned unexpected asset");
           }
+          console.log("H3_EDITOR_CAPTURE_SMOKE_PASSED", result.captureWidth, result.captureHeight);
           console.log("H3_NATIVE_DESKTOP_SMOKE_PASSED");
           // CI must exercise the real packaged BrowserWindow.close() path,
           // not only call app.exit(0) directly and skip the reported defect.
@@ -259,6 +266,16 @@ else {
         preferredServer());
     });
 
+    ipcMain.handle("h3-timeline:capture-editor", async (event) => {
+      if (!authorizedSender(event, window, selected) || mode !== "comfy" ||
+          event.senderFrame !== window.webContents.mainFrame) {
+        throw new Error("Editor capture is restricted to the active local ComfyUI frontend");
+      }
+      // Only this application's visible content. Never enumerate desktops,
+      // other windows, files or displays; no capture is sent over the network.
+      const picture = await window.webContents.capturePage();
+      return picture.toDataURL();
+    });
     ipcMain.handle("h3-timeline:link", async (event, request) => {
       if (!authorizedSender(event, window, selected) || mode !== "comfy") {
         throw new Error("Native media linking is restricted to the active local ComfyUI frontend");

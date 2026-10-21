@@ -10,7 +10,7 @@ import {
 } from "../web/timeline/chunk_workspace.js";
 import { samplerInputDescription, referenceSocketSources, activeReferenceSources } from "../web/timeline/chunk_ui.js";
 import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState, conveyorShelfAvailable } from "../web/timeline/conveyor_source.js";
-import { layoutView, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
+import { layoutView, workspaceGeometry, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "../web/timeline/navigation.js";
 
 import {
@@ -2269,4 +2269,23 @@ test("single-job queues preserve cache identity; rerolls and multi-job batches r
   assert.equal(submissions[3].output["2"].inputs.job_index,0);
   assert.equal(submissions[4].output["2"].inputs.job_index,1);
   assert.equal(Object.hasOwn(editor.p,"queued_batch_id"),false);
+});
+
+
+test("workspace geometry reserves full-height chunks alongside preview and a usable timeline",()=>{
+  for(const [width,height] of [[1880,1000],[1338,600],[980,520]]) {
+    const size=workspaceGeometry(width,height,{}, {sidebar:width>1400});
+    assert.ok(size.preview>=280,JSON.stringify(size));
+    assert.ok(size.timeline>=110,JSON.stringify(size));
+    assert.ok(size.viewer>=280,JSON.stringify(size));
+    assert.ok(size.chunk>=320,JSON.stringify(size));
+    assert.equal(size.preview+size.timeline,height);
+    assert.equal(size.left+size.viewer+size.chunk+(width>1400?16:8),width);
+  }
+  const clamped=workspaceGeometry(1000,550,{preview:10000,viewer:10000});
+  assert.ok(clamped.timeline>=110);
+  assert.ok(clamped.chunk>=280);
+  const focused=workspaceGeometry(1000,550,{}, {sidebar:false,focus:"chunks"});
+  assert.equal(focused.chunk,1000);
+  assert.equal(focused.viewer,0);
 });

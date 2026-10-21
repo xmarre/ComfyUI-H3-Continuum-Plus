@@ -101,7 +101,8 @@ async function main() {
       throw new Error("Packaged desktop startup/native File IPC failed: " +
         JSON.stringify({exit:result,linked,output:output.join("").slice(-8000)}));
     }
-    console.log("Packaged Electron displayed the UI, resolved a genuine OS-backed " +
+    assert.ok(output.join("").includes("H3_EDITOR_CAPTURE_SMOKE_PASSED"), "Packaged editor capture was not verified");
+    console.log("Packaged Electron captured its visible content as PNG, displayed the UI, resolved a genuine OS-backed " +
       "File through its preload, and linked only the original path over IPC.");
   } finally {
     if (timer) clearTimeout(timer);

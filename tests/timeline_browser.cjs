@@ -44,9 +44,10 @@ const { chromium } = require("playwright");
     }, JSON.parse(process.env.H3_TIMELINE_TEST_PROJECT));
     await page.locator(".h3ts").waitFor({ state: "visible" });
     assert.equal(await page.locator(".h3ts-clip").count(), 1);
+    await page.getByRole("button",{name:"Inspect inputs",exact:true}).click();
     await page.locator(".h3ts-advanced-toolbar > summary").click();
     await page
-      .getByRole("button", { name: "Inspect inputs", exact: true })
+      .getByRole("button", { name: "Inspect inputs", exact: true }).first()
       .click();
     await page.waitForFunction(() =>
       document
@@ -58,6 +59,10 @@ const { chromium } = require("playwright");
     );
     // Verify the real browser layout: the preview is not crushed by the
     // chunk workspace, and each interactive splitter persists view-only size.
+    const upperGrip=page.getByRole("separator",{name:"Resize media preview and upper workspace height"});
+    await upperGrip.focus();
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
     const firstLayout=await page.evaluate(() => ({
       main:document.querySelector(".h3ts > main").getBoundingClientRect().height,
       chunk:document.querySelector(".h3ts-chunk-workspace").getBoundingClientRect().height,
@@ -83,6 +88,7 @@ const { chromium } = require("playwright");
     assert.ok(afterGrip.preview>=firstLayout.main+20,JSON.stringify(afterGrip));
     assert.ok(afterGrip.timeline>=85,JSON.stringify(afterGrip));
     assert.ok(afterGrip.saved>firstLayout.main,JSON.stringify(afterGrip));
+    await page.getByRole("tab",{name:"Scene",exact:true}).click();
     const leftGrip=page.getByRole("separator",{name:"Resize media library width"});
     await leftGrip.focus();
     await page.keyboard.press("ArrowRight");
