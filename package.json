@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:timeline": "node --test tests/timeline*.test.mjs"
+  }
+}
