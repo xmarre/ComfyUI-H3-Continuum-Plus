@@ -217,3 +217,19 @@ def test_source_outside_authored_scene_cannot_leak_into_native_overhang():
     source=provider.audio_source(vae)
     provider.locked_audio_window(source,vae,retained_frames=0,trim_frames=0,total_frames=175)
     assert vae.inputs[-1][:,224000:].count_nonzero()==0
+
+
+def test_output_masks_are_independent_and_preserve_latent_values_and_metadata():
+    from ComfyUI_H3_Continuum_Join.source_audio_lock import attach_locked_audio_output_masks
+    samples=torch.randn(1,32,2,17,dtype=torch.float64)
+    source={'samples':samples,'noise_mask':torch.ones(1,1,2,17),'marker':'kept'}
+    before=samples.clone()
+    out=attach_locked_audio_output_masks([source,{'samples':samples[...,:5]}])
+    assert out[0] is not source and out[0]['marker']=='kept'
+    assert out[0]['samples'] is samples
+    assert source['noise_mask'].min()==1
+    assert out[0]['noise_mask'].shape==(1,1,2,17)
+    assert out[1]['noise_mask'].shape==(1,1,2,5)
+    out[0]['noise_mask'].fill_(1)
+    assert out[1]['noise_mask'].count_nonzero()==0
+    torch.testing.assert_close(samples,before,rtol=0,atol=0)

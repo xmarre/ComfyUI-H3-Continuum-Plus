@@ -90,10 +90,18 @@ previous job's potential 39-frame source prefix. Guided legacy projects retain
 their original hashes. Changing the final soundtrack alone does not change the
 neural sampling identity. Source changes invalidate cached locked generation.
 
-Exact Refine State transports the complete audio mask to the split audio
-LATENT output. Downstream refiners must preserve that mask and Core's audio
-schedule contract. A separate unmasked high-stage invocation can regenerate
-locked audio and is not qualified by the sampler-boundary tests.
+Locked mode always attaches a complete zero audio mask to every split audio
+LATENT output, including when **Exact Refine State is off** and on Run Storage
+replay. This mask is derived from the mode and emitted target shape; it needs
+no MODEL/conditioning capture and does not change reuse or the seed nonce.
+With capture off, video outputs keep their existing unmasked refinement
+behavior. With capture on, the captured video-prefix masks remain intact.
+
+Downstream refiners must consume the emitted audio LATENT mask and preserve
+Core's audio schedule contract. An independently constructed unmasked high
+stage can regenerate audio; source locking cannot protect a workflow that
+discards the audio mask. Trained high-stage lip synchronization still requires
+GPU acceptance.
 
 ## Validation and limits
 

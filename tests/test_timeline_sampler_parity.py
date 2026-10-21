@@ -623,6 +623,7 @@ def test_audio_generation_and_final_source_are_independent(runtime,monkeypatch,m
         if mode=='source_locked':
             assert call['latent']['noise_mask'].unbind()[1].count_nonzero()==0
     assert result[2][_FINAL_AUDIO_SOURCE_PLAN_KEY]==final
+    assert all(('noise_mask' in item)==(mode=='source_locked') for item in result[1])
     if final=='original':
         torch.testing.assert_close(result[-1]['waveform'],pcm,rtol=0,atol=0)
     else:
@@ -681,3 +682,27 @@ def test_generated_soundtrack_can_decode_the_same_guided_take_without_resampling
     assert len(calls)==3
     for a,b in zip(original[1],generated[1]):
         torch.testing.assert_close(a['samples'],b['samples'],rtol=0,atol=0)
+
+
+def test_default_locked_audio_outputs_protect_refinement_without_disabling_reuse(runtime,monkeypatch):
+    from tests.test_source_audio_lock import install_native
+    install_native(monkeypatch)
+    args,calls,_,_,_=runtime
+    p=args['timeline']['project'];p['audio_generation_mode']='source_locked'
+    args['timeline']=compile_project(p)
+    args['driving_audio']={'waveform':torch.ones(1,2,3600),'sample_rate':240}
+    assert args['emit_refine_state'] is False
+    first=nodes.H3ContinuumTimelineSampler().sample(**args)
+    resumed=nodes.H3ContinuumTimelineSampler().sample(**args)
+    assert len(calls)==3
+    assert resumed[3]['reused_chunks']==3
+    assert first[3]['sampling_contract']==resumed[3]['sampling_contract']
+    for result in (first,resumed):
+        assert result[5] == []  # no captured MODEL/conditioning state requested
+        assert all('noise_mask' not in item for item in result[0])
+        for item in result[1]:
+            mask=item['noise_mask']
+            assert mask.shape==(1,1,*item['samples'].shape[2:])
+            assert mask.dtype==torch.float32
+            assert mask.device==item['samples'].device
+            assert mask.count_nonzero()==0

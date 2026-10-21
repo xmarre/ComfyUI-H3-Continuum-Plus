@@ -561,3 +561,15 @@ def test_fixed_and_opaque_connected_text_remain_shared_with_chunk_override(mode,
         'id':'action','start':0,'end':168,'text':'Action','override':True,'chunk_prompt':True}]}]
     merged=with_external_prompt_source(validate(p),{'mode':mode,'script':script})
     assert compile_window(merged,0)['prompt']=='Studio global\n'+script+'\nAction'
+
+
+def test_disabled_video_reference_tag_warns_without_rewriting_prompt():
+    p=blank_project();p['prompts']['global']='Follow <Video 1> for the camera.'
+    p['video_guidance_enabled']=False
+    off=compile_window(p,0)
+    assert off['prompt']=='Follow <Video 1> for the camera.'
+    assert any('video conditioning is Off' in w for w in off['warnings'])
+    p['video_guidance_enabled']=True
+    on=compile_window(p,0)
+    assert on['prompt']==off['prompt']
+    assert not any('video conditioning is Off' in w for w in on['warnings'])

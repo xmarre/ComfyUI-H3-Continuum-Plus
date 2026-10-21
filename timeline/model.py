@@ -568,6 +568,11 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
             for s in segments
         )
     warnings = []
+    if p.get("video_guidance_enabled", True) is False and re.search(r"<Video\s+\d+>", text):
+        warnings.append(
+            "The prompt refers to <Video N>, but H3 model video conditioning is Off. "
+            "No video reference is supplied; edit the prompt if that reference is unintended."
+        )
     known = {
         str(x.get("alias"))
         for x in [*p["assets"], *(c for t in p["tracks"] for c in t["clips"])]

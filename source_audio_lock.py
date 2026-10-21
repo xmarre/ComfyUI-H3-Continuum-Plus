@@ -104,3 +104,22 @@ def apply_source_audio_lock(latent, source_latent):
     audio_mask = torch.zeros((1, 1, *audio.shape[2:]), device=audio.device, dtype=torch.float32)
     audio.copy_(source_latent)
     return {**latent, "noise_mask": comfy.nested_tensor.NestedTensor((video_mask, audio_mask))}
+
+
+def attach_locked_audio_output_masks(audio_latents):
+    """Carry full target-audio protection to refiners without captured state.
+
+    The complete audio mask is determined by the selected lock mode. It needs
+    neither a saved sampler mask nor MODEL/conditioning capture, so cached
+    chunks can emit it on replay. Video-mask ownership remains independent.
+    """
+    output = []
+    for item in audio_latents:
+        samples = item["samples"]
+        if (not torch.is_tensor(samples) or samples.ndim != 4
+                or tuple(samples.shape[:3]) != (1, 32, 2)):
+            raise ValueError("Source Audio Locked output audio must be [1,32,2,N]")
+        output.append({**item, "noise_mask": torch.zeros(
+            (1, 1, *samples.shape[2:]), device=samples.device, dtype=torch.float32,
+        )})
+    return output

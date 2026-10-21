@@ -14,7 +14,7 @@ import uuid
 import numpy as np
 
 from .media import ProjectStore, run_process
-from .model import blank_project, compile_project, digest, with_external_prompt_source
+from .model import blank_project, compile_project, digest, sample_boundary, with_external_prompt_source
 from .runtime import TimelineInputs
 
 CATEGORY = "MiniMax H3/Continuum/Timeline Studio"
@@ -943,6 +943,9 @@ class H3ContinuumTimelineSampler:
                 video_latents=videos,
                 audio_latents=audios,
             )
+        if p.get("audio_generation_mode", "guided") == "source_locked":
+            from ..source_audio_lock import attach_locked_audio_output_masks
+            audios = attach_locked_audio_output_masks(audios)
         refine = _refine_state_output(
             enabled=emit_refine_state,
             captured=captured,
@@ -975,8 +978,8 @@ class H3ContinuumTimelineSampler:
             selected_audio = _copy_audio(
                 prepare_driving_audio_source(
                     {"waveform": driving_audio["waveform"][...,
-                        round(record["output_range"][0] * int(driving_audio["sample_rate"]) / 24):
-                        round(record["output_range"][1] * int(driving_audio["sample_rate"]) / 24)],
+                        sample_boundary(record["output_range"][0], int(driving_audio["sample_rate"])):
+                        sample_boundary(record["output_range"][1], int(driving_audio["sample_rate"]))],
                      "sample_rate": int(driving_audio["sample_rate"])},
                     audio_vae,
                     target_frames=record["output_range"][1] - record["output_range"][0],
