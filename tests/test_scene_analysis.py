@@ -145,7 +145,7 @@ def test_alias_budget_identity_and_no_chunk_leak():
     assert '<d>[English] We both do.</d>' in w['prompt']
     assert w['segments'] is None
     assert w['prompt'].count('<d>[English] We both do.</d>') == 1
-    assert w['prompt'].count('Shot plan (') == 1
+    assert w['prompt'].count('Shot plan:') == 1
     assert compile_window(p,1,picture_offset=1)['images']==[]
     full=compile_window(p,0,picture_offset=8)
     assert full['images']==[] and 'Scene composition evidence:' not in full['prompt'] and any('omitted' in s for s in full['warnings'])
@@ -342,7 +342,7 @@ def test_shot_schedule_does_not_split_timed_dialogue():
     assert [segment['range'] for segment in w['segments']]==[[0,100],[100,168]]
     assert w['prompt'].count('<d>[English] First line.</d>')==1
     assert w['prompt'].count('<d>[English] Second line.</d>')==1
-    assert sum('Shot plan (' in segment['text'] for segment in w['segments'])==1
+    assert sum('Shot plan:' in segment['text'] for segment in w['segments'])==1
 
 
 def test_reanalysis_preserves_other_source_and_unselected_shots():
