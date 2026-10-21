@@ -206,11 +206,20 @@ class SceneAnalysis:
                 selected_ids = set(chosen)
                 chosen.extend(r for r in ranked if r not in selected_ids)
                 remap = {}
+                extraction_warnings = []
+                if len(chosen) > cfg["global_budget"]:
+                    extraction_warnings.append(f"Global reference budget omitted {len(chosen)-cfg['global_budget']} candidate(s).")
                 for ordinal, rid in enumerate(chosen[:cfg["global_budget"]]):
                     cancel()
                     candidate = pending[rid]
                     progress(stage="extract", shot=ordinal+1, shots=min(len(pending), cfg["global_budget"]), references=len(references))
-                    extracted = extract_reference(self.store, source, candidate, cfg, cancel=cancel)
+                    try:
+                        extracted = extract_reference(self.store, source, candidate, cfg, cancel=cancel)
+                    except InterruptedError:
+                        raise
+                    except (ValueError, RuntimeError, OSError) as exc:
+                        extraction_warnings.append(f"Reference at source PTS {candidate['pts']} skipped: {exc}")
+                        continue
                     h3 = next(x for x in extracted["assets"] if x["representation"] == "h3")
                     vlm = next(x for x in extracted["assets"] if x["representation"] == "vlm")
                     ref = {"id": extracted["id"], "asset_id": h3["id"], "vlm_asset_id": vlm["id"],
@@ -223,6 +232,7 @@ class SceneAnalysis:
                 result = {"schema": "h3_source_scene_analysis_v1", "id": token, "source_asset_id": source["id"],
                           "scope": scope, "project_range": project["selection"], "source_range": [str(start), str(end)],
                           "settings": cfg, "summary": summary, "events": events, "shots": shots, "references": references,
+                           "warnings": extraction_warnings,
                           "metrics": {"elapsed_seconds": round(time.monotonic()-started, 3), "cached_frames": count_before,
                                       "decoded_frames": summary["frames"]-count_before, "descriptor_ram_frames": 32}}
                 cancel()
