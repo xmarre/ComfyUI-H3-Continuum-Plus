@@ -177,6 +177,19 @@ def register_routes():
         from .model import compile_window, reference_slots_for_chunk
         data = await request.json()
         p = validate(data["project"])
+        # A connected State Manager Text Box is authoritative for the actual
+        # sampler's sequence_prompt. Resolve this transient source for preview
+        # with the SAME adapter used by native sampling; never persist it to
+        # Studio or mutate the State Manager node.
+        connected = data.get("external_prompt")
+        if connected is not None and p.get("prompt_source", {}).get("mode") != "studio":
+            if not isinstance(connected, str) or len(connected) > 131072:
+                raise ValueError("Connected prompt preview exceeds the 128 KiB limit")
+            from .model import with_external_prompt_source
+            p = with_external_prompt_source(p, {
+                "mode": "Auto", "script": connected, "global": "",
+            })
+            p = validate(p)
         sizes = data.get("slot_sizes", [0]*8)
         if not isinstance(sizes, list) or len(sizes) != 8 or any(type(n) is not int or not 0 <= n <= 8 for n in sizes):
             raise ValueError("Invalid reference socket group sizes")
@@ -186,12 +199,14 @@ def register_routes():
         for index in range(first, stop):
             selected = reference_slots_for_chunk(p, index)
             count = sum(sizes[i-1] for i in (selected if selected is not None else range(1, 9)))
-            window = compile_window(p, index, picture_offset=count)
+            window = compile_window(p, index, picture_offset=count, reference_slot_sizes=sizes)
             window["reference_budget"] = {"persistent_images": count, "scoped_images": len(window["images"]),
                                           "total_images": count+len(window["images"]), "capacity": 8,
                                           "runtime_verified": False}
             windows.append(window)
-        return web.json_response({"windows": windows, "socket_sizes": sizes, "timing_enforced": False})
+        return web.json_response({"windows": windows, "socket_sizes": sizes, "timing_enforced": False,
+                                  "prompt_source": "connected" if connected is not None and
+                                  p.get("prompt_source", {}).get("mode") != "studio" else "studio"})
 
     @endpoint("post", "/scenes/edit")
     async def edit_scene_plan(request):

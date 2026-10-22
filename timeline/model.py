@@ -311,6 +311,22 @@ def with_external_prompt_source(project, prompts):
     migrate_chunk_prompts(p)
     regions = p.get("prompts", {}).get("regions", [])
     p["prompts"] = copy.deepcopy(prompts)
+    # Connected State Manager prompts such as "[0-7s] ... [7-14s]" are
+    # relative to the active scene, not to an arbitrary 12-minute project
+    # movie timestamp. Preserve explicitly provided origins, and only auto-
+    # anchor an actually recognized relative Timeline script.
+    if "origin_frame" not in p["prompts"] and p.get("chunk_origin_frame", 0):
+        from ..v2.prompts import resolve_prompt_mode, parse_timeline_sections
+        from ..constants import PROMPT_MODE_TIMELINE
+        script = str(p["prompts"].get("script", ""))
+        try:
+            if resolve_prompt_mode(p["prompts"].get("mode", "Auto"), script) == PROMPT_MODE_TIMELINE:
+                sections = parse_timeline_sections(script)
+                starts = [rational(row["start"]) for row in sections if row["kind"] == "time"]
+                if starts and min(starts) == 0:
+                    p["prompts"]["origin_frame"] = p["chunk_origin_frame"]
+        except (ValueError, KeyError, TypeError):
+            pass
     if ownership != "connected" and regions:
         p["prompts"]["regions"] = regions
     # Connected text replaces the script, while Studio's global field remains
@@ -419,8 +435,8 @@ def compile_window(p, index, guide_scope=None, picture_offset=0, reference_slot_
     # persistent IMAGE socket instead of a second scoped reference. Rebuild
     # its Picture number from the *actual selected socket sizes*.
     conveyor_map = p.get("scene_plan", {}).get("conveyor_slots", {})
-    if conveyor_map:
-        sizes = reference_slot_sizes or (1,) * 8
+    if conveyor_map and reference_slot_sizes is not None:
+        sizes = reference_slot_sizes
         active = reference_slots_for_chunk(p, index)
         active = range(1, 9) if active is None else active
         ordinal = {}

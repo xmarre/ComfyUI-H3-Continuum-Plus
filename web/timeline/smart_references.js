@@ -1,7 +1,7 @@
 // Smart References is a detached analysis workspace. Apply uses the editor's
 // existing History transaction and rejects results after concurrent edits.
 import { clone } from "./core.js";
-import { referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v30";
+import { referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v31";
 const BASE="/h3_continuum/timeline";
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag);
@@ -30,6 +30,19 @@ async function json(api,path,body,method=body===undefined?"GET":"POST") {
  * wire their shelf outputs later. Native scoped fallback stays unchanged until
  * there is a verified physical route.
  */
+export function screenshotIdsForSelection(plan, selection, sourceAssetId=null) {
+  const shots=(plan?.shots||[]).filter(shot=>(
+    shot.range[0]<selection[1] && selection[0]<shot.range[1] &&
+    (!sourceAssetId || shot.source_asset_id===sourceAssetId)
+  ));
+  return {
+    shots,
+    ids:[...new Set(shots.flatMap(shot=>shot.reference_ids))],
+    enabledIds:[...new Set(shots.filter(s=>s.user?.enabled!==false)
+      .flatMap(s=>s.reference_ids))],
+  };
+}
+
 export function planConveyorPublication(ids, state, sources, nodeId, toggles=null) {
   if(state?.output_mode!=="persistent_refs" ||
      !Array.isArray(state.reference_slots) || state.reference_slots.length!==8)
@@ -150,7 +163,7 @@ export class SmartReferences {
       field("Scene images per chunk","scene_budget","number",{min:0,max:8,step:1}),
       field("Reserved identity slots","reserved_identity_slots","number",{min:0,max:8,step:1}),
       field("Maximum distinct scene references","global_budget","number",{min:1,max:2048,step:1}),
-      field("Use reviewed VLM descriptions in prompts","generate_descriptions","checkbox"),
+      el("p",{class:"h3ts-smart-resolution-note",text:"VLM observations stay in the review editor. Only short, explicitly approved H3 shot cues are added to the base prompt."}),
       button("Analyze selected scene",()=>this.guard(()=>this.analyze("selection"))),
       button("Analyze full source",()=>this.guard(()=>this.analyze("source"))),
       button("Cancel analysis",()=>this.guard(()=>this.cancelAnalysis())),
@@ -240,7 +253,7 @@ export class SmartReferences {
       }
       if(!this.vlmStop&&!this.closed){
         this.pendingInterpretation=true;try{await this.preview();}finally{this.pendingInterpretation=false;}
-        this.status.textContent=completed+" shot(s) interpreted. Review/correct observations below, enable reviewed descriptions in prompts, then Apply shot plan.";
+        this.status.textContent=completed+" shot(s) interpreted. Review observations; optionally write one concise H3 cue per shot. Full descriptions are NOT inserted into H3. Apply shot plan to update conditioning.";
       }
     };
     this.vlmActive=work();
@@ -269,6 +282,11 @@ export class SmartReferences {
       const area=el("textarea",{"aria-label":"Shot description "+shot.id,rows:3});
       area.value=shot.user?.description??shot.vlm?.description??"";
       area.oninput=()=>{shot.user||={};shot.user.description=area.value;shot.user.description_provenance=shot.vlm?"edited_model_observation":"user_authored";};
+      const shortCue=el("input",{"aria-label":"Optional concise H3 instruction "+shot.id,
+        placeholder:"Optional short framing override · not dialogue",
+        maxLength:180});
+      shortCue.value=shot.user?.prompt_cue||"";
+      shortCue.onchange=()=>{shot.user||={};shot.user.prompt_cue=shortCue.value.trim();};
       const location=el("input",{"aria-label":"Physical scene identity "+shot.id,placeholder:"Unverified location"});
       location.value=shot.scene_id||"";
       location.onchange=()=>{shot.scene_id=location.value||null;shot.user||={};shot.user.scene_id=shot.scene_id;};
@@ -303,7 +321,8 @@ export class SmartReferences {
       this.list.append(el("article",{},el("h3",{text:"Project ["+shot.range.join(",")+") · source ["+shot.source_start+", "+shot.source_end+")"}),
         el("p",{text:"Setup "+shot.setup_id.slice(0,12)+(shot.reused_reference?" · reused reference":" · distinct evidence")+" · "+(shot.event?.type||(shot.provenance==="user-split"?"user boundary":"source start"))+" · "+(shot.event?.evidence?.reason||"measured source interval")}),
         el("label",{},enabled,"Use this shot"),
-        el("label",{},"Physical scene/location",location),el("label",{},"Camera setup",setup),el("label",{},"Visible subjects",subjects),events,refs,el("label",{},"Visual description / user correction",area),
+        el("label",{},"Physical scene/location",location),el("label",{},"Camera setup",setup),el("label",{},"Visible subjects",subjects),events,refs,el("label",{},"Full VLM observation / user notes (review only; NOT sent to H3)",area),
+        el("label",{},"Optional concise H3 shot cue (max 180 characters)",shortCue),
         el("p",{text:shot.vlm?"Model-generated observation · "+shot.vlm.model_id+" · review visual claims":"No semantic model observation. Facial visibility and acting are unmeasured."}),
         picker,split,button("Split shot",()=>this.guard(()=>this.edit("split",shot,{frame:Number(split.value)}))),
         button("Merge with next",()=>this.guard(()=>this.edit("merge",shot,{other_id:next?.id})))));
@@ -322,8 +341,13 @@ export class SmartReferences {
     this.updatePlanSettings();
     const sources=referenceSocketSources(this.editor);
     const sizes=Array.from({length:8},(_,i)=>sources[i]?.connected&&!sources[i]?.unavailable?1:0);
-    const result=await json(this.api,BASE+"/scenes/compile",{project:this.candidate,slot_sizes:sizes});
-    this.compiled.textContent="Socket counts are inferred from graph outputs. Bundled/dynamic tensors are resolved by the sampler; saved take manifests are authoritative.\nCut timing: advisory.\n\n"+result.windows.map(w=>
+    const connectedPrompt=connectedPromptForPreview(this.editor);
+    const result=await json(this.api,BASE+"/scenes/compile",{project:this.candidate,slot_sizes:sizes,
+      ...(connectedPrompt===null?{}:{external_prompt:connectedPrompt})});
+    this.compiled.textContent="Base prompt: "+(result.prompt_source==="connected"?"CONNECTED State Manager Text Box":"Studio fields (connected text unavailable or explicitly disabled)")+
+      ".\nSocket counts are inferred from graph outputs; bundled/dynamic tensors are sampler-authoritative.\n"+
+      "Cue times are per logical 7-second chunk here; physical H3 adds retained-context offset.\n"+
+      "Full VLM descriptions stay in review; only a separately approved short H3 cue is allowed.\n\n"+result.windows.map(w=>
       "Chunk "+(w.index+1)+" ["+w.range.join(",")+")\n"+JSON.stringify({reference_budget:w.reference_budget,aliases:w.aliases,images:w.images,warnings:w.warnings},null,2)+"\n"+w.prompt).join("\n\n");
     this.compiled.parentElement.open=true;
   }
@@ -333,8 +357,14 @@ export class SmartReferences {
       throw Error("Studio changed. Reopen Smart References to avoid replacing newer edits.");
     this.updatePlanSettings();
     const plan=this.candidate.scene_plan;
-    const ids=[...new Set(plan.shots.filter(s=>s.user?.enabled!==false)
-      .flatMap(s=>s.reference_ids))];
+    // An extracted screenshot is a reusable asset, not one shot occurrence.
+    // Export every reference belonging to the selected source/time region,
+    // even when a shot is disabled for conditioning. Disabling a shot never
+    // destroys its screencap. Do not silently drop useful extracted images.
+    const range=this.candidate.selection||[0,this.candidate.duration_frames];
+    const selection=screenshotIdsForSelection(plan,range,this.analysis?.source_asset_id);
+    const relevant=selection.shots,ids=selection.ids;
+    const activeIds=new Set(selection.enabledIds);
     if(!ids.length)throw Error("No enabled screenshot references to publish.");
     if(ids.length>8)throw Error("The selected scene plan uses "+ids.length+
       " unique images, but one Image Conveyor Reference Shelf holds 8. "+
@@ -367,7 +397,9 @@ export class SmartReferences {
     const toggles=node.properties?.image_conveyor_reference_enabled;
     const installation=planConveyorPublication(ids,before,sources,node.id,toggles);
     const routesText=installation.knownRoutes+" traced H3 socket route(s)";
-    if(!window.confirm("Add "+ids.length+" full-resolution JPG(s) to Image Conveyor #"+node.id+
+    if(!window.confirm("Found "+relevant.length+" shot occurrences, "+ids.length+" distinct selected screencaps, "+
+      activeIds.size+" used by enabled shots.\n\n"+
+      "Add all "+ids.length+" full-resolution JPG(s) to Image Conveyor #"+node.id+
       "? "+installation.routed.length+" screenshot(s) have connected H3 reference routes; "+
       installation.staged.length+" will be stored in unconnected shelf positions. "+
       "Existing character references stay untouched. "+
@@ -411,6 +443,8 @@ export class SmartReferences {
     const mapped=Object.fromEntries(installation.routed.map(entry=>
       [entry.id,entry.physicalSlot]));
     const previousMap=plan.conveyor_slots||{};
+    const preservedMap=Object.fromEntries(Object.entries(previousMap)
+      .filter(([rid])=>!ids.includes(rid)));
     const activeSources=sources.filter(s=>s.connected&&!s.unavailable).map(s=>s.slot);
     const previousMasks=this.candidate.conveyor_reference_slots||{};
     const chunkSize=this.candidate.chunk_frames;
@@ -433,7 +467,8 @@ export class SmartReferences {
       for(const image of this.candidate.assets||[]){
         if(!known.has(image.id)){p.assets.push(clone(image));known.add(image.id);}
       }
-      p.scene_plan=clone({...plan,conveyor_slots:{...previousMap,...mapped}});
+      p.scene_plan=clone({...plan,conveyor_only:true,
+        conveyor_slots:{...preservedMap,...mapped}});
       p.conveyor_reference_slots=masks;
     });
     this.version=this.editor.editVersion;
@@ -449,7 +484,7 @@ export class SmartReferences {
         ? ". STAGED ONLY (not fed to H3): shelf "+
           installation.staged.map(x=>x.shelfNumber).join(", ")+
           ". Connect those shelf outputs through Media Resolution to unused sampler reference inputs, then reopen this action to activate them. "+
-          "Until connected, native scoped-reference fallback remains in effect."
+          "Conveyor-only mode is active: staged screenshots are NOT silently injected through the native scoped-reference fallback."
         : ". Every installed screenshot has a connected H3 reference route.")+
       " JPEG files: ComfyUI/input/h3_timeline_screencaps/.";
   }
@@ -457,7 +492,8 @@ export class SmartReferences {
     if(!this.candidate.scene_plan)throw Error("Analyze footage first");
     this.updatePlanSettings();
     applySceneCandidate(this.editor,this.candidate,this.version);this.version=this.editor.editVersion;this.appliedVersion=this.version;
-    this.status.textContent="Shot plan applied as one undoable edit. No generation was queued.";
+    this.editor.scheduleChunkCompile?.();
+    this.status.textContent="Shot plan applied. The effective prompt merges the connected State Manager source with short bracketed Picture cues; review each chunk's effective H3 prompt field. The authored State Manager widget remains unchanged. No generation was queued.";
   }
   close(){
     if(this.closed)return;

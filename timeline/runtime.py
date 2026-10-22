@@ -371,7 +371,7 @@ class TimelineInputs:
                 from .scene_plan import SCENE_IDENTITY_NOTICE
                 source = dict(self.timeline_plan["source"])
                 source["scene_shots"] = scene_shots
-                if any("Scene composition evidence:" in shot["text"] for shot in scene_shots):
+                if any("Match <Picture " in shot["text"] for shot in scene_shots):
                     source["scene_identity_notice"] = SCENE_IDENTITY_NOTICE
                 self.timeline_plan = {**self.timeline_plan, "source": source}
         return self.timeline_plan

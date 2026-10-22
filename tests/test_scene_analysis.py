@@ -148,23 +148,28 @@ def test_alias_budget_identity_and_no_chunk_leak():
     assert w['prompt'].count('Shot plan:') == 1
     assert compile_window(p,1,picture_offset=1)['images']==[]
     full=compile_window(p,0,picture_offset=8)
-    assert full['images']==[] and 'Scene composition evidence:' not in full['prompt'] and any('omitted' in s for s in full['warnings'])
+    assert full['images']==[] and 'Match <Picture' not in full['prompt'] and any('omitted' in s for s in full['warnings'])
 
 
 def test_effective_hash_only():
     p=plan_project();before=compile_window(p,0,picture_offset=1)['generation_hash']
     p['scene_plan']['shots'][0].update(confidence=.1,setup_id='UI grouping')
     assert compile_window(p,0,picture_offset=1)['generation_hash']==before
-    p['scene_plan']['shots'][0]['user']['description']='Static medium shot.'
+    p['scene_plan']['shots'][0]['user']['description']='Verbose VLM review notes, not a prompt.'
+    assert compile_window(p,0,picture_offset=1)['generation_hash']==before
+    p['scene_plan']['shots'][0]['user']['prompt_cue']='Keep a medium two-shot.'
     assert compile_window(p,0,picture_offset=1)['generation_hash']!=before
 
 
 def test_user_precedence_dialogue_verbatim():
     p=plan_project();p['scene_plan']['settings']['generate_descriptions']=True
-    p['scene_plan']['shots'][0].update(vlm={'description':'invented wide shot'},user={'description':'Mary remains neutral.'})
+    p['scene_plan']['shots'][0].update(vlm={'description':'invented wide shot'},user={
+        'description':'Much longer VLM notes should not enter the prompt.',
+        'prompt_cue':'Mary remains neutral.'})
     p['prompts']['regions']=[{'id':'dialogue','start':0,'end':168,'text':'S2 <d>[English] We both do.</d>\n(pause)'}]
     w=compile_window(p,0,picture_offset=1)
     assert 'invented' not in w['prompt'] and 'Mary remains neutral.' in w['prompt']
+    assert 'Much longer VLM notes' not in w['prompt']
     assert w['segments'] is None
     assert w['prompt'].count('S2 <d>[English] We both do.</d>\n(pause)') == 1
     assert 'Visual shot request' not in w['prompt']
@@ -549,3 +554,109 @@ def test_scene_conveyor_slot_pictures_without_double_injection():
     bad['scene_plan']['conveyor_slots'] = {'r1': 4, 'r2': 4}
     with pytest.raises(ValueError):
         validate_plan(bad['scene_plan'], {a['id'] for a in bad['assets']}, bad['duration_frames'])
+
+
+def test_compact_shot_cues_keep_connected_base_and_exact_picture_numbers():
+    from ComfyUI_H3_Continuum_Join.timeline.model import with_external_prompt_source
+    p=plan_project()
+    p['prompt_source']={'mode':'connected'}
+    original=(
+        "Realistic live-action psychological drama. <Picture 1> defines Maekar. "
+        "<Picture 2> defines Mary. <Picture 3> defines the original couch. "
+        "Follow <Video 1> for camera coverage and original dialogue timing.\n\n"
+        "Critical acting direction: Mary stays deliberately deadpan; "
+        "Maekar is emotionally expressive. Preserve silences.\n\n"
+        "[0-7s]\nMaekar challenges Mary.\n<d>[English] You want kids, right?</d>\n"
+        "Mary answers neutrally.\n<d>[English] We both do.</d>\n\n"
+        "[7-14s]\nMaekar continues.\n"
+        "<d>[English] Unless being a professional student is considered a job these days.</d>"
+    )
+    connected=with_external_prompt_source(p,{'mode':'Auto','script':original,'global':''})
+    p['scene_plan']['conveyor_slots']={'r1':4,'r2':5}
+    connected['scene_plan']=p['scene_plan']
+    connected['conveyor_reference_slots']={'0':[1,2,3,4,5],'1':[1,2,3]}
+    # Persistent sockets 1/2/3 are identity/setting. Each active scene
+    # reference is a single distinct socket; no internal duplicate image.
+    w=compile_window(connected,0,picture_offset=5,
+                     reference_slot_sizes=(1,1,1,1,1,0,0,0))
+    assert w['images']==[]
+    assert w['prompt'].count('<d>[English] You want kids, right?</d>')==1
+    assert w['prompt'].count('Critical acting direction')==1
+    assert '[0-2.791667s] Match <Picture 4> for camera framing and staging.' in w['prompt']
+    assert '[2.791667-6.375s] Match <Picture 5> for camera framing and staging.' in w['prompt']
+    assert 'Shot plan:' in w['prompt']
+    # Connected original lines MUST still be authoritative rather than an
+    # obsolete internal Studio draft. Timed second-chunk dialogue is separate.
+    w2=compile_window(connected,1,picture_offset=3,
+                      reference_slot_sizes=(1,1,1,0,0,0,0,0))
+    assert 'Unless being a professional student' in w2['prompt']
+    assert 'You want kids' not in w2['prompt']
+    assert '<Picture 5>' not in w2['prompt']
+    assert w2['scene_schedule'] is False
+
+
+def test_long_vlm_notes_dont_pollute_physical_shot_schedule():
+    p=plan_project()
+    long_description=('Environment: therapy room couch. Lighting: soft. '*35)
+    p['scene_plan']['settings']['generate_descriptions']=True
+    p['scene_plan']['shots'][0]['vlm']={'description':long_description}
+    p['scene_plan']['shots'][0]['user']={'description':long_description}
+    w=compile_window(p,0,picture_offset=3)
+    assert 'Environment:' not in w['prompt']
+    assert len(w['scene_shots'])==3
+    assert w['prompt'].count('Match <Picture')==3
+    p['scene_plan']['shots'][0]['user']['prompt_cue']='Keep the camera steady.'
+    w=compile_window(p,0,picture_offset=3)
+    assert w['prompt'].count('Keep the camera steady.')==1
+    p['scene_plan']['shots'][0]['user']['prompt_cue']='<Picture 7>'
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import validate_plan
+    with pytest.raises(ValueError,match='plain-text'):
+        validate_plan(p['scene_plan'],{x['id'] for x in p['assets']},p['duration_frames'])
+
+
+def test_connected_state_manager_timeline_anchors_to_nonzero_scene_origin():
+    from ComfyUI_H3_Continuum_Join.timeline.model import with_external_prompt_source
+    p=plan_project()
+    p['duration_frames']=1008
+    p['chunk_origin_frame']=672
+    p['selection']=[672,1008]
+    p['scene_plan']['shots'][0]['range']=[672,739]
+    p['scene_plan']['shots'][1]['range']=[739,825]
+    p['scene_plan']['shots'][2]['range']=[825,840]
+    p['prompt_source']={'mode':'connected'}
+    base=("Identity Maekar <Picture 1>; Mary <Picture 2>; set <Picture 3>.\n"
+          "Mary remains professionally deadpan.\n"
+          "[0-7s]\n<d>[English] You want kids, right?</d>\n"
+          "[7-14s]\n<d>[English] We both do.</d>")
+    external=with_external_prompt_source(p,{'mode':'Auto','script':base,'global':''})
+    assert external['prompts']['origin_frame']==672
+    first=compile_window(external,0,picture_offset=3)
+    second=compile_window(external,1,picture_offset=3)
+    assert 'You want kids' in first['prompt'] and 'We both do' not in first['prompt']
+    assert 'We both do' in second['prompt'] and 'You want kids' not in second['prompt']
+    assert 'Mary remains professionally deadpan' in first['prompt']
+    assert 'Mary remains professionally deadpan' in second['prompt']
+    assert first['scene_shots'][0]['range']==[672,739]
+    absolute=with_external_prompt_source(p,{'mode':'Auto','script':
+          "[28-35s]\nTime is relative to source movie segment.",'global':''})
+    assert 'origin_frame' not in absolute['prompts']
+
+
+def test_explicit_conveyor_only_refuses_hidden_sampler_scaled_fallback():
+    p=plan_project()
+    p['scene_plan']['conveyor_only']=True
+    plain=compile_window(p,0,picture_offset=3,
+                         reference_slot_sizes=(1,1,1,0,0,0,0,0))
+    assert plain['images']==[]
+    assert plain['scene_schedule'] is False
+    assert 'Match <Picture' not in plain['prompt']
+    p['scene_plan']['conveyor_slots']={'r1':4}
+    p['conveyor_reference_slots']={'0':[1,2,3,4]}
+    routed=compile_window(p,0,picture_offset=4,
+                          reference_slot_sizes=(1,1,1,1,0,0,0,0))
+    assert routed['images']==[]
+    assert routed['scene_schedule'] is True
+    assert routed['prompt'].count('Match <Picture 4>')==2
+    # r2 remained staged, so no fake Picture 5 instruction appears.
+    assert '<Picture 5>' not in routed['prompt']
+    assert any('omitted' in warning.lower() for warning in routed['warnings'])

@@ -1,8 +1,8 @@
-import { SmartReferences } from "./smart_references.js?v=h3-timeline-smart-references-v30";
+import { SmartReferences } from "./smart_references.js?v=h3-timeline-smart-references-v31";
 import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v30";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v31";
 import {
   History,
   clone,
@@ -28,8 +28,8 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js?v=h3-timeline-explicit-video-v22";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls, referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v30";
-import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-smart-references-v30";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls, referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v31";
+import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-smart-references-v31";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-explicit-video-v22";
 import { selectedChunkPage } from "./chunk_workspace.js?v=h3-timeline-explicit-video-v22";
 import { ImportDialog } from "./import_dialog.js?v=h3-timeline-explicit-video-v22";
@@ -2208,8 +2208,10 @@ export class TimelineEditor {
         if(previewProject.scene_plan) {
           const sources=referenceSocketSources(this);
           const slot_sizes=Array.from({length:8},(_,i)=>sources[i]?.connected&&!sources[i]?.unavailable?1:0);
+          const connectedPrompt=connectedPromptForPreview(this);
           const scene=await request(this.api,"/scenes/compile",{
-            method:"POST",body:JSON.stringify({project:previewProject,slot_sizes}),signal:this.abort.signal});
+            method:"POST",body:JSON.stringify({project:previewProject,slot_sizes,
+              ...(connectedPrompt===null?{}:{external_prompt:connectedPrompt})}),signal:this.abort.signal});
           plan={jobs:[{windows:scene.windows}]};
         } else plan = await request(this.api, "/compile", {
           method: "POST", body: JSON.stringify(previewProject),

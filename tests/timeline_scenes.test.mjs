@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {History} from '../web/timeline/core.js';
-import {applySceneCandidate,SmartReferences,planConveyorPublication} from '../web/timeline/smart_references.js';
+import {applySceneCandidate,SmartReferences,planConveyorPublication,screenshotIdsForSelection} from '../web/timeline/smart_references.js';
 import {referenceSocketSources} from '../web/timeline/chunk_ui.js';
 
 test('scene Apply uses one History edit and rejects a concurrent timeline edit',()=>{
@@ -130,4 +130,23 @@ test('existing imported screenshot is reused rather than duplicated or overwritt
   assert.equal(plan.routed[0].shelfNumber,5);
   assert.throws(()=>planConveyorPublication(Array(9).fill('a'.repeat(64)),state,source,conveyor.id),
     /1 and 8 distinct/);
+});
+
+
+test('export counts all chosen scene screenshots, not only enabled shot occurrences',()=>{
+ const id=n=>n.toString(16).padStart(64,'0');
+ const plan={shots:[
+  {range:[17400,17467],source_asset_id:'movie',reference_ids:[id(1),id(2)],user:{enabled:true}},
+  {range:[17467,17533],source_asset_id:'movie',reference_ids:[id(3)],user:{enabled:false}},
+  {range:[17533,17560],source_asset_id:'movie',reference_ids:[id(4)],user:{enabled:true}},
+  {range:[17560,17568],source_asset_id:'movie',reference_ids:[id(1)],user:{enabled:true}},
+  {range:[17568,17600],source_asset_id:'different',reference_ids:[id(5)],user:{enabled:true}}
+ ]};
+ const result=screenshotIdsForSelection(plan,[17400,17568],'movie');
+ assert.equal(result.shots.length,4);
+ assert.deepEqual(result.ids,[id(1),id(2),id(3),id(4)]);
+ assert.deepEqual(result.enabledIds,[id(1),id(2),id(4)]);
+ // Four distinct source JPEGs; three appear in active cues.
+ const subset=screenshotIdsForSelection(plan,[17400,17467],'movie');
+ assert.deepEqual(subset.ids,[id(1),id(2)]);
 });

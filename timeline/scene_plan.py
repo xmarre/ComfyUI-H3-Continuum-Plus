@@ -41,6 +41,8 @@ def validate_plan(plan, asset_ids, duration):
     if not isinstance(plan, dict) or plan.get("schema") != SCHEMA:
         raise ValueError("Unsupported scene plan schema")
     settings(plan.get("settings"))
+    if type(plan.get("conveyor_only", False)) is not bool:
+        raise ValueError("Invalid Conveyor-only reference routing mode")
     slots = plan.get("conveyor_slots", {})
     if not isinstance(slots, dict) or any(
         not isinstance(k, str) or type(v) is not int or not 1 <= v <= 8
@@ -99,6 +101,7 @@ def mapped_plan(project, analysis):
     plan = {"schema": SCHEMA, "analysis_id": analysis["id"], "source_asset_id": analysis["source_asset_id"],
             "settings": analysis["settings"],
             "conveyor_slots": copy.deepcopy(prior.get("conveyor_slots", {})),
+            "conveyor_only": bool(prior.get("conveyor_only", False)),
             "references": {**copy.deepcopy(prior.get("references", {})), **copy.deepcopy(analysis["references"])},
             "shots": [], "timing": {"detected": "source PTS", "requested": "project frame intervals",
                                      "enforced": False, "generated_measurements": None}}
@@ -252,6 +255,12 @@ def allocate(project, start, end, persistent_count, manual_images):
             # Image Conveyor delivers this exact frame through the connected
             # Media Resolution pipeline. Do not duplicate it as a scoped image.
             chosen.append(rid)
+            continue
+        if plan.get("conveyor_only"):
+            # A user explicitly chose Conveyor / Media Resolution for this
+            # scene. Staged-only screenshots MUST NOT silently pass through
+            # the native scoped-reference fallback, which resizes images
+            # differently and changes Picture numbers.
             continue
         if ref["asset_id"] in selected_assets:
             chosen.append(rid)

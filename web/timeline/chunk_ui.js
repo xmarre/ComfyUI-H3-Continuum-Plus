@@ -87,6 +87,13 @@ function conveyorSourcePreviews(editor,graph,sampler,slot) {
     truncated:ancestry.truncated,
   };
 }
+export function connectedPromptForPreview(editor) {
+  if(editor.p?.prompt_source?.mode==="studio") return null;
+  const sampler=linkedSampler(editor);
+  if(!sampler) return null;
+  try { return connectedTextSource(editor.app.graph,sampler).text; }
+  catch { return null; }
+}
 export function referenceSocketSources(editor) {
   const sampler=linkedSampler(editor);
   if (!sampler) return [];

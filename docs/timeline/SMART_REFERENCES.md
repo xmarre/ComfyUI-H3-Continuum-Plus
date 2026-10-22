@@ -324,3 +324,57 @@ socket selections. Otherwise a plan referencing extracted assets that were
 not yet applied could fail project validation. A graph-level Conveyor shelf
 edit is **not** reversed by Timeline Undo; the UI requires confirmation before
 modifying a live shelf or detaching its active named preset.
+
+
+## Per-shot Picture cues and the connected base prompt (2026-10-22)
+
+Timeline Studio's saved `prompts.script` is **not authoritative** when a
+connected State Manager Text Box drives the sampler's `sequence_prompt`.
+The live H3 queue uses `with_external_prompt_source`, not the saved Studio
+draft. `POST /scenes/compile` now accepts the **request-local**, bounded
+`external_prompt` read through the same unique State Manager Text Box input,
+runs the same adapter, and produces an effective read-only prompt preview
+merging that real base with active shot cues. No widget/preset is overwritten.
+For connected relative `[0-7s]`, `[7-14s]` sources, the adapter now anchors
+the timeline to the actual nonzero `chunk_origin_frame`, such as scene frame
+17400, without changing an explicitly provided prompt origin.
+
+At runtime a minimal screenshot cue is attached to **each detected shot
+range**, e.g. `[0-2.791667s] Match <Picture 4> for camera framing and staging.`
+`<Picture 4>` is only used if the exact screenshot has an active allocated
+native reference image in that chunk. Native physical H3 compiles these
+structured frame intervals on the descriptor's **context-prefixed clock**;
+the displayed logical-chunk times are not physical offsets. Original dialogue,
+acting precedence (including Mary's deliberate deadpan), and the entire
+authored timeline remain unchanged and take priority over composition
+evidence. The full VLM report can be edited in the review UI but **is never
+dumped into H3**. A separate optional explicit `user.prompt_cue` of at most
+180 plain-text characters per shot can express a narrowly scoped visual
+override. The deprecated `generate_descriptions` setting no longer emits
+VLM paragraph dumps as sampling text.
+
+**Occurrences are not distinct photographs.** Export now counts references
+from all shot occurrences of the chosen source within the project selection,
+including references retained for disabled shots; a disabled shot is never
+made active for conditioning by importing its still. A four-reference review
+will export four distinct screenshots (provided all are referenced by shots
+inside the selected scope), even if only two enabled shots are visible.
+The modal's confirmation reports shot occurrences, unique screenshots and
+the number referenced by enabled shot cues.
+
+Explicit Conveyor export sets `scene_plan.conveyor_only=true`.
+**Staged, unconnected screenshots are never secretly injected into H3 via a
+separate sampler-scoped reference resize path.** They can be inspected in
+Image Conveyor but must be connected through the user's existing Media
+Resolution pipeline to a free H3 sampler socket to earn a `<Picture N>`
+alias. Connected identity inputs still retain their slots. This is distinct
+from non-Conveyor use, which retains the existing internal scoped-reference
+fallback.
+
+The connected State Manager Text Box remains the authored source of truth.
+The composed prompt in Studio is a **derived, read-only** view and does not
+mutate the Text Box, saved presets, or their queue/save leases. Manually
+pasting a derived physical-clock cue into the original 112-second State
+Manager script is **not** equivalent: it risks applying a sample-local
+context offset as absolute timeline time. Review the compiled per-chunk
+result before generation. No miniMax H3 frame-perfect cut claims are made.
