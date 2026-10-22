@@ -465,7 +465,7 @@ def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
     windows = [compile_window(p, i, picture_offset=1) for i in range(2)]
     assert not windows[0]['scene_schedule']
     assert windows[1]['scene_schedule']
-    assert windows[1]['prompt'].count('2.791667-6.375s:') == 1
+    assert windows[1]['prompt'].count('[2.791667-6.375s]') == 1
     assert windows[1]['prompt'].count(authored) == 1
 
     provider = TimelineInputs(p, {'windows': windows, 'range': [0, 336]}, None)
@@ -491,10 +491,10 @@ def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
     emitted = compiled.text
     assert any(d.get('code') == 'H3C-PT240' for d in compiled.diagnostics)
     assert emitted.count('Shot plan:') == 1
-    assert '1.416667-4.208333s:' in emitted  # 34/24 -> (34+67)/24
-    assert '4.208333-7.791667s:' in emitted  # (34+67)/24 -> (34+153)/24
-    assert '7.791667-8.416667s:' in emitted
-    assert '0-2.791667s:' not in emitted
+    assert '[1.416667-4.208333s]' in emitted  # 34/24 -> (34+67)/24
+    assert '[4.208333-7.791667s]' in emitted  # (34+67)/24 -> (34+153)/24
+    assert '[7.791667-8.416667s]' in emitted
+    assert '[0-2.791667s]' not in emitted
     assert emitted.count(authored) == 1
     assert emitted.count('Dedicated character identity references') == 1
 
@@ -503,8 +503,8 @@ def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
         physical, descriptor, legacy_text=provider.invocation_text(authored, 1),
         candidate=False,
     ).text
-    assert '0-2.791667s:' in nominal
-    assert '1.416667-4.208333s:' not in nominal
+    assert '[0-2.791667s]' in nominal
+    assert '[1.416667-4.208333s]' not in nominal
     assert nominal.count(authored) == 1
 
     # The compiler is also used by the next-chunk conditioning lookahead.

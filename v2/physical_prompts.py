@@ -745,7 +745,7 @@ def _render_physical_scene_schedule(
             continue
         local_a = Fraction(a - descriptor.global_start_frame, 1) / descriptor.fps
         local_b = Fraction(b - descriptor.global_start_frame, 1) / descriptor.fps
-        rendered.append((a, b, f"{_format_seconds(local_a)}-{_format_seconds(local_b)}s: {shot['text']}"))
+        rendered.append((a, b, f"[{_format_seconds(local_a)}-{_format_seconds(local_b)}s] {shot['text']}"))
     if not rendered:
         return ""
     rendered.sort(key=lambda item: (item[0], item[1], item[2]))

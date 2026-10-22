@@ -307,7 +307,7 @@ def augment_prompt(project, shots, start, end, base, segments, text, picture_by_
         a, b = max(start, shot["range"][0]), min(end, shot["range"][1])
         if detail and a < b:
             scene_shots.append({"range": [a, b], "text": detail})
-            schedule.append(f"{seconds_text(a-start)}-{seconds_text(b-start)}s: {detail}")
+            schedule.append(f"[{seconds_text(a-start)}-{seconds_text(b-start)}s] {detail}")
             identity_notice |= "Scene composition evidence:" in detail
     if not schedule:
         return segments, text, False, []
