@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {History} from '../web/timeline/core.js';
-import {applySceneCandidate,SmartReferences,planConveyorPublication,screenshotIdsForSelection} from '../web/timeline/smart_references.js';
+import {applySceneCandidate,SmartReferences,planConveyorPublication,screenshotIdsForSelection,renderShotCueReceipt} from '../web/timeline/smart_references.js';
 import {referenceSocketSources} from '../web/timeline/chunk_ui.js';
 
 test('scene Apply uses one History edit and rejects a concurrent timeline edit',()=>{
@@ -149,4 +149,64 @@ test('export counts all chosen scene screenshots, not only enabled shot occurren
  // Four distinct source JPEGs; three appear in active cues.
  const subset=screenshotIdsForSelection(plan,[17400,17467],'movie');
  assert.deepEqual(subset.ids,[id(1),id(2)]);
+});
+
+test('cue receipt displays exact shot intervals even before Conveyor routing',()=>{
+  const p={scene_plan:{conveyor_only:true,shots:[
+    {id:'a',range:[17400,17467],reference_ids:['x'],user:{enabled:true}},
+    {id:'b',range:[17467,17553],reference_ids:['y'],user:{enabled:true}},
+    {id:'c',range:[17553,17568],reference_ids:['z'],user:{enabled:false}}
+  ]}};
+  const windows=[{index:0,range:[17400,17568],scene_shots:[
+    {range:[17400,17467],text:'Match <Picture 4> for camera framing and staging.'}
+  ]}];
+  const text=renderShotCueReceipt({windows,prompt_source:'connected'},p);
+  assert.match(text,/Base: connected State Manager prompt/);
+  assert.match(text,/3 shot window\(s\) · 1 active Picture cue\(s\) · 1 disabled/);
+  assert.match(text,/Chunk 1 \[0-2\.791667s\] Match <Picture 4>/);
+  assert.match(text,/Chunk 1 \[2\.791667-6\.375s\] No active H3 <Picture N> alias/);
+  assert.match(text,/connect its output through Media Resolution/);
+  assert.match(text,/Chunk 1 \[6\.375-7s\] Disabled shot/);
+  assert.doesNotMatch(text,/<Picture 5>/);
+});
+
+test('cue receipt does not fabricate image aliases when all references are staged',()=>{
+  const p={scene_plan:{conveyor_only:true,shots:[{id:'a',range:[0,168],
+    reference_ids:['screenshot'],user:{enabled:true}}]}};
+  const text=renderShotCueReceipt({
+    windows:[{index:0,range:[0,168],scene_shots:[]}],
+    prompt_source:'connected-unavailable',
+  },p);
+  assert.match(text,/UNVERIFIED/);
+  assert.match(text,/0 active Picture cue/);
+  assert.match(text,/No active H3 <Picture N> alias/);
+  assert.doesNotMatch(text,/Match <Picture/);
+});
+
+test('completed VLM analysis preview automatically requests compiled shot cues',async()=>{
+  let compiled=0,rendered=0;
+  const data={project:{scene_plan:{shots:[{id:'a'}]},prompts:{}},
+    analysis:{id:'analysis',shots:[{id:'a'}],warnings:[]}};
+  const ui={
+    job:'job',pendingInterpretation:false,closed:false,version:2,
+    editor:{editVersion:2,p:{selection:[0,168]}},
+    candidate:{},analysis:null,modelChoices:[],models:{value:'none'},
+    api:{fetchApi:async()=>({ok:true,json:async()=>data})},
+    renderShots(){rendered++},scheduleCuePreview(){compiled++},
+    status:{textContent:''}
+  };
+  await SmartReferences.prototype.preview.call(ui);
+  assert.equal(rendered,1);
+  assert.equal(compiled,1);
+  assert.equal(ui.candidate,data.project);
+  assert.match(ui.status.textContent,/mapped shots/);
+});
+
+test('smart-reference form source select and help text cannot overlap controls',async()=>{
+  const {readFileSync}=await import('node:fs');
+  const css=readFileSync(new URL('../web/timeline/studio.css',import.meta.url),'utf8');
+  assert.match(css,/\.h3ts-smart-controls > \.h3ts-smart-source \{ grid-column:span 2;/);
+  assert.match(css,/\.h3ts-smart-controls select,\.h3ts-smart-controls input \{ box-sizing:border-box;min-width:0;max-width:100%/);
+  assert.match(css,/\.h3ts-smart-controls > \.h3ts-smart-resolution-note \{ grid-column:1\/-1;/);
+  assert.match(css,/\.h3ts-smart-controls \.h3ts-smart-actions \{ grid-column:1\/-1;/);
 });

@@ -204,9 +204,18 @@ def register_routes():
                                           "total_images": count+len(window["images"]), "capacity": 8,
                                           "runtime_verified": False}
             windows.append(window)
-        return web.json_response({"windows": windows, "socket_sizes": sizes, "timing_enforced": False,
-                                  "prompt_source": "connected" if connected is not None and
-                                  p.get("prompt_source", {}).get("mode") != "studio" else "studio"})
+        source_mode = p.get("prompt_source", {}).get("mode")
+        if source_mode == "studio":
+            preview_source = "studio"
+        elif connected is not None:
+            preview_source = "connected"
+        else:
+            # Do not silently label saved Studio text as the actual native
+            # conditioning source if a connected State Manager node could
+            # not be read in this browser graph.
+            preview_source = "connected-unavailable"
+        return web.json_response({"windows": windows, "socket_sizes": sizes,
+                                  "timing_enforced": False, "prompt_source": preview_source})
 
     @endpoint("post", "/scenes/edit")
     async def edit_scene_plan(request):

@@ -378,3 +378,31 @@ pasting a derived physical-clock cue into the original 112-second State
 Manager script is **not** equivalent: it risks applying a sample-local
 context offset as absolute timeline time. Review the compiled per-chunk
 result before generation. No miniMax H3 frame-perfect cut claims are made.
+
+
+### Automatic shot-cue receipt and responsive review modal (2026-10-22)
+
+The cue panel is **not** gated on pressing an out-of-view
+`Preview compiled inputs` button. Completing deterministic analysis,
+loading saved analysis, finishing optional VLM interpretation, splitting or
+reassigning shots, enabling/disabling a shot, editing a short manual H3 cue,
+reverting pending changes, and applying a plan all trigger a debounced,
+generation-guarded **read-only preview compilation**. Its results contain
+one timed receipt row for each analysed shot interval; if a screenshot is
+only staged in Conveyor, the corresponding row explicitly says no active
+H3 `<Picture N>` alias exists, rather than remaining blank or inventing a
+slot. Full model observations still stay out of the generation prompt.
+The detailed compiled prompt panel remains collapsed during automatic
+refresh and expands on explicit inspection.
+
+If Studio cannot unambiguously read the connected State Manager Text Box,
+the preview now labels its base source `UNVERIFIED`; it never misreports
+saved Studio draft text as the authoritative H3 input. The queue-time
+State Manager save/lease and native conditioning contract are unchanged.
+
+The dialog's controls use a min-width-zero, three-column responsive grid
+(two on medium layouts, one on narrow windows). Its full-length source
+selector, contextual notes, option toggles and four analysis actions occupy
+bounded cells or dedicated rows. The shot review inputs and long VLM
+textareas likewise remain within the dialog instead of overlapping
+neighbours. No crop/resample or PNG change was introduced.

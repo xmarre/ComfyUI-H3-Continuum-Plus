@@ -1,7 +1,7 @@
 // Smart References is a detached analysis workspace. Apply uses the editor's
 // existing History transaction and rejects results after concurrent edits.
 import { clone } from "./core.js";
-import { referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v32";
+import { referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v33";
 const BASE="/h3_continuum/timeline";
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag);
@@ -101,6 +101,56 @@ export function applySceneCandidate(editor,candidate,version) {
     p.scene_plan=clone(candidate.scene_plan);
   });
 }
+/**
+ * Concise, compiler-grounded receipt. Shows every shot occurrence, even when
+ * no screenshot has reached an actual native H3 image slot. Never invent a
+ * <Picture N> for staged Conveyor files or assume shelf index == socket index.
+ */
+export function renderShotCueReceipt(result, project) {
+  const windows=Array.isArray(result?.windows)?result.windows:[];
+  const shots=Array.isArray(project?.scene_plan?.shots)?project.scene_plan.shots:[];
+  const asSeconds=frames=>String(Number((frames/24).toFixed(6)));
+  const lines=[];
+  let occurrences=0, active=0, disabled=0;
+  for(const w of windows){
+    const present=(w.scene_shots||[]).map(row=>({...row,used:false}));
+    const current=shots.filter(shot=>shot.range[0]<w.range[1]&&w.range[0]<shot.range[1])
+      .sort((a,b)=>a.range[0]-b.range[0]||a.range[1]-b.range[1]||a.id.localeCompare(b.id));
+    for(const shot of current){
+      occurrences++;
+      const a=Math.max(shot.range[0],w.range[0]), b=Math.min(shot.range[1],w.range[1]);
+      const range="Chunk "+(w.index+1)+" ["+asSeconds(a-w.range[0])+"-"+asSeconds(b-w.range[0])+"s] ";
+      if(shot.user?.enabled===false){
+        disabled++;lines.push(range+"Disabled shot; no H3 cue.");continue;
+      }
+      const match=present.find(row=>!row.used&&row.range?.[0]===a&&row.range?.[1]===b);
+      if(match){
+        match.used=true;active++;lines.push(range+match.text);
+      } else {
+        const refs=shot.reference_ids?.length||0;
+        const reason=refs
+          ? project.scene_plan?.conveyor_only
+            ? "No active H3 <Picture N> alias. JPEG may be staged in Conveyor; connect its output through Media Resolution, then reimport."
+            : "No active H3 <Picture N> alias. Check the reference budget and sampler input routing."
+          : "No screenshot selected for this shot.";
+        lines.push(range+reason);
+      }
+    }
+  }
+  const base=result?.prompt_source==="connected"
+    ? "connected State Manager prompt"
+    : result?.prompt_source==="connected-unavailable"
+      ? "UNVERIFIED — connected State Manager text was not resolved"
+      : "Studio prompt fields";
+  const header="SHOT REFERENCE CUES · Base: "+base+
+    "\n"+occurrences+" shot window(s) · "+active+" active Picture cue(s) · "+
+    disabled+" disabled shot window(s)";
+  return header+"\n"+(lines.length?lines.join("\n"):
+    "No analysed shot intervals in the selected chunk preview.")+
+    "\nCue times are logical chunk-local; native physical continuation rebases for carried frames."+
+    "\nFull VLM notes and authored dialogue are not repeated here.";
+}
+
 export class SmartReferences {
   constructor(editor) {
     this.editor=editor;this.api=editor.api;this.version=editor.editVersion;
@@ -109,6 +159,7 @@ export class SmartReferences {
       h3_mp:.7,vlm_mp:.25,tone_mapping:"zscale",sdr_nits:125,downsample:"lanczos",scene_budget:3,
       reserved_identity_slots:1,global_budget:128,generate_descriptions:false,...editor.p.scene_plan?.settings};
     this.page=0;this.vlmStop=false;this.contextBudget=8192;
+    this.cueRevision=0;this.cueTimer=null;
     this.root=el("dialog",{class:"h3ts-smart","aria-label":"Scene Analysis / Smart References"});
     this.root.addEventListener("cancel",e=>{e.preventDefault();this.close();});
     this.root.addEventListener("keydown",e=>e.stopPropagation());
@@ -131,29 +182,31 @@ export class SmartReferences {
         button("Cancel VLM",()=>this.guard(()=>this.cancelVlm()))),
       el("p",{text:"Detected cuts use exact source PTS. H3 cut timing is advisory. Images are active for their whole chunk. Source faces remain visual composition evidence; dedicated character references control replacement identity."}),
       this.cueReceipt,this.list,el("details",{},el("summary",{text:"Compiled prompts and physical image allocation"}),this.compiled),
-      el("footer",{},button("Preview compiled inputs",()=>this.guard(()=>this.compile())),
+      el("footer",{},button("Preview compiled inputs",()=>this.guard(()=>this.refreshCuePreview({immediate:true,showDetails:true}))),
         button("Send selected JPGs to Image Conveyor",()=>this.guard(()=>this.sendToConveyor())),
         button("Apply shot plan",()=>this.guard(()=>this.apply())),
         button("Undo applied plan",()=>this.guard(()=>{if(this.appliedVersion!==editor.editVersion)throw Error("Only the most recently applied shot-plan edit can be undone here. Use Timeline Undo for later edits.");editor.undo();this.appliedVersion=null;this.version=editor.editVersion;this.candidate=clone(editor.p);this.renderShots();})),
-        button("Revert pending edits",()=>{this.candidate=clone(editor.p);this.renderShots();})));
+        button("Revert pending edits",()=>{this.candidate=clone(editor.p);this.renderShots();this.scheduleCuePreview();})));
     document.body.append(this.root);this.root.showModal();this.renderControls();this.renderShots();
+    if(this.candidate.scene_plan)this.scheduleCuePreview();
     editor.smartReferences=this;
     this.guard(()=>this.loadModels());
   }
   async guard(fn){try{return await fn();}catch(error){this.status.textContent="ERROR · "+(error?.message||error);this.status.setAttribute("role","alert");console.error("Smart References",error);}}
   renderControls(){
     const sources=this.project.assets.filter(a=>a.video&&a.kind!=="image");
-    this.source=el("select",{"aria-label":"Scene analysis source"},...sources.map(a=>el("option",{value:a.id,text:a.name})));
+    this.source=el("select",{"aria-label":"Scene analysis source",title:"Source footage"},...sources.map(a=>el("option",{value:a.id,text:a.name})));
     const field=(name,key,type="number",extra={})=>{
       const input=type==="select"?el("select",{"aria-label":name},...extra.choices.map(value=>el("option",{value,text:value}))):
         el("input",{type,"aria-label":name,...extra});
       if(type==="checkbox")input.checked=this.cfg[key];else input.value=this.cfg[key];
       input.onchange=()=>{this.cfg[key]=type==="checkbox"?input.checked:type==="number"?Number(input.value):input.value;};
-      return el("label",{},name,input);
+      return el("label",{class:"h3ts-smart-control"+(type==="checkbox"?" h3ts-smart-toggle":"")},name,input);
     };
     const context=el("input",{type:"number",min:2048,max:49152,step:1024,value:this.contextBudget,"aria-label":"VLM context token budget"});
     context.onchange=()=>{this.contextBudget=Number(context.value);};
-    this.controls.replaceChildren(el("label",{},"VLM context token budget",context),el("label",{},"Original source",this.source),
+    this.controls.replaceChildren(el("label",{class:"h3ts-smart-control"},"VLM context token budget",context),
+      el("label",{class:"h3ts-smart-control h3ts-smart-source"},"Original source",this.source),
       field("Shot detection","detect_shots","checkbox"),field("Within-shot changes","within_shot","checkbox"),
       field("Reuse recurring setups","deduplicate","checkbox"),field("Detection sensitivity","sensitivity","number",{min:.25,max:4,step:.05}),
       field("Maximum screenshots per shot","max_per_shot","number",{min:1,max:4,step:1}),
@@ -165,15 +218,17 @@ export class SmartReferences {
       field("Reserved identity slots","reserved_identity_slots","number",{min:0,max:8,step:1}),
       field("Maximum distinct scene references","global_budget","number",{min:1,max:2048,step:1}),
       el("p",{class:"h3ts-smart-resolution-note",text:"VLM observations stay in the review editor. Only short, explicitly approved H3 shot cues are added to the base prompt."}),
-      button("Analyze selected scene",()=>this.guard(()=>this.analyze("selection"))),
-      button("Analyze full source",()=>this.guard(()=>this.analyze("source"))),
-      button("Cancel analysis",()=>this.guard(()=>this.cancelAnalysis())),
-      button("Load completed analysis",()=>this.guard(()=>this.preview())));
+      el("div",{class:"h3ts-smart-actions"},
+        button("Analyze selected scene",()=>this.guard(()=>this.analyze("selection"))),
+        button("Analyze full source",()=>this.guard(()=>this.analyze("source"))),
+        button("Cancel analysis",()=>this.guard(()=>this.cancelAnalysis())),
+        button("Load completed analysis",()=>this.guard(()=>this.preview()))));
   }
   async analyze(scope) {
     if(this.job)await this.cancelAnalysis();
     this.project=clone(this.editor.p);this.version=this.editor.editVersion;
     this.candidate=clone(this.project);this.page=0;
+    this.clearCuePreview("Analysing source footage. Shot time/Picture mappings will update automatically when analysis completes.");
     const result=await json(this.api,BASE+"/scenes/analyze",{project:this.project,asset_id:this.source.value,scope,settings:this.cfg});
     if(this.closed){await json(this.api,BASE+"/scenes/"+result.id+"/cancel",{});return;}
     this.job=result.id;await this.poll();
@@ -200,7 +255,9 @@ export class SmartReferences {
     if(this.editor.editVersion!==version)throw Error("Timeline changed during preview. Preview again.");
     if(this.closed)return;
     this.version=version;this.candidate=result.project;this.analysis=result.analysis;
-    this.renderShots();this.status.textContent=this.candidate.scene_plan.shots.length+" mapped shots · review before Apply"+(this.analysis.warnings?.length?" · "+this.analysis.warnings.join(" · "):"");
+    this.renderShots();
+    this.status.textContent=this.candidate.scene_plan.shots.length+" mapped shots · review before Apply"+(this.analysis.warnings?.length?" · "+this.analysis.warnings.join(" · "):"");
+    this.scheduleCuePreview();
   }
   async loadModels(){
     try{
@@ -267,7 +324,7 @@ export class SmartReferences {
   }
   async edit(operation,shot,extra={}){
     const result=await json(this.api,BASE+"/scenes/edit",{project:this.candidate,operation,shot_id:shot.id,...extra});
-    this.candidate=result.project;this.renderShots();
+    this.candidate=result.project;this.renderShots();this.scheduleCuePreview();
   }
   renderShots(){
     const plan=this.candidate.scene_plan;
@@ -279,7 +336,7 @@ export class SmartReferences {
     this.list.replaceChildren(nav);
     for(const shot of plan.shots.slice(this.page*20,this.page*20+20)){
       const enabled=el("input",{type:"checkbox","aria-label":"Use shot "+shot.id});enabled.checked=shot.user?.enabled!==false;
-      enabled.onchange=()=>{shot.user||={};shot.user.enabled=enabled.checked;};
+      enabled.onchange=()=>{shot.user||={};shot.user.enabled=enabled.checked;this.scheduleCuePreview();};
       const area=el("textarea",{"aria-label":"Shot description "+shot.id,rows:3});
       area.value=shot.user?.description??shot.vlm?.description??"";
       area.oninput=()=>{shot.user||={};shot.user.description=area.value;shot.user.description_provenance=shot.vlm?"edited_model_observation":"user_authored";};
@@ -287,7 +344,7 @@ export class SmartReferences {
         placeholder:"Optional short framing override · not dialogue",
         maxLength:180});
       shortCue.value=shot.user?.prompt_cue||"";
-      shortCue.onchange=()=>{shot.user||={};shot.user.prompt_cue=shortCue.value.trim();};
+      shortCue.oninput=()=>{shot.user||={};shot.user.prompt_cue=shortCue.value.trim();this.scheduleCuePreview();};
       const location=el("input",{"aria-label":"Physical scene identity "+shot.id,placeholder:"Unverified location"});
       location.value=shot.scene_id||"";
       location.onchange=()=>{shot.scene_id=location.value||null;shot.user||={};shot.user.scene_id=shot.scene_id;};
@@ -337,7 +394,34 @@ export class SmartReferences {
         throw Error("Analysis/extraction settings changed. Reanalyze before applying or compiling these references.");
     this.candidate.scene_plan.settings={...this.cfg};
   }
-  async compile(){
+  clearCuePreview(message="No analysed shot plan available."){
+    clearTimeout(this.cueTimer);this.cueRevision++;
+    this.cueReceipt.textContent=message;
+  }
+  scheduleCuePreview(){
+    clearTimeout(this.cueTimer);
+    const revision=++this.cueRevision;
+    if(this.closed||!this.candidate.scene_plan){
+      this.cueReceipt.textContent="No analysed shot plan available.";return;
+    }
+    this.cueReceipt.textContent="Resolving selected shot timestamps, connected base prompt and active H3 Picture aliases…";
+    this.cueTimer=setTimeout(()=>this.compile(revision).catch(error=>this.cueFailure(revision,error)),150);
+  }
+  cueFailure(revision,error){
+    if(revision!==this.cueRevision||this.closed)return;
+    this.cueReceipt.textContent="SHOT REFERENCE PREVIEW ERROR · "+(error?.message||error)+
+      "\nAnalysis remains available. No H3 cue has been verified.";
+    console.error("Smart References cue compilation",error);
+  }
+  async refreshCuePreview({immediate=false,showDetails=false}={}){
+    clearTimeout(this.cueTimer);
+    const revision=++this.cueRevision;
+    this.cueReceipt.textContent="Resolving the effective prompt and active reference inputs…";
+    const go=()=>this.compile(revision,showDetails).catch(error=>this.cueFailure(revision,error));
+    if(immediate)return go();
+    this.cueTimer=setTimeout(go,150);
+  }
+  async compile(revision=++this.cueRevision,showDetails=false){
     if(!this.candidate.scene_plan)throw Error("Analyze footage first");
     this.updatePlanSettings();
     const sources=referenceSocketSources(this.editor);
@@ -345,25 +429,18 @@ export class SmartReferences {
     const connectedPrompt=connectedPromptForPreview(this.editor);
     const result=await json(this.api,BASE+"/scenes/compile",{project:this.candidate,slot_sizes:sizes,
       ...(connectedPrompt===null?{}:{external_prompt:connectedPrompt})});
-    const seconds=frames=>{
-      const value=(frames/24).toFixed(6);
-      return String(Number(value));
-    };
-    const cues=result.windows.flatMap(w=>(w.scene_shots||[]).map(shot=>
-      "Chunk "+(w.index+1)+" ["+seconds(shot.range[0]-w.range[0])+"-"+
-        seconds(shot.range[1]-w.range[0])+"s] "+shot.text));
-    this.cueReceipt.textContent="SHOT REFERENCE CUES · base: "+
-      (result.prompt_source==="connected"?"connected State Manager":"Studio (not connected)")+
-      "\n"+(cues.length?cues.join("\n"):
-        "No active screenshots have been allocated to the H3 input slots for these chunks.")+
-      "\nTimes shown on the logical chunk clock; physical continuation adds reused-frame context. "+
-      "Full VLM descriptions and dialogue are not copied into these cues.";
-    this.compiled.textContent="Base prompt: "+(result.prompt_source==="connected"?"CONNECTED State Manager Text Box":"Studio fields (connected text unavailable or explicitly disabled)")+
+    if(revision!==this.cueRevision||this.closed)return;
+    this.cueReceipt.textContent=renderShotCueReceipt(result,this.candidate);
+    this.compiled.textContent="Base prompt: "+(
+      result.prompt_source==="connected" ? "CONNECTED State Manager Text Box" :
+      result.prompt_source==="connected-unavailable"
+        ? "UNVERIFIED — connected State Manager Text Box could not be read; Studio draft shown only for diagnostics"
+        : "Studio prompt fields")+
       ".\nSocket counts are inferred from graph outputs; bundled/dynamic tensors are sampler-authoritative.\n"+
       "Cue times are per logical 7-second chunk here; physical H3 adds retained-context offset.\n"+
       "Full VLM descriptions stay in review; only a separately approved short H3 cue is allowed.\n\n"+result.windows.map(w=>
       "Chunk "+(w.index+1)+" ["+w.range.join(",")+")\n"+JSON.stringify({reference_budget:w.reference_budget,aliases:w.aliases,images:w.images,warnings:w.warnings},null,2)+"\n"+w.prompt).join("\n\n");
-    this.compiled.parentElement.open=true;
+    if(showDetails)this.compiled.parentElement.open=true;
   }
   async sendToConveyor(){
     if(!this.candidate.scene_plan)throw Error("Analyze and review a shot plan before importing screenshots.");
@@ -501,21 +578,20 @@ export class SmartReferences {
           "Conveyor-only mode is active: staged screenshots are NOT silently injected through the native scoped-reference fallback."
         : ". Every installed screenshot has a connected H3 reference route.")+
       " JPEG files: ComfyUI/input/h3_timeline_screencaps/.";
-    try{await this.compile();}
-    catch(error){
-      this.status.textContent+=" Effective prompt preview could not compile: "+(error?.message||error);
-    }
+    await this.refreshCuePreview({immediate:true});
   }
   apply(){
     if(!this.candidate.scene_plan)throw Error("Analyze footage first");
     this.updatePlanSettings();
     applySceneCandidate(this.editor,this.candidate,this.version);this.version=this.editor.editVersion;this.appliedVersion=this.version;
     this.editor.scheduleChunkCompile?.();
-    this.status.textContent="Shot plan applied. The effective prompt merges the connected State Manager source with short bracketed Picture cues; review each chunk's effective H3 prompt field. The authored State Manager widget remains unchanged. No generation was queued.";
+    this.scheduleCuePreview();
+    this.status.textContent="Shot plan applied. The effective prompt merges connected State Manager text with short bracketed Picture cues. Inspect the automatically updated cue receipt. The authored State Manager widget is unchanged. No generation was queued.";
   }
   close(){
     if(this.closed)return;
-    this.closed=true;clearTimeout(this.timer);this.root.close();this.root.remove();
+    this.closed=true;clearTimeout(this.timer);clearTimeout(this.cueTimer);this.cueRevision++;
+    this.root.close();this.root.remove();
     this.guard(()=>this.cancelAnalysis());this.guard(()=>this.cancelVlm());
     // Keep a live client registered until cancellation really finishes so a
     // simultaneous queue cannot bypass the handoff by closing this window.
