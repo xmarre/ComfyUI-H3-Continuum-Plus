@@ -156,7 +156,7 @@ export function renderShotCueReceipt(result, project) {
   const shots=Array.isArray(project?.scene_plan?.shots)?project.scene_plan.shots:[];
   const asSeconds=frames=>String(Number((frames/24).toFixed(6)));
   const lines=[];
-  let occurrences=0, active=0, disabled=0;
+  let occurrences=0, active=0, disabled=0, continued=0;
   for(const w of windows){
     const present=(w.scene_shots||[]).map(row=>({...row,used:false}));
     const current=shots.filter(shot=>shot.range[0]<w.range[1]&&w.range[0]<shot.range[1])
@@ -170,7 +170,10 @@ export function renderShotCueReceipt(result, project) {
       }
       const match=present.find(row=>!row.used&&row.range?.[0]===a&&row.range?.[1]===b);
       if(match){
-        match.used=true;active++;lines.push(range+match.text);
+        match.used=true;
+        if(/<Picture\s+\d+>/.test(match.text))active++;
+        else continued++;
+        lines.push(range+match.text);
       } else {
         const refs=shot.reference_ids?.length||0;
         const reason=refs
@@ -193,7 +196,7 @@ export function renderShotCueReceipt(result, project) {
     ? " · CHUNK-STREAMED source JPEGs" : " · fixed Conveyor / scoped references";
   const header="SHOT REFERENCE CUES · Base: "+base+transport+
     "\n"+occurrences+" shot window(s) · "+active+" active Picture cue(s) · "+
-    disabled+" disabled shot window(s)";
+    disabled+" disabled shot window(s) · "+continued+" carried-context shot window(s)";
   return header+"\n"+(lines.length?lines.join("\n"):
     "No analysed shot intervals in the selected chunk preview.")+
     "\nCue times are logical chunk-local; native physical continuation rebases for carried frames."+

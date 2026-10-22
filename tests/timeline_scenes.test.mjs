@@ -314,3 +314,22 @@ test('activating dynamic per-chunk references updates the live project and leave
  assert.equal(ui.previewed,true);
  assert.deepEqual(graph._nodes.slice(0,3).map(n=>n.id),[11,12,13]);
 });
+
+test('boundary-spanning shot uses carried context without spending another Picture slot',()=>{
+ const p={scene_plan:{reference_transport:'streamed',shots:[
+   {id:'cross',range:[153,267],reference_ids:['r3'],user:{}},
+   {id:'next',range:[267,336],reference_ids:['r4'],user:{}},
+ ]}};
+ const receipt=renderShotCueReceipt({
+   prompt_source:'connected',
+   windows:[{index:1,range:[168,336],scene_shots:[
+     {range:[168,267],text:'Continue the previous camera shot from carried video frames; maintain its framing until the next source cut.'},
+     {range:[267,336],text:'Match <Picture 4> for camera framing and staging.'},
+   ]}],
+ },p);
+ assert.match(receipt,/2 shot window\(s\) · 1 active Picture cue\(s\)/);
+ assert.match(receipt,/1 carried-context shot window\(s\)/);
+ assert.match(receipt,/Chunk 2 \[0-4\.125s\] Continue the previous camera shot/);
+ assert.match(receipt,/Chunk 2 \[4\.125-7s\] Match <Picture 4>/);
+ assert.doesNotMatch(receipt,/<Picture 5>/);
+});

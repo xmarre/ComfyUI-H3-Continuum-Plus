@@ -291,6 +291,19 @@ def allocate(project, start, end, persistent_count, manual_images):
         warnings.append(f"Streamed {len(images)} distinct scene reference(s) into this chunk only; later chunks select their own reference set.")
     if invalid:
         warnings.append(f"Skipped {invalid} scene shot(s) because their source clip mapping is no longer valid.")
+    if streamed and not first_window:
+        # Source shot spans a logical H3 boundary. It was referenced in the
+        # previous chunk, so it must not be transmitted again. Supply a
+        # non-spoken continuation instruction on the new chunk's clock.
+        carried = []
+        for prior in plan["shots"]:
+            if (prior["range"][0] < start < prior["range"][1]
+                    and prior.get("user", {}).get("enabled", True)
+                    and mapping_valid(project, prior)):
+                continuing = copy.deepcopy(prior)
+                continuing["_continued_scene"] = True
+                carried.append(continuing)
+        shots.extend(carried)
     return images, shots, warnings
 
 
@@ -302,6 +315,8 @@ def shot_instructions(shot, plan, picture_by_asset):
     emitted only when the referenced asset is *actually* allocated in the
     current logical H3 sample (persistent socket or scoped native input).
     """
+    if shot.get("_continued_scene"):
+        return "Continue the previous camera shot from carried video frames; maintain its framing until the next source cut."
     tags = []
     for rid in shot.get("reference_ids", []):
         asset_id = plan["references"][rid]["asset_id"]

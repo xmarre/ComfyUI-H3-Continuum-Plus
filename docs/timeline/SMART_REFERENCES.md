@@ -467,3 +467,11 @@ the third shot itself continues into chunk 2. If a user deliberately wants
 the same screenshot repeated across a boundary rather than relying on
 continuation, its occurrence/reference must be authored in that second
 chunk explicitly. This avoids consuming a second chunk slot by accident.
+
+A shot already in progress at the beginning of a later logical chunk gets
+a **non-spoken carried-context shot cue** instead of retransmitting its JPEG.
+For example, `[0-4.958333s] Continue the previous camera shot from carried
+video frames` precedes `[4.958333-7s] Match <Picture 4> for camera framing`
+when a new camera shot begins. The cue receipt counts carry-over intervals
+separately from actually active Picture instructions. Native physical H3
+compilation rebases the timestamps to the context-prefixed clip clock.

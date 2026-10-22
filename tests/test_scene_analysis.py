@@ -697,6 +697,12 @@ def test_dynamic_scene_refs_are_per_chunk_and_keep_three_identity_pictures():
     assert '<Picture 4>' in first['prompt'] and '<Picture 6>' in first['prompt']
     assert '<Picture 7>' not in first['prompt']
     assert '<Picture 4>' in second['prompt'] and '<Picture 5>' not in second['prompt']
+    assert len(second['scene_shots']) == 2
+    assert second['scene_shots'][0]['range'] == [168,267]
+    assert 'carried video frames' in second['scene_shots'][0]['text']
+    assert '<Picture' not in second['scene_shots'][0]['text']
+    assert second['scene_shots'][1]['range'] == [267,336]
+    assert '<Picture 4>' in second['scene_shots'][1]['text']
     assert second['images'][0]['asset_id'] == p['scene_plan']['references']['r4']['asset_id']
     assert 'Match <Picture' in second['prompt']
     assert all(item['scene_native'] for item in first['images'])
