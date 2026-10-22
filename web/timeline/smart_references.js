@@ -1,7 +1,7 @@
 // Smart References is a detached analysis workspace. Apply uses the editor's
 // existing History transaction and rejects results after concurrent edits.
 import { clone } from "./core.js";
-import { referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v31";
+import { referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v32";
 const BASE="/h3_continuum/timeline";
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag);
@@ -116,6 +116,7 @@ export class SmartReferences {
     this.controls=el("section",{class:"h3ts-smart-controls"});
     this.list=el("section",{class:"h3ts-smart-shots"});
     this.compiled=el("pre",{class:"h3ts-smart-compiled"});
+    this.cueReceipt=el("pre",{class:"h3ts-smart-cue-receipt",text:"Timed <Picture N> cues appear here after shot-plan compilation. Unconnected Conveyor screenshots cannot be referenced by H3."});
     this.models=el("select",{"aria-label":"Prompt Writer vision model"});
     this.remoteConsent=el("input",{type:"checkbox","aria-label":"Allow sending extracted stills to remote VLM"});
     this.remoteConsentLabel=el("label",{class:"h3ts-remote-consent"},
@@ -129,7 +130,7 @@ export class SmartReferences {
         button("Interpret selected evidence",()=>this.guard(()=>this.interpret())),
         button("Cancel VLM",()=>this.guard(()=>this.cancelVlm()))),
       el("p",{text:"Detected cuts use exact source PTS. H3 cut timing is advisory. Images are active for their whole chunk. Source faces remain visual composition evidence; dedicated character references control replacement identity."}),
-      this.list,el("details",{},el("summary",{text:"Compiled prompts and physical image allocation"}),this.compiled),
+      this.cueReceipt,this.list,el("details",{},el("summary",{text:"Compiled prompts and physical image allocation"}),this.compiled),
       el("footer",{},button("Preview compiled inputs",()=>this.guard(()=>this.compile())),
         button("Send selected JPGs to Image Conveyor",()=>this.guard(()=>this.sendToConveyor())),
         button("Apply shot plan",()=>this.guard(()=>this.apply())),
@@ -344,6 +345,19 @@ export class SmartReferences {
     const connectedPrompt=connectedPromptForPreview(this.editor);
     const result=await json(this.api,BASE+"/scenes/compile",{project:this.candidate,slot_sizes:sizes,
       ...(connectedPrompt===null?{}:{external_prompt:connectedPrompt})});
+    const seconds=frames=>{
+      const value=(frames/24).toFixed(6);
+      return String(Number(value));
+    };
+    const cues=result.windows.flatMap(w=>(w.scene_shots||[]).map(shot=>
+      "Chunk "+(w.index+1)+" ["+seconds(shot.range[0]-w.range[0])+"-"+
+        seconds(shot.range[1]-w.range[0])+"s] "+shot.text));
+    this.cueReceipt.textContent="SHOT REFERENCE CUES · base: "+
+      (result.prompt_source==="connected"?"connected State Manager":"Studio (not connected)")+
+      "\n"+(cues.length?cues.join("\n"):
+        "No active screenshots have been allocated to the H3 input slots for these chunks.")+
+      "\nTimes shown on the logical chunk clock; physical continuation adds reused-frame context. "+
+      "Full VLM descriptions and dialogue are not copied into these cues.";
     this.compiled.textContent="Base prompt: "+(result.prompt_source==="connected"?"CONNECTED State Manager Text Box":"Studio fields (connected text unavailable or explicitly disabled)")+
       ".\nSocket counts are inferred from graph outputs; bundled/dynamic tensors are sampler-authoritative.\n"+
       "Cue times are per logical 7-second chunk here; physical H3 adds retained-context offset.\n"+
@@ -487,6 +501,10 @@ export class SmartReferences {
           "Conveyor-only mode is active: staged screenshots are NOT silently injected through the native scoped-reference fallback."
         : ". Every installed screenshot has a connected H3 reference route.")+
       " JPEG files: ComfyUI/input/h3_timeline_screencaps/.";
+    try{await this.compile();}
+    catch(error){
+      this.status.textContent+=" Effective prompt preview could not compile: "+(error?.message||error);
+    }
   }
   apply(){
     if(!this.candidate.scene_plan)throw Error("Analyze footage first");

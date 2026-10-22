@@ -1202,3 +1202,5 @@
 
 .h3ts-smart .h3ts-remote-consent {border:1px solid #7185a4;border-radius:6px;padding:7px 10px;background:#202c3b;max-width:100%;font-size:12px}
 .h3ts-smart .h3ts-remote-consent[hidden] {display:none !important}
+
+.h3ts-smart-cue-receipt {white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;color:#d7e7ff;background:#111c2c;border:1px solid #586c89;padding:12px;border-radius:7px;max-height:240px;overflow:auto;margin:10px 0}

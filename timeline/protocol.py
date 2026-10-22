@@ -3,7 +3,7 @@
 from pathlib import Path
 from urllib.parse import quote
 
-NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v31"
+NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v32"
 
 
 def native_runtime_manifest(extension_dirs, web_root):
