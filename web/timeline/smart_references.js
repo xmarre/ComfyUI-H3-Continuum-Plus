@@ -1,7 +1,7 @@
 // Smart References is a detached analysis workspace. Apply uses the editor's
 // existing History transaction and rejects results after concurrent edits.
 import { clone } from "./core.js";
-import { referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v27";
+import { referenceSocketSources } from "./chunk_ui.js?v=h3-timeline-smart-references-v30";
 const BASE="/h3_continuum/timeline";
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag);
@@ -18,6 +18,65 @@ async function json(api,path,body,method=body===undefined?"GET":"POST") {
   let data;try{data=await r.json();}catch{data={};}
   if(!r.ok)throw Error(typeof data.error==="string"?data.error:data.error?.message||"Scene analysis request failed ("+r.status+")");
   return data;
+}
+
+/**
+ * Build a non-destructive publication plan. Source shelf indices and physical
+ * H3 reference_image_N sockets are DISTINCT namespaces. Never use a Conveyor
+ * shelf ordinal as an H3 socket index when Media Resolution reroutes them.
+ *
+ * Full shelves can still receive JPEGs in *unconnected* spare shelf slots;
+ * those images are staged, NOT claimed as live H3 conditioning. The user may
+ * wire their shelf outputs later. Native scoped fallback stays unchanged until
+ * there is a verified physical route.
+ */
+export function planConveyorPublication(ids, state, sources, nodeId, toggles=null) {
+  if(state?.output_mode!=="persistent_refs" ||
+     !Array.isArray(state.reference_slots) || state.reference_slots.length!==8)
+    throw Error("Image Conveyor #"+nodeId+" must use Persistent references mode.");
+  if(!Array.isArray(ids) || ids.length===0 || new Set(ids).size!==ids.length || ids.length>8)
+    throw Error("Select between 1 and 8 distinct screenshots per Conveyor shelf.");
+  const byShelf=new Map();
+  for(const route of sources) {
+    if(route.nodeId!==nodeId || !route.connected || !route.conveyor ||
+       !Number.isInteger(route.shelfNumber) || route.shelfNumber<1 || route.shelfNumber>8 ||
+       !Number.isInteger(route.slot) || route.slot<1 || route.slot>8 ||
+       route.dynamic || route.ambiguousPath) continue;
+    const list=byShelf.get(route.shelfNumber)||[];
+    list.push(route);
+    byShelf.set(route.shelfNumber,list);
+  }
+  const preferredRoute=shelf=>{
+    const options=byShelf.get(shelf)||[];
+    // One shelf may feed multiple physical ports; use a physical socket only
+    // if the source path and output toggle are unambiguous.
+    if(options.length!==1 || (Array.isArray(toggles) && toggles[shelf-1]===false))
+      return null;
+    return options[0].slot;
+  };
+  const used=new Set();
+  const assignments=[];
+  const remaining=Array.from({length:8},(_,i)=>i+1);
+  for(const rid of ids) {
+    if(!/^[a-f0-9]{64}$/.test(rid))throw Error("Invalid screenshot content identity.");
+    const annotated="h3_timeline_screencaps/"+rid+".jpg [input]";
+    const existing=remaining.filter(n=>!used.has(n) &&
+      state.reference_slots[n-1]?.annotated===annotated);
+    // Prefer already-imported screenshots with a confirmed physical route.
+    const chosen=existing.sort((a,b)=>Number(!!preferredRoute(b))-Number(!!preferredRoute(a)))[0] ??
+      remaining.filter(n=>!used.has(n)&&state.reference_slots[n-1]==null)
+        .sort((a,b)=>Number(!!preferredRoute(b))-Number(!!preferredRoute(a)))[0];
+    if(!chosen)throw Error("Only "+(8-used.size)+" Conveyor shelf positions remain; "+
+      "all other positions hold existing references. No character images were overwritten.");
+    used.add(chosen);
+    assignments.push({
+      id:rid, shelfNumber:chosen, physicalSlot:preferredRoute(chosen),
+      annotated,
+    });
+  }
+  const routed=assignments.filter(x=>x.physicalSlot!==null);
+  const staged=assignments.filter(x=>x.physicalSlot===null);
+  return {assignments,routed,staged,knownRoutes:[...byShelf.values()].flat().length};
 }
 
 export function applySceneCandidate(editor,candidate,version) {
@@ -269,73 +328,130 @@ export class SmartReferences {
     this.compiled.parentElement.open=true;
   }
   async sendToConveyor(){
-    if(!this.candidate.scene_plan)throw Error("Analyze shots first");
-    if(this.editor.editVersion!==this.version)throw Error("Studio changed. Reopen Smart References before publishing.");
+    if(!this.candidate.scene_plan)throw Error("Analyze and review a shot plan before importing screenshots.");
+    if(this.editor.editVersion!==this.version)
+      throw Error("Studio changed. Reopen Smart References to avoid replacing newer edits.");
+    this.updatePlanSettings();
     const plan=this.candidate.scene_plan;
-    const ids=[...new Set(plan.shots.filter(s=>s.user?.enabled!==false).flatMap(s=>s.reference_ids))];
-    if(!ids.length)throw Error("No screenshots selected");
+    const ids=[...new Set(plan.shots.filter(s=>s.user?.enabled!==false)
+      .flatMap(s=>s.reference_ids))];
+    if(!ids.length)throw Error("No enabled screenshot references to publish.");
+    if(ids.length>8)throw Error("The selected scene plan uses "+ids.length+
+      " unique images, but one Image Conveyor Reference Shelf holds 8. "+
+      "Reduce the enabled shot/reference set or distribute references among multiple runs.");
+    const graph=this.editor.app?.graph;
     const sources=referenceSocketSources(this.editor);
-    const shelf=sources.filter(s=>s.connected&&s.conveyor&&s.shelfNumber&&!s.dynamic);
-    const nodes=[...new Set(shelf.map(s=>s.nodeId))];
-    if(nodes.length!==1)throw Error("Connect one Image Conveyor persistent reference shelf through the existing Media Resolution path.");
-    const node=this.editor.app.graph.getNodeById(nodes[0]);
+    const reachable=[...new Set(sources.flatMap(s=>[
+      ...(s.conveyor&&s.nodeId!=null?[s.nodeId]:[]),
+      ...(s.candidatePreviews||[]).map(x=>x.nodeId),
+    ]).filter(x=>x!=null))];
+    // If a custom Media Resolution intermediary hides provenance, still
+    // permit *staging* into a single local Conveyor without asserting the
+    // images flow to H3. Never invent physical routes from node presence.
+    const allConveyors=(graph?._nodes||[]).filter(node=>
+      ["ImageConveyor","SequentialBatchImageLoader"].includes(node.comfyClass||node.type));
+    const uniqueFallback=allConveyors.length===1 ? allConveyors[0].id : null;
+    const nodes=reachable.length?reachable:(uniqueFallback==null?[]:[uniqueFallback]);
+    if(nodes.length!==1)
+      throw Error(nodes.length===0
+        ? "No unique Image Conveyor found in this graph. Found "+allConveyors.length+
+          " Conveyor nodes and "+sources.filter(x=>x.connected).length+
+          " linked H3 reference sockets; inspect the connection topology."
+        : "Reference inputs originate from "+nodes.length+
+          " Image Conveyors. A single import cannot safely choose one; select a unique source.");
+    const node=graph.getNodeById?.(nodes[0])||
+      graph._nodes.find(x=>x.id===nodes[0]);
     const widget=node?.widgets?.find(w=>w.name==="state_json");
-    if(!widget)throw Error("Image Conveyor state widget unavailable");
+    if(!widget)throw Error("Image Conveyor #"+nodes[0]+" is missing its state_json widget.");
     const before=JSON.parse(widget.value);
-    if(before.output_mode!=="persistent_refs"||before.reference_slots?.length!==8)
-      throw Error("Use Image Conveyor Persistent references mode");
-    const previously=plan.conveyor_slots||{};
-    const assigned={};
-    const available=new Set(shelf.map(s=>s.shelfNumber));
-    const used=new Set();
-    for(const rid of ids){
-      const previous=previously[rid];
-      if(previous && available.has(previous) && before.reference_slots[previous-1]?.annotated?.includes(rid)){
-        assigned[rid]=previous;used.add(previous);continue;
-      }
-      const slot=shelf.find(s=>!used.has(s.shelfNumber)&&s.unavailable&&s.reason==="Shelf empty"&&!before.reference_slots[s.shelfNumber-1]);
-      if(!slot)throw Error("Not enough connected EMPTY Conveyor shelf slots. Existing character references will not be overwritten.");
-      assigned[rid]=slot.shelfNumber;used.add(slot.shelfNumber);
-    }
-    if(!window.confirm("Install "+ids.length+" source-resolution JPGs in empty Image Conveyor shelf slots?"+
-      (before.active_reference_preset_id?" The active character preset will be detached, not overwritten.":"")))return;
-    this.status.textContent="Exporting unscaled JPEGs to ComfyUI input…";
+    const toggles=node.properties?.image_conveyor_reference_enabled;
+    const installation=planConveyorPublication(ids,before,sources,node.id,toggles);
+    const routesText=installation.knownRoutes+" traced H3 socket route(s)";
+    if(!window.confirm("Add "+ids.length+" full-resolution JPG(s) to Image Conveyor #"+node.id+
+      "? "+installation.routed.length+" screenshot(s) have connected H3 reference routes; "+
+      installation.staged.length+" will be stored in unconnected shelf positions. "+
+      "Existing character references stay untouched. "+
+      (before.active_reference_preset_id?"The active named preset will be detached. ":"")+
+      "Image Conveyor changes are not undone by Timeline Undo."))return;
+    this.status.textContent="Publishing full-resolution JPEG screenshots to ComfyUI input…";
     const result=await json(this.api,BASE+"/scenes/conveyor/publish",{reference_ids:ids});
     const updated=JSON.parse(widget.value);
-    if(JSON.stringify(updated.reference_slots)!==JSON.stringify(before.reference_slots))
-      throw Error("Image Conveyor changed during export; shelf not modified.");
-    for(const item of result.references){
-      const slot=assigned[item.id],old=updated.reference_slots[slot-1];
-      if(old&&old.annotated!==item.annotated)throw Error("Shelf Ref "+slot+" changed; refusing to overwrite.");
-      updated.reference_slots[slot-1]={annotated:item.annotated,filename:item.filename,subfolder:item.subfolder,type:"input"};
+    if(updated.output_mode!==before.output_mode ||
+       JSON.stringify(updated.reference_slots)!==JSON.stringify(before.reference_slots))
+      throw Error("Image Conveyor changed during export. Files were saved, but the shelf was not modified.");
+    const supplied=new Map((result.references||[]).map(x=>[x.id,x]));
+    if(supplied.size!==ids.length)
+      throw Error("Incomplete JPEG export; shelf was not modified.");
+    for(const entry of installation.assignments){
+      const image=supplied.get(entry.id);
+      if(!image || image.annotated!==entry.annotated)
+        throw Error("Exported screenshot identity mismatch; shelf was not modified.");
+      const previous=updated.reference_slots[entry.shelfNumber-1];
+      if(previous && previous.annotated!==entry.annotated)
+        throw Error("Shelf Ref "+entry.shelfNumber+" became occupied; no references overwritten.");
+      updated.reference_slots[entry.shelfNumber-1]={
+        annotated:image.annotated,filename:image.filename,
+        subfolder:image.subfolder,type:"input",
+      };
     }
+    // Never replace a user's saved character preset as a side effect.
     updated.active_reference_preset_id="";
-    widget.value=JSON.stringify(updated);widget.callback?.(widget.value);
+    widget.value=JSON.stringify(updated);
+    widget.callback?.(widget.value);
     if(node.__bil){
       node.__bil.state=updated;
       node.__bil.queueRevision=(node.__bil.queueRevision||0)+1;
       node.__bil.renderVersion=(node.__bil.renderVersion||0)+1;
       node.__bil.renderedRangeKey="";
     }
-    node.setDirtyCanvas?.(true,true);node.graph?.change?.();
-    const originallyActive=sources.filter(s=>s.connected&&!s.unavailable).map(s=>s.slot);
+    node.setDirtyCanvas?.(true,true);
+    node.graph?.change?.();
+    // Source-shelf indices and physical sampler socket indices are different
+    // for rerouted paths. Never infer that shelf 5 means reference_image_5.
+    const mapped=Object.fromEntries(installation.routed.map(entry=>
+      [entry.id,entry.physicalSlot]));
+    const previousMap=plan.conveyor_slots||{};
+    const activeSources=sources.filter(s=>s.connected&&!s.unavailable).map(s=>s.slot);
     const previousMasks=this.candidate.conveyor_reference_slots||{};
-    const chunkSize=this.candidate.chunk_frames,origin=this.candidate.chunk_origin_frame||0;
-    const count=Math.ceil((this.candidate.duration_frames-origin)/chunkSize),masks={};
-    for(let i=0;i<count;i++){
-      const a=origin+i*chunkSize,b=Math.min(this.candidate.duration_frames,a+chunkSize);
-      const initial=Object.hasOwn(previousMasks,String(i))?previousMasks[String(i)]:originallyActive;
-      const usedShots=plan.shots.filter(s=>s.user?.enabled!==false&&s.range[0]<b&&a<s.range[1])
-        .flatMap(s=>s.reference_ids.map(id=>assigned[id]).filter(Boolean));
-      masks[String(i)]=[...new Set([...initial,...usedShots])].sort((x,y)=>x-y);
+    const chunkSize=this.candidate.chunk_frames;
+    const origin=this.candidate.chunk_origin_frame||0;
+    const count=Math.ceil((this.candidate.duration_frames-origin)/chunkSize);
+    const masks={};
+    for(let index=0;index<count;index++){
+      const low=origin+index*chunkSize,high=Math.min(this.candidate.duration_frames,low+chunkSize);
+      const initial=Object.hasOwn(previousMasks,String(index))
+        ? previousMasks[String(index)] : activeSources;
+      const shotSockets=plan.shots.filter(s=>s.user?.enabled!==false&&s.range[0]<high&&low<s.range[1])
+        .flatMap(s=>s.reference_ids.map(id=>mapped[id]).filter(Number.isInteger));
+      masks[String(index)]=[...new Set([...initial,...shotSockets])].sort((a,b)=>a-b);
     }
+    // Applying the shot plan must also register its extracted asset records.
+    // Previously the direct Conveyor action skipped these, leaving a scene
+    // plan that referenced IDs absent from project.assets.
     this.editor.edit(p=>{
-      p.scene_plan=clone({...plan,conveyor_slots:{...previously,...assigned}});
+      const known=new Set(p.assets.map(a=>a.id));
+      for(const image of this.candidate.assets||[]){
+        if(!known.has(image.id)){p.assets.push(clone(image));known.add(image.id);}
+      }
+      p.scene_plan=clone({...plan,conveyor_slots:{...previousMap,...mapped}});
       p.conveyor_reference_slots=masks;
     });
-    this.version=this.editor.editVersion;this.candidate=clone(this.editor.p);this.renderShots();
-    this.status.textContent="Installed "+ids.length+" original-size screenshots in Image Conveyor #"+node.id+
-      ". Per-chunk shelf slot selection is saved in Studio. Existing identity refs preserved; Media Resolution owns scaling. Input copies: h3_timeline_screencaps/.";
+    this.version=this.editor.editVersion;
+    this.appliedVersion=this.version;
+    this.candidate=clone(this.editor.p);
+    this.renderShots();
+    this.editor.scheduleChunkCompile?.();
+    this.editor.refreshSamplerInputs?.();
+    this.status.textContent="Exported "+ids.length+" full-resolution JPEG(s) to Image Conveyor #"+node.id+
+      " ("+routesText+"). Active H3 routes: "+
+      installation.routed.map(x=>"shelf "+x.shelfNumber+" → reference_image_"+x.physicalSlot).join(", ")+
+      (installation.staged.length
+        ? ". STAGED ONLY (not fed to H3): shelf "+
+          installation.staged.map(x=>x.shelfNumber).join(", ")+
+          ". Connect those shelf outputs through Media Resolution to unused sampler reference inputs, then reopen this action to activate them. "+
+          "Until connected, native scoped-reference fallback remains in effect."
+        : ". Every installed screenshot has a connected H3 reference route.")+
+      " JPEG files: ComfyUI/input/h3_timeline_screencaps/.";
   }
   apply(){
     if(!this.candidate.scene_plan)throw Error("Analyze footage first");

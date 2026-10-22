@@ -291,3 +291,36 @@ and `ComfyUI/input/h3_timeline_studio/assets/<content-sha256>`.
 The FFV1 master and original movie remain available for native-depth audits;
 the normal screenshot is high-quality SDR JPEG. No automatic long-term
 pruning is yet provided.
+
+
+### Image Conveyor ancestry and occupied shelf behavior (2026-10-22)
+
+The sampler's `reference_image_1..8` sockets may connect through any number of
+**Media Resolution** or other IMAGE-processing nodes to a Conveyor output.
+The export action uses the same bounded upstream ancestry readout used by
+Studio's reference previews, accepting a unique source for writes but
+explicitly refusing to assume a one-to-one route through an ambiguous
+multi-IMAGE merge. The Image Conveyor `ref_image_N` output ordinal is
+**not** the sampler input's physical `reference_image_N` ordinal. Source
+shelf 5 routed to sampler input 2 must be stored as physical input **2**
+in `scene_plan.conveyor_slots` and the chunk socket masks. The backend never
+guesses a missing connection.
+
+Existing portrait/identity shelf images are not replaced. When connected
+shelf outputs are occupied, the export **still publishes** new full-resolution
+JPEGs to empty shelf locations on the same Conveyor and reports them as
+**staged, not yet connected to H3**. To condition H3 with those staged images,
+the corresponding shelf outputs must be connected through the user's Media
+Resolution chain into unused physical H3 sampler IMAGE inputs; rerunning the
+same export will reuse matching imported file identities and activate any
+new uniquely verified routes. When staged only, the older internal scoped
+conditioning still exists and can still use the sampler's reference sizing
+policy. Export does not silently invent node links, replace active character
+references, or claim staged files are already part of the model input.
+
+The exporter atomically registers all analysis-generated asset metadata in
+the Timeline project together with its shot plan and any verified per-chunk
+socket selections. Otherwise a plan referencing extracted assets that were
+not yet applied could fail project validation. A graph-level Conveyor shelf
+edit is **not** reversed by Timeline Undo; the UI requires confirmation before
+modifying a live shelf or detaching its active named preset.

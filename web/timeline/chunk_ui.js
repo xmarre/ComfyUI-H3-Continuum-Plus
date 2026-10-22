@@ -93,12 +93,24 @@ export function referenceSocketSources(editor) {
   const graph=sampler.graph || editor.app?.graph;
   return Array.from({length:8},(_,i)=>{
     const slot=i+1;
-    const source=traceReferenceSocket(graph,sampler,slot);
-    // A processor with multiple IMAGE inputs is not a one-to-one mapping.
-    // Still show definite upstream Conveyor images instead of an empty card.
-    const ancestry=source.connected && !source.conveyor
+    const traced=traceReferenceSocket(graph,sampler,slot);
+    // The exact lineage tracer can stop at Media Resolution, a reroute,
+    // or a custom wildcard IMAGE processor. The broader provenance tracer
+    // already finds connected Conveyor shelves through these nodes. Accept
+    // it as a writable one-to-one route ONLY when its single Conveyor origin
+    // is unambiguous. Multi-IMAGE mergers remain read-only previews.
+    const ancestry=traced.connected && !traced.conveyor
       ? conveyorSourcePreviews(editor,graph,sampler,slot)
       : {candidates:[],truncated:false};
+    const candidate=ancestry.candidates.length===1 && !ancestry.truncated &&
+      !String(traced.unresolved||"").startsWith("Ambiguous IMAGE inputs")
+      ? ancestry.candidates[0] : null;
+    const parent=candidate && (graph.getNodeById?.(candidate.nodeId) ||
+      graph._nodes?.find(node=>node.id===candidate.nodeId));
+    const source=parent && candidate.shelfNumber
+      ? {connected:true,conveyor:true,node:parent,
+          shelfNumber:candidate.shelfNumber,via:candidate.via||[],
+          provenanceFallback:true} : traced;
     const node=source.node;
     const state=source.conveyor ? conveyorState(node) : {};
     const shelfNumber=source.shelfNumber;
@@ -151,6 +163,10 @@ export function referenceSocketSources(editor) {
       sourceVersion:ref?.source_version || ref?.mtime_ns || null,
       candidatePreviews:ancestry.candidates,
       ancestryTruncated:ancestry.truncated,
+      provenanceFallback:!!source.provenanceFallback,
+      ambiguousPath:!!(source.connected&&!source.conveyor&&
+        (ancestry.candidates.length>1||ancestry.truncated||
+          String(source.unresolved||"").startsWith("Ambiguous IMAGE inputs"))),
     };
   });
 }
