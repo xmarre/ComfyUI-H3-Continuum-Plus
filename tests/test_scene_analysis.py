@@ -512,3 +512,40 @@ def test_scene_schedule_continuation_context_clock_and_legacy_nominal():
         provider.invocation_plan(native, 1), descriptor,
         legacy_text=provider.invocation_text(authored, 1), candidate=True,
     ).text == emitted
+
+
+def test_h3_reference_jpeg_keeps_native_source_raster(tmp_path, clip):
+    from PIL import Image
+    store, p, asset = registered(tmp_path, clip)
+    db, _ = measure(tmp_path, clip)
+    frame = next(detection.frames(db, 70, 71))
+    db.close()
+    # Former .01 MP ceiling would shrink the 160x96 reference.
+    ref = extract_reference(store, asset, frame, settings({'h3_mp': .01}), cancel=lambda: None)
+    h3 = next(a for a in ref['assets'] if a['representation'] == 'h3')
+    assert h3['name'] == 'h3.jpg' and h3['encoding'] == 'JPEG'
+    assert h3['source_raster_unscaled'] is True
+    with Image.open(store.assets.path(h3['id'])) as img:
+        assert img.format == 'JPEG'
+        assert img.size == (160, 96)
+    assert (h3['width'], h3['height']) == (160, 96)
+
+
+def test_scene_conveyor_slot_pictures_without_double_injection():
+    p = plan_project()
+    p['scene_plan']['conveyor_slots'] = {'r1': 4, 'r2': 6}
+    p['conveyor_reference_slots'] = {'0': [1, 4, 6], '1': [1]}
+    window = compile_window(
+        p, 0, picture_offset=3, reference_slot_sizes=(1, 0, 0, 1, 0, 1, 0, 0)
+    )
+    assert window['images'] == []  # All screenshots come through connected Conveyor.
+    assert window['prompt'].count('<Picture 2>') > 0
+    assert window['prompt'].count('<Picture 3>') > 0
+    assert window['scene_schedule'] is True
+    assert 'Shot plan:' in window['prompt']
+    # Duplicate slot or unknown reference identities never enter a project.
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import validate_plan
+    bad = copy.deepcopy(p)
+    bad['scene_plan']['conveyor_slots'] = {'r1': 4, 'r2': 4}
+    with pytest.raises(ValueError):
+        validate_plan(bad['scene_plan'], {a['id'] for a in bad['assets']}, bad['duration_frames'])

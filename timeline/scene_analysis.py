@@ -288,8 +288,9 @@ class SceneAnalysis:
             path = self.store.assets.verify(ref["vlm_asset_id"], cancel=lambda: None)
             if path.stat().st_size > 4*1024*1024:
                 raise ValueError("VLM derivative exceeds 4 MiB; reduce VLM input MP")
+            mime = "image/jpeg" if path.read_bytes()[:3] == b"\xff\xd8\xff" else "image/png"
             images.append({"id": ref["vlm_asset_id"], "pts": f"{ref['pts']}*{ref['time_base']}",
-                           "data_url": "data:image/png;base64,"+base64.b64encode(path.read_bytes()).decode("ascii")})
+                           "data_url": "data:"+mime+";base64,"+base64.b64encode(path.read_bytes()).decode("ascii")})
         key = digest([1, token, shot_id, model_id, [x["id"] for x in images], context_budget])
         cache = self.path(token)/(key+".vlm.json")
         return {"version": 1, "images": images, "cache_key": key,

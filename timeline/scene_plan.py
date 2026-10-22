@@ -41,6 +41,12 @@ def validate_plan(plan, asset_ids, duration):
     if not isinstance(plan, dict) or plan.get("schema") != SCHEMA:
         raise ValueError("Unsupported scene plan schema")
     settings(plan.get("settings"))
+    slots = plan.get("conveyor_slots", {})
+    if not isinstance(slots, dict) or any(
+        not isinstance(k, str) or type(v) is not int or not 1 <= v <= 8
+        for k, v in slots.items()
+    ) or len(set(slots.values())) != len(slots):
+        raise ValueError("Invalid Conveyor reference-slot mapping")
     refs = plan.get("references", {})
     if not isinstance(refs, dict) or len(refs) > 8192:
         raise ValueError("Invalid scene reference records")
@@ -49,6 +55,8 @@ def validate_plan(plan, asset_ids, duration):
             raise ValueError("Invalid scene reference identity")
         if ref.get("asset_id") not in asset_ids or ref.get("source_asset_id") not in asset_ids:
             raise ValueError("Scene reference points to unregistered media")
+    if set(slots) - set(refs):
+        raise ValueError("Conveyor slot refers to an unknown scene reference")
     shots = plan.get("shots", [])
     if not isinstance(shots, list) or len(shots) > 100000:
         raise ValueError("Invalid shot plan")
@@ -90,6 +98,7 @@ def mapped_plan(project, analysis):
     prior = old if old.get("schema") == SCHEMA else {}
     plan = {"schema": SCHEMA, "analysis_id": analysis["id"], "source_asset_id": analysis["source_asset_id"],
             "settings": analysis["settings"],
+            "conveyor_slots": copy.deepcopy(prior.get("conveyor_slots", {})),
             "references": {**copy.deepcopy(prior.get("references", {})), **copy.deepcopy(analysis["references"])},
             "shots": [], "timing": {"detected": "source PTS", "requested": "project frame intervals",
                                      "enforced": False, "generated_measurements": None}}
@@ -231,6 +240,7 @@ def allocate(project, start, end, persistent_count, manual_images):
         for rid in shot.get("reference_ids", []):
             ranked[rid] = ranked.get(rid, 0)+coverage
     images, chosen, selected_assets = [], [], set(existing)
+    conveyor_slots = plan.get("conveyor_slots", {})
     for rid in sorted(ranked, key=lambda r: (-ranked[r], r)):
         ref = plan["references"][rid]
         extraction = ref.get("extraction")
@@ -238,6 +248,11 @@ def allocate(project, start, end, persistent_count, manual_images):
             h3 = next(a for a in extraction["assets"] if a["representation"] == "h3")
             if min(h3["width"], h3["height"]) < 32:
                 continue
+        if rid in conveyor_slots:
+            # Image Conveyor delivers this exact frame through the connected
+            # Media Resolution pipeline. Do not duplicate it as a scoped image.
+            chosen.append(rid)
+            continue
         if ref["asset_id"] in selected_assets:
             chosen.append(rid)
             continue

@@ -14,7 +14,7 @@ import uuid
 from .media import MEDIA_FORMATS, probe, run_process
 from .model import rational, digest
 
-COLOR_VERSION = 3
+COLOR_VERSION = 4
 
 
 def limited_dimensions(width, height, megapixels):
@@ -119,9 +119,10 @@ def extract_reference(store, source, frame, settings, *, cancel):
     width, height = int(video["width"]), int(video["height"])
     sar = rational(video.get("sample_aspect_ratio", "1:1").replace(":", "/")) if video.get("sample_aspect_ratio") not in {None, "N/A", "0:1"} else Fraction(1)
     display_width = max(1, round(width*sar))
-    hw, hh = limited_dimensions(display_width, height, settings["h3_mp"])
-    if hw >= 32 and hh >= 32:
-        hw, hh = hw//32*32, hh//32*32
+    # The reference screenshot retains source raster dimensions. Its only
+    # unavoidable conversion is display-referred RGB -> high-quality JPEG;
+    # downstream Image Conveyor/Media Resolution owns any geometry change.
+    hw, hh = display_width, height
     vw, vh = limited_dimensions(display_width, height, settings["vlm_mp"])
     when = Fraction(frame["pts"])*rational(frame["time_base"])
     identity = digest([COLOR_VERSION, source["id"], frame["pts"], frame["time_base"], settings, _version(), metadata])
@@ -170,8 +171,20 @@ def extract_reference(store, source, frame, settings, *, cancel):
             color_input = ["ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-filter_threads", "1", "-i", str(master)]
             vf = filters
         run_process(color_input + ["-an", "-vf", vf, "-frames:v", "1", "-c:v", "png", "-pix_fmt", "rgb48be", "-threads:v", "1", str(sdr)], cancel=cancel)
+        # Never rescale the screenshot stored for H3/Conveyor. Use 4:4:4 JPEG
+        # at quality 95, with a separate reduced VLM inference derivative.
+        from PIL import Image
+        h3_jpeg = temporary / "h3.jpg"
+        with Image.open(sdr) as image:
+            image.convert("RGB").save(h3_jpeg, format="JPEG", quality=95, subsampling=0)
         assets = []
-        for name, w, h, depth in [("h3", hw, hh, "rgb24"), ("vlm", vw, vh, "rgb24"),
+        with h3_jpeg.open("rb") as inp:
+            asset = store.assets.register(inp, "h3.jpg", cancel=cancel)
+        assets.append({**asset, "kind": "image", "representation": "h3",
+                       "width": hw, "height": hh, "megapixels": hw*hh/1e6,
+                       "bit_depth": 8, "encoding": "JPEG", "quality": 95,
+                       "source_raster_unscaled": True})
+        for name, w, h, depth in [("vlm", vw, vh, "rgb24"),
                                   ("preview", *limited_dimensions(display_width, height, 1), "rgb24"),
                                   ("sdr_master", display_width, height, "rgb48be")]:
             output = temporary / (name+".png")

@@ -54,6 +54,7 @@ export class SmartReferences {
       el("p",{text:"Detected cuts use exact source PTS. H3 cut timing is advisory. Images are active for their whole chunk. Source faces remain visual composition evidence; dedicated character references control replacement identity."}),
       this.list,el("details",{},el("summary",{text:"Compiled prompts and physical image allocation"}),this.compiled),
       el("footer",{},button("Preview compiled inputs",()=>this.guard(()=>this.compile())),
+        button("Send selected JPGs to Image Conveyor",()=>this.guard(()=>this.sendToConveyor())),
         button("Apply shot plan",()=>this.guard(()=>this.apply())),
         button("Undo applied plan",()=>this.guard(()=>{if(this.appliedVersion!==editor.editVersion)throw Error("Only the most recently applied shot-plan edit can be undone here. Use Timeline Undo for later edits.");editor.undo();this.appliedVersion=null;this.version=editor.editVersion;this.candidate=clone(editor.p);this.renderShots();})),
         button("Revert pending edits",()=>{this.candidate=clone(editor.p);this.renderShots();})));
@@ -61,7 +62,7 @@ export class SmartReferences {
     editor.smartReferences=this;
     this.guard(()=>this.loadModels());
   }
-  async guard(fn){try{return await fn();}catch(error){this.status.textContent=error.message;}}
+  async guard(fn){try{return await fn();}catch(error){this.status.textContent="ERROR · "+(error?.message||error);this.status.setAttribute("role","alert");console.error("Smart References",error);}}
   renderControls(){
     const sources=this.project.assets.filter(a=>a.video&&a.kind!=="image");
     this.source=el("select",{"aria-label":"Scene analysis source"},...sources.map(a=>el("option",{value:a.id,text:a.name})));
@@ -78,10 +79,10 @@ export class SmartReferences {
       field("Shot detection","detect_shots","checkbox"),field("Within-shot changes","within_shot","checkbox"),
       field("Reuse recurring setups","deduplicate","checkbox"),field("Detection sensitivity","sensitivity","number",{min:.25,max:4,step:.05}),
       field("Maximum screenshots per shot","max_per_shot","number",{min:1,max:4,step:1}),
-      field("H3 reference MP ceiling","h3_mp","number",{min:.01,max:32,step:.05}),
+      el("p",{class:"h3ts-smart-resolution-note",text:"H3 reference JPEG: full decoded source raster, 4:4:4 quality 95. Image Conveyor / Media Resolution handles subsequent resizing."}),
       field("VLM image MP ceiling","vlm_mp","number",{min:.01,max:4,step:.05}),
       field("Color conversion","tone_mapping","select",{choices:["zscale","libplacebo"]}),
-      field("Downsampling","downsample","select",{choices:["lanczos","bicubic","spline"]}),
+      field("VLM preview downsampling","downsample","select",{choices:["lanczos","bicubic","spline"]}),
       field("Scene images per chunk","scene_budget","number",{min:0,max:8,step:1}),
       field("Reserved identity slots","reserved_identity_slots","number",{min:0,max:8,step:1}),
       field("Maximum distinct scene references","global_budget","number",{min:1,max:2048,step:1}),
@@ -137,15 +138,18 @@ export class SmartReferences {
     if(!this.analysis)throw Error("Analyze footage before VLM interpretation");
     const model=this.modelChoices?.find(m=>m.id===this.models.value);
     if(!model)throw Error("Connect and select a vision model in Prompt Writer");
-    if(model.remote && !window.confirm("This sends extracted frames from the selected scene to the external "+model.api_preset+" provider. Continue?"))return;
+    if(model.remote && !window.confirm("Send extracted evidence frames to REMOTE "+model.api_preset+" API? Provider retention policies apply.")){this.status.textContent="Remote interpretation cancelled.";return;}
     this.vlmStop=false;
+    this.status.textContent="Preparing source evidence for "+model.name+"…";
     const work=async()=>{
-      const unique=new Map();
+      const unique=new Map();let completed=0,skipped=0;
       for(const shot of this.analysis.shots){
         if(this.vlmStop||this.closed)break;
-        if(!shot.reference_ids.length)continue;
+        if(!shot.reference_ids.length){skipped++;continue;}
         const group=shot.reference_ids.join(",");
+        this.status.textContent="Loading evidence for shot "+(completed+skipped+1)+"/"+this.analysis.shots.length+" (source frames "+shot.source_frame_range.join("–")+")…";
         const evidence=await json(this.api,BASE+"/scenes/"+this.job+"/evidence",{shot_id:shot.id,model_id:model.id,context_budget:this.contextBudget});
+        if(!evidence.images?.length){skipped++;continue;}
         if(this.vlmStop||this.closed)break;
         let observation=evidence.cached?.observation||unique.get(group);
         if(!observation){
@@ -158,8 +162,12 @@ export class SmartReferences {
         if(this.vlmStop||this.closed)break;
         unique.set(group,observation);
         await json(this.api,BASE+"/scenes/"+this.job+"/observation",{shot_id:shot.id,model_id:model.id,observation,context_budget:this.contextBudget});
+        completed++;this.status.textContent="Interpreted "+completed+" shot(s) · skipped "+skipped;
       }
-      if(!this.vlmStop&&!this.closed){this.pendingInterpretation=true;try{await this.preview();}finally{this.pendingInterpretation=false;}}
+      if(!this.vlmStop&&!this.closed){
+        this.pendingInterpretation=true;try{await this.preview();}finally{this.pendingInterpretation=false;}
+        this.status.textContent=completed+" shot(s) interpreted. Review/correct observations below, enable reviewed descriptions in prompts, then Apply shot plan.";
+      }
     };
     this.vlmActive=work();
     try{await this.vlmActive;}finally{this.vlmActive=null;this.vlmToken=null;}
@@ -199,11 +207,12 @@ export class SmartReferences {
       for(const rid of shot.reference_ids){
         const ref=plan.references[rid],ex=ref.extraction;
         const h3=ex.assets.find(a=>a.representation==="h3"),master=ex.assets.find(a=>a.representation==="sdr_master");
-        const url=id=>this.api.apiURL?.(BASE+"/media/"+id+"?type=image/png")||BASE+"/media/"+id+"?type=image/png";
-        refs.append(el("figure",{},el("img",{src:url(h3.id),alt:"H3 scene reference",loading:"lazy"}),
-          el("figcaption",{text:"PTS "+ref.pts+" × "+ref.time_base+" · "+ex.source_dimensions.join("×")+" → "+h3.width+"×"+h3.height+" · "+h3.megapixels.toFixed(3)+" MP"}),
-          el("details",{},el("summary",{text:"Compare source-native SDR conversion"}),el("img",{src:url(master.id),alt:"Source-native display-referred conversion",loading:"lazy"})),
-          el("a",{href:this.api.apiURL?.(BASE+"/scenes/reference/"+rid+"/master")||BASE+"/scenes/reference/"+rid+"/master",text:"Download native-depth master"}),
+        const url=(id,type)=>this.api.apiURL?.(BASE+"/media/"+id+"?type="+type)||BASE+"/media/"+id+"?type="+type;
+        refs.append(el("figure",{},el("img",{src:url(h3.id,h3.name.endsWith(".jpg")?"image/jpeg":"image/png"),alt:"Source-resolution scene screenshot",loading:"lazy"}),
+          el("figcaption",{text:"PTS "+ref.pts+" × "+ref.time_base+" · "+ex.source_dimensions.join("×")+" · screenshot "+h3.width+"×"+h3.height+" · "+h3.megapixels.toFixed(3)+" MP (unscaled)"}),
+          el("details",{},el("summary",{text:"Compare source-native SDR conversion"}),el("img",{src:url(master.id,"image/png"),alt:"Source-native display-referred conversion",loading:"lazy"})),
+          el("a",{href:this.api.apiURL?.(BASE+"/scenes/reference/"+rid+"/jpg")||BASE+"/scenes/reference/"+rid+"/jpg",download:"shot-"+rid.slice(0,16)+".jpg",text:"Download source-resolution JPG"}),
+          el("a",{href:this.api.apiURL?.(BASE+"/scenes/reference/"+rid+"/master")||BASE+"/scenes/reference/"+rid+"/master",text:"Download FFV1 native-depth master"}),
           el("small",{text:ex.warnings.join(" ")})));
       }
       const events=el("details",{},el("summary",{text:"Measured events and confidence"}),
@@ -243,6 +252,75 @@ export class SmartReferences {
     this.compiled.textContent="Socket counts are inferred from graph outputs. Bundled/dynamic tensors are resolved by the sampler; saved take manifests are authoritative.\nCut timing: advisory.\n\n"+result.windows.map(w=>
       "Chunk "+(w.index+1)+" ["+w.range.join(",")+")\n"+JSON.stringify({reference_budget:w.reference_budget,aliases:w.aliases,images:w.images,warnings:w.warnings},null,2)+"\n"+w.prompt).join("\n\n");
     this.compiled.parentElement.open=true;
+  }
+  async sendToConveyor(){
+    if(!this.candidate.scene_plan)throw Error("Analyze shots first");
+    if(this.editor.editVersion!==this.version)throw Error("Studio changed. Reopen Smart References before publishing.");
+    const plan=this.candidate.scene_plan;
+    const ids=[...new Set(plan.shots.filter(s=>s.user?.enabled!==false).flatMap(s=>s.reference_ids))];
+    if(!ids.length)throw Error("No screenshots selected");
+    const sources=referenceSocketSources(this.editor);
+    const shelf=sources.filter(s=>s.connected&&s.conveyor&&s.shelfNumber&&!s.dynamic);
+    const nodes=[...new Set(shelf.map(s=>s.nodeId))];
+    if(nodes.length!==1)throw Error("Connect one Image Conveyor persistent reference shelf through the existing Media Resolution path.");
+    const node=this.editor.app.graph.getNodeById(nodes[0]);
+    const widget=node?.widgets?.find(w=>w.name==="state_json");
+    if(!widget)throw Error("Image Conveyor state widget unavailable");
+    const before=JSON.parse(widget.value);
+    if(before.output_mode!=="persistent_refs"||before.reference_slots?.length!==8)
+      throw Error("Use Image Conveyor Persistent references mode");
+    const previously=plan.conveyor_slots||{};
+    const assigned={};
+    const available=new Set(shelf.map(s=>s.shelfNumber));
+    const used=new Set();
+    for(const rid of ids){
+      const previous=previously[rid];
+      if(previous && available.has(previous) && before.reference_slots[previous-1]?.annotated?.includes(rid)){
+        assigned[rid]=previous;used.add(previous);continue;
+      }
+      const slot=shelf.find(s=>!used.has(s.shelfNumber)&&s.unavailable&&s.reason==="Shelf empty"&&!before.reference_slots[s.shelfNumber-1]);
+      if(!slot)throw Error("Not enough connected EMPTY Conveyor shelf slots. Existing character references will not be overwritten.");
+      assigned[rid]=slot.shelfNumber;used.add(slot.shelfNumber);
+    }
+    if(!window.confirm("Install "+ids.length+" source-resolution JPGs in empty Image Conveyor shelf slots?"+
+      (before.active_reference_preset_id?" The active character preset will be detached, not overwritten.":"")))return;
+    this.status.textContent="Exporting unscaled JPEGs to ComfyUI input…";
+    const result=await json(this.api,BASE+"/scenes/conveyor/publish",{reference_ids:ids});
+    const updated=JSON.parse(widget.value);
+    if(JSON.stringify(updated.reference_slots)!==JSON.stringify(before.reference_slots))
+      throw Error("Image Conveyor changed during export; shelf not modified.");
+    for(const item of result.references){
+      const slot=assigned[item.id],old=updated.reference_slots[slot-1];
+      if(old&&old.annotated!==item.annotated)throw Error("Shelf Ref "+slot+" changed; refusing to overwrite.");
+      updated.reference_slots[slot-1]={annotated:item.annotated,filename:item.filename,subfolder:item.subfolder,type:"input"};
+    }
+    updated.active_reference_preset_id="";
+    widget.value=JSON.stringify(updated);widget.callback?.(widget.value);
+    if(node.__bil){
+      node.__bil.state=updated;
+      node.__bil.queueRevision=(node.__bil.queueRevision||0)+1;
+      node.__bil.renderVersion=(node.__bil.renderVersion||0)+1;
+      node.__bil.renderedRangeKey="";
+    }
+    node.setDirtyCanvas?.(true,true);node.graph?.change?.();
+    const originallyActive=sources.filter(s=>s.connected&&!s.unavailable).map(s=>s.slot);
+    const previousMasks=this.candidate.conveyor_reference_slots||{};
+    const chunkSize=this.candidate.chunk_frames,origin=this.candidate.chunk_origin_frame||0;
+    const count=Math.ceil((this.candidate.duration_frames-origin)/chunkSize),masks={};
+    for(let i=0;i<count;i++){
+      const a=origin+i*chunkSize,b=Math.min(this.candidate.duration_frames,a+chunkSize);
+      const initial=Object.hasOwn(previousMasks,String(i))?previousMasks[String(i)]:originallyActive;
+      const usedShots=plan.shots.filter(s=>s.user?.enabled!==false&&s.range[0]<b&&a<s.range[1])
+        .flatMap(s=>s.reference_ids.map(id=>assigned[id]).filter(Boolean));
+      masks[String(i)]=[...new Set([...initial,...usedShots])].sort((x,y)=>x-y);
+    }
+    this.editor.edit(p=>{
+      p.scene_plan=clone({...plan,conveyor_slots:{...previously,...assigned}});
+      p.conveyor_reference_slots=masks;
+    });
+    this.version=this.editor.editVersion;this.candidate=clone(this.editor.p);this.renderShots();
+    this.status.textContent="Installed "+ids.length+" original-size screenshots in Image Conveyor #"+node.id+
+      ". Per-chunk shelf slot selection is saved in Studio. Existing identity refs preserved; Media Resolution owns scaling. Input copies: h3_timeline_screencaps/.";
   }
   apply(){
     if(!this.candidate.scene_plan)throw Error("Analyze footage first");

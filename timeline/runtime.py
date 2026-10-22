@@ -123,7 +123,8 @@ class TimelineInputs:
         self.windows = [
             compile_window(
                 self.project, i, guide_scope=scope,
-                picture_offset=self.picture_offset_for(i)
+                picture_offset=self.picture_offset_for(i),
+                reference_slot_sizes=self.reference_slot_sizes,
             )
             for i in indices
         ]
@@ -404,11 +405,10 @@ class TimelineInputs:
                 import numpy as np
 
                 with Image.open(self.store.assets.verify(item["asset_id"])) as im:
-                    if item.get("scene_native"):
-                        from .scene_color import native_reference_dimensions
-                        size = native_reference_dimensions(im.width, im.height, width, height, self.reference_size)
-                        if size != im.size:
-                            im = im.resize(size, Image.Resampling.LANCZOS)
+                    # Source JPEG stays unscaled in persistent storage. For
+                    # legacy internally scoped references, the native H3
+                    # reference preparation contract still owns resizing.
+                    # Conveyor-backed screenshots never enter this branch.
                     image = (
                         torch.from_numpy(np.asarray(im.convert("RGB")).copy()).float()[
                             None

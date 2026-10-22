@@ -1195,3 +1195,7 @@
 .h3ts-smart a { color:#a9c8ff; }
 .h3ts-smart-compiled { white-space:pre-wrap;overflow-wrap:anywhere;max-height:500px;overflow:auto; }
 .h3ts-shot-boundary { position:absolute;top:28px;z-index:4;color:#f4bb76;background:#1a1f29;border:0;border-left:2px solid #edaa5b;cursor:pointer;font-size:10px; }
+
+.h3ts-effective-prompt-field {display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:10px 0;min-width:0}
+.h3ts-effective-prompt {width:100%;min-height:115px;resize:vertical;box-sizing:border-box;font:12px/1.45 ui-monospace,monospace;color:#e4eeff;background:#151c27;border:1px solid #586781;border-radius:5px;padding:10px}
+.h3ts-effective-prompt-field small {color:#a7bbd2;line-height:1.5}

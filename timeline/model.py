@@ -373,7 +373,7 @@ def clip_input(p, t, c, start, end):
     }
 
 
-def compile_window(p, index, guide_scope=None, picture_offset=0):
+def compile_window(p, index, guide_scope=None, picture_offset=0, reference_slot_sizes=None):
     size = p["chunk_frames"]
     origin = p.get("chunk_origin_frame", 0)
     if not isinstance(index, int) or index < 0:
@@ -415,6 +415,26 @@ def compile_window(p, index, guide_scope=None, picture_offset=0):
         i["asset_id"]: f"<Picture {n}>"
         for n, i in enumerate(images, 1 + picture_offset)
     }
+    # A scene screenshot installed in Image Conveyor is visible via a
+    # persistent IMAGE socket instead of a second scoped reference. Rebuild
+    # its Picture number from the *actual selected socket sizes*.
+    conveyor_map = p.get("scene_plan", {}).get("conveyor_slots", {})
+    if conveyor_map:
+        sizes = reference_slot_sizes or (1,) * 8
+        active = reference_slots_for_chunk(p, index)
+        active = range(1, 9) if active is None else active
+        ordinal = {}
+        cursor = 1
+        for slot in active:
+            if not 1 <= slot <= 8:
+                continue
+            if sizes[slot - 1]:
+                ordinal[slot] = cursor
+                cursor += sizes[slot - 1]
+        for rid, slot in conveyor_map.items():
+            if slot in ordinal and rid in p["scene_plan"]["references"]:
+                asset = p["scene_plan"]["references"][rid]["asset_id"]
+                picture_by_asset[asset] = f"<Picture {ordinal[slot]}>"
     aliases = {
         i["alias"]: picture_by_asset[i["asset_id"]]
         for i in inputs

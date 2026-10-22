@@ -210,6 +210,76 @@ def register_routes():
             raise ValueError("Reference master is unavailable")
         return web.FileResponse(file, headers={"Content-Disposition": 'attachment; filename="scene-'+rid[:16]+'.mkv"'})
 
+    @endpoint("get", "/scenes/reference/{reference_id}/jpg")
+    async def scene_jpg(request):
+        """Serve the exact unscaled stored JPEG, not a preview thumbnail."""
+        rid = request.match_info["reference_id"]
+        if not re.fullmatch(r"[a-f0-9]{64}", rid):
+            raise ValueError("Invalid scene reference identity")
+        root = project_store().root/"scene_references"/rid/"reference.json"
+        if not root.is_file():
+            raise ValueError("Scene reference manifest unavailable")
+        import json
+        manifest = json.loads(root.read_text(encoding="utf-8"))
+        image = next((a for a in manifest["assets"] if a["representation"] == "h3"), None)
+        if not image or not image["name"].lower().endswith(".jpg"):
+            raise ValueError("Reference JPEG unavailable; reanalyse this scene")
+        path = await asyncio.to_thread(project_store().assets.verify, image["id"])
+        return web.FileResponse(path, headers={
+            "Content-Type": "image/jpeg",
+            "Content-Disposition": 'attachment; filename="shot-'+rid[:16]+'.jpg"',
+            "Cache-Control": "private, no-store",
+        })
+
+    @endpoint("post", "/scenes/conveyor/publish")
+    async def publish_conveyor_jpgs(request):
+        """Explicitly place selected full-resolution JPEGs in ComfyUI input.
+
+        No compositor graph or Conveyor state is mutated by this endpoint.
+        Existing image content is immutable and all identities are validated.
+        """
+        import json
+        import hashlib
+        import shutil
+        import folder_paths
+        data = await request.json()
+        identities = data.get("reference_ids")
+        if not isinstance(identities, list) or not 1 <= len(identities) <= 8 or len(set(identities)) != len(identities):
+            raise ValueError("Choose one to eight unique references for Conveyor")
+        if any(not isinstance(rid, str) or not re.fullmatch(r"[a-f0-9]{64}", rid) for rid in identities):
+            raise ValueError("Invalid scene reference identity")
+        store = project_store()
+        target_root = Path(folder_paths.get_input_directory()).resolve()/"h3_timeline_screencaps"
+        target_root.mkdir(parents=True, exist_ok=True)
+        results = []
+        for rid in identities:
+            manifest = store.root/"scene_references"/rid/"reference.json"
+            if not manifest.is_file():
+                raise ValueError("Scene reference manifest unavailable")
+            record = json.loads(manifest.read_text(encoding="utf-8"))
+            image = next((a for a in record["assets"] if a["representation"] == "h3"), None)
+            if not image or not image["name"].endswith(".jpg"):
+                raise ValueError("Reanalyse to produce source-resolution JPEG screenshots")
+            source = await asyncio.to_thread(store.assets.verify, image["id"])
+            destination = target_root/(rid+".jpg")
+            if destination.exists():
+                digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+                if digest != image["id"]:
+                    raise ValueError("A published Conveyor screenshot was modified; cannot overwrite it")
+            else:
+                temporary = target_root/(rid+"-"+uuid.uuid4().hex+".tmp")
+                try:
+                    shutil.copyfile(source, temporary)
+                    if hashlib.sha256(temporary.read_bytes()).hexdigest() != image["id"]:
+                        raise ValueError("Scene export integrity failed")
+                    os.replace(temporary, destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            results.append({"id": rid, "annotated": "h3_timeline_screencaps/"+rid+".jpg [input]",
+                            "filename": rid+".jpg", "subfolder": "h3_timeline_screencaps",
+                            "type": "input", "width": image["width"], "height": image["height"]})
+        return web.json_response({"references": results})
+
     @endpoint("post", "/scenes/analyze")
     async def analyze_scenes(request):
         from .scene_analysis import SceneAnalysis

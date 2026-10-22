@@ -712,6 +712,14 @@ export function renderChunkWorkspace(editor) {
       imported.filter(r=>!r.muted).map(r=>r.text).join("\n"), chunk.index);
     card.append(el("details",{class:"h3ts-compiled-details"},
       el("summary",{text:"Compiled prompt and input receipt"}),preview));
+    const effective=el("textarea",{
+      class:"h3ts-effective-prompt",rows:"6",readOnly:"","aria-label":"Effective H3 prompt for chunk "+(chunk.index+1)
+    });
+    effective.value=editor.compiledWindows?.get(chunk.index)?.prompt ||
+      "Compiled H3 prompt appears after input inspection. It includes the visual shot schedule when applied.";
+    card.append(el("label",{class:"h3ts-effective-prompt-field"},
+      el("strong",{text:"Effective H3 shot-timed prompt · chunk "+(chunk.index+1)+" · read-only"}),
+      effective,el("small",{text:"Shot plan times here are local to the logical chunk. Native physical conditioning rebases them for carried context. Authored text and connected State Manager controls are not rewritten."})));
     card.append(conveyorReferenceControls(editor,chunk.index,referenceSources));
     const video=sectionForRole(editor,chunk.index,"video_guide");
     const audioRoute=el("select",{"aria-label":"Chunk audio routing"},
@@ -880,6 +888,13 @@ export function renderChunkWorkspace(editor) {
 // the user is typing a new chunk prompt.
 export function updateChunkCompiledLines(editor) {
   const inputs=samplerInputDescription(editor);
+  for(const card of editor.chunkBoard?.querySelectorAll("[data-chunk-index]")||[]){
+    const field=card.querySelector(".h3ts-effective-prompt");
+    if(field){
+      const effective=editor.compiledWindows?.get(Number(card.dataset.chunkIndex));
+      field.value=effective?.prompt || "Effective H3 prompt unavailable until inputs compile.";
+    }
+  }
   for (const element of editor.chunkBoard?.querySelectorAll("[data-compiled-chunk]") || [])
     compiledLine(
       element,

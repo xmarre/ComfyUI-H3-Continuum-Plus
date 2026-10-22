@@ -247,3 +247,47 @@ not proof of frame-accurate edits by MiniMax H3. The physical compiler never
 parses nominal shot-plan prose and never duplicates authored dialogue or imports
 adjacent chunks' shot descriptions. A single shared identity-precedence sentence
 applies across the entire shot schedule.
+
+
+## October 22 screenshot/Conveyor UX contract
+
+Detection retains source frame PTS and produces a **full-resolution JPEG screenshot**
+(quality 95, 4:4:4), without H3-specific downsampling. VLM analysis still
+receives separate bounded inference derivatives and the preview can be reduced;
+neither changes the screenshot asset. Standard JPEG cannot preserve HDR metadata,
+so PQ/HLG/Dolby Vision material still needs explicit SDR color conversion. The
+original movie remains the color/metadata authority.
+
+**Download source-resolution JPG** saves an individual screenshot. The optional
+**Send selected JPGs to Image Conveyor** action materializes at most eight
+unique screenshots under
+`ComfyUI/input/h3_timeline_screencaps/<reference-id>.jpg`. It fills only
+**connected, empty** persistent shelf outputs of one unambiguous Conveyor node
+(upstream Media Resolution connections are respected), without replacing user
+character identities. If the active shelf belongs to a named character preset,
+the action detaches the preset rather than overwriting that preset. The exact
+scene-reference ID → physical shelf slot mapping and per-chunk socket masks are
+saved in the Timeline project; those images do not go through the separate
+internal reference path again. Dynamic/grouped outputs, ambiguous Conveyor
+connections, and insufficient vacant connected slots fail visibly.
+
+Without explicit Conveyor installation, the earlier internal scoped-image
+conditioning still functions, with the native reference sampler's own
+preparation and size policy. That fallback is **not** the user's Media
+Resolution path, and the screen explicitly distinguishes them.
+
+The editor displays the effective compiled MiniMax H3 prompt in a visible,
+read-only per-chunk textarea. Its logical labels are chunk-local; the physical
+compiler transforms exact source-frame shot ranges against actual context
+for the native H3 conditioning clock. This read-only derived text must not be
+written over an authored prompt or managed State Manager Text Box, which has
+its own save/queue lease. Shot descriptions require explicit user review and
+the separate prompt-inclusion setting.
+
+Data are **persistent**, not temporary: under
+`ComfyUI/input/h3_timeline_studio/scene_analysis/<analysis-token>/`,
+`ComfyUI/input/h3_timeline_studio/scene_references/<reference-id>/master.mkv`,
+and `ComfyUI/input/h3_timeline_studio/assets/<content-sha256>`.
+The FFV1 master and original movie remain available for native-depth audits;
+the normal screenshot is high-quality SDR JPEG. No automatic long-term
+pruning is yet provided.
