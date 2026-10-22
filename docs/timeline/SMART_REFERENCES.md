@@ -422,7 +422,8 @@ clears obsolete fixed photo-to-Conveyor mappings, and preserves the actually
 connected *persistent identity* socket selection for every logical chunk.
 Scene JPEGs are retained in Timeline's immutable, persistent content-addressed
 assets. `TimelineInputs.materialize()` loads only the screenshots referenced
-by shots overlapping **that chunk**, deduplicates recurring setups, prepares
+by shots **first appearing** in that chunk (or already in progress at the
+first scene chunk), deduplicates recurring setups, and prepares
 the H3 image latents on demand, and merges those scoped references **after**
 the three persistent identity images. `<Picture 4>`, `<Picture 5>`,
 etc. therefore resolve on the correct chunk and may be reused for *different
@@ -457,3 +458,12 @@ shelf slot is overwritten. A long sequence never needs to stage all its
 screenshots in the eight-slot Conveyor. The original external State Manager
 prompt is still read-only, and the per-chunk picture cues are generated from
 the actual selected shots on the correct logical/physical clocks.
+
+A shot crossing the 7-second boundary contributes its still once, in the
+chunk where it begins; H3's carried video frames supply the continuation in
+the following chunk. Thus three shots beginning in chunk 1 and one *new*
+shot beginning in chunk 2 use three and one streamed screenshots, even if
+the third shot itself continues into chunk 2. If a user deliberately wants
+the same screenshot repeated across a boundary rather than relying on
+continuation, its occurrence/reference must be authored in that second
+chunk explicitly. This avoids consuming a second chunk slot by accident.

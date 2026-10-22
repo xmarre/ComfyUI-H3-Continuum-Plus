@@ -678,9 +678,12 @@ def test_dynamic_scene_refs_are_per_chunk_and_keep_three_identity_pictures():
     existing[0]['reference_ids'] = ['r1']
     existing[1]['reference_ids'] = ['r2']
     existing[2]['reference_ids'] = ['r3']
+    # Shot 3 persists across the chunk boundary; it must not consume a new
+    # reference position in chunk 2. Only new shot 4 adds one screenshot.
+    existing[2]['range'] = [153,267]
     next_shot = copy.deepcopy(existing[0])
     next_shot['id'] = 'dynamic-second-chunk'
-    next_shot['range'] = [168, 336]
+    next_shot['range'] = [267, 336]
     next_shot['reference_ids'] = ['r4']
     p['scene_plan']['shots'] = existing + [next_shot]
     p['conveyor_reference_slots'] = {'0':[1,2,3], '1':[1,2,3]}

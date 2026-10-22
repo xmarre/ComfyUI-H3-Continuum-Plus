@@ -232,7 +232,17 @@ def allocate(project, start, end, persistent_count, manual_images):
     if not plan:
         return [], [], []
     cfg = settings(plan["settings"])
-    candidates = [s for s in plan["shots"] if s["range"][0] < end and start < s["range"][1]
+    # A shot crossing a chunk join has already supplied its picture in
+    # the preceding H3 invocation. Context frames convey that shot forward;
+    # retransmitting its still wastes a slot and shifts Picture numbering.
+    # Stream new pictures on their FIRST appearance only, except when this
+    # is the first logical chunk and the scene begins inside an existing shot.
+    streamed = plan.get("reference_transport") == "streamed"
+    first_window = start == project.get("chunk_origin_frame", 0)
+    candidates = [s for s in plan["shots"]
+                  if s["range"][0] < end and start < s["range"][1]
+                  and (not streamed or start <= s["range"][0] < end
+                       or (first_window and s["range"][0] < start))
                   and s.get("user", {}).get("enabled", True)]
     shots = []
     invalid = 0
@@ -249,7 +259,6 @@ def allocate(project, start, end, persistent_count, manual_images):
         for rid in shot.get("reference_ids", []):
             ranked[rid] = ranked.get(rid, 0)+coverage
     images, chosen, selected_assets = [], [], set(existing)
-    streamed = plan.get("reference_transport") == "streamed"
     conveyor_slots = {} if streamed else plan.get("conveyor_slots", {})
     for rid in sorted(ranked, key=lambda r: (-ranked[r], r)):
         ref = plan["references"][rid]

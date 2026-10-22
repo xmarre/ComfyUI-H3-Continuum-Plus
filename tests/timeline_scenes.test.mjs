@@ -217,8 +217,8 @@ test('dynamic stream uses 3 existing identity references plus only each chunk sc
    scene_plan:{shots:[
      {range:[0,67],reference_ids:[picture(1)]},
      {range:[67,153],reference_ids:[picture(2)]},
-     {range:[153,168],reference_ids:[picture(3)]},
-     {range:[168,336],reference_ids:[picture(4)]},
+     {range:[153,267],reference_ids:[picture(3)]},
+     {range:[267,336],reference_ids:[picture(4)]},
    ]}};
  const sources=[1,2,3].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
  const result=planChunkReferenceStream(p,sources);

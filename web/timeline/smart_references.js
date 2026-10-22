@@ -76,7 +76,8 @@ export function planChunkReferenceStream(project, sources) {
   const stats=[];
   for(let index=0,a=start;a<end;index++,a+=size){
     const b=Math.min(a+size,end);
-    const relevant=shots.filter(s=>s.user?.enabled!==false&&s.range[0]<b&&a<s.range[1]);
+    const relevant=shots.filter(s=>s.user?.enabled!==false&&s.range[0]<b&&a<s.range[1]&&
+      (a<=s.range[0] || (index===0&&s.range[0]<a)));
     const ids=[...new Set(relevant.flatMap(s=>s.reference_ids||[]))];
     perChunk[String(index)]=sockets.slice();
     stats.push({index,from:a,to:b,sourceImageCount:ids.length,
