@@ -660,3 +660,88 @@ def test_explicit_conveyor_only_refuses_hidden_sampler_scaled_fallback():
     # r2 remained staged, so no fake Picture 5 instruction appears.
     assert '<Picture 5>' not in routed['prompt']
     assert any('omitted' in warning.lower() for warning in routed['warnings'])
+
+
+def test_dynamic_scene_refs_are_per_chunk_and_keep_three_identity_pictures():
+    """Two therapy chunks use 3+3 and 3+1 Pictures, not accumulated library IDs."""
+    p = plan_project()
+    p['duration_frames'] = 336
+    p['selection'] = [0, 336]
+    p['scene_plan']['reference_transport'] = 'streamed'
+    p['scene_plan']['conveyor_only'] = True
+    p['scene_plan']['conveyor_slots'] = {}
+    p['scene_plan']['settings']['scene_budget'] = 5
+    p['assets'] += [{'id':'d'*64,'kind':'image'},{'id':'e'*64,'kind':'image'}]
+    p['scene_plan']['references']['r3'] = {'asset_id':'d'*64,'source_asset_id':'a'*64}
+    p['scene_plan']['references']['r4'] = {'asset_id':'e'*64,'source_asset_id':'a'*64}
+    existing = copy.deepcopy(p['scene_plan']['shots'])
+    existing[0]['reference_ids'] = ['r1']
+    existing[1]['reference_ids'] = ['r2']
+    existing[2]['reference_ids'] = ['r3']
+    next_shot = copy.deepcopy(existing[0])
+    next_shot['id'] = 'dynamic-second-chunk'
+    next_shot['range'] = [168, 336]
+    next_shot['reference_ids'] = ['r4']
+    p['scene_plan']['shots'] = existing + [next_shot]
+    p['conveyor_reference_slots'] = {'0':[1,2,3], '1':[1,2,3]}
+    sizes = (1,1,1,0,0,0,0,0)
+    first = compile_window(p, 0, picture_offset=3, reference_slot_sizes=sizes)
+    second = compile_window(p, 1, picture_offset=3, reference_slot_sizes=sizes)
+    assert len(first['images']) == 3
+    assert len(second['images']) == 1
+    assert len(first['images']) + 3 == 6
+    assert len(second['images']) + 3 == 4
+    assert '<Picture 4>' in first['prompt'] and '<Picture 6>' in first['prompt']
+    assert '<Picture 7>' not in first['prompt']
+    assert '<Picture 4>' in second['prompt'] and '<Picture 5>' not in second['prompt']
+    assert second['images'][0]['asset_id'] == p['scene_plan']['references']['r4']['asset_id']
+    assert 'Match <Picture' in second['prompt']
+    assert all(item['scene_native'] for item in first['images'])
+    # Neither fixed Conveyor shelf map nor its static eight-slot capacity
+    # participates in streamed shot selection.
+    assert validate(p)['scene_plan']['reference_transport'] == 'streamed'
+
+
+def test_streamed_scene_shot_cap_is_per_chunk_not_global_asset_count():
+    p = plan_project()
+    p['duration_frames'] = 168 * 20
+    p['selection'] = [0, 168 * 20]
+    p['scene_plan']['reference_transport'] = 'streamed'
+    p['scene_plan']['conveyor_only'] = True
+    p['scene_plan']['conveyor_slots'] = {}
+    p['scene_plan']['settings']['scene_budget'] = 5
+    p['conveyor_reference_slots'] = {str(i):[1,2,3] for i in range(20)}
+    seed_shot = copy.deepcopy(p['scene_plan']['shots'][0])
+    shot_records = []
+    for i in range(20):
+        key = f'bank-reference-{i}'
+        asset_id = f'{i+10:064x}'
+        p['assets'].append({'id':asset_id,'kind':'image'})
+        p['scene_plan']['references'][key] = {'asset_id':asset_id,'source_asset_id':'a'*64}
+        one = copy.deepcopy(seed_shot)
+        one.update(id=f'bank-shot-{i}',range=[168*i,168*(i+1)],reference_ids=[key])
+        shot_records.append(one)
+    p['scene_plan']['shots'] = shot_records
+    assert len(p['scene_plan']['references']) > 8
+    for i in range(20):
+        w = compile_window(p,i,picture_offset=3,reference_slot_sizes=(1,1,1,0,0,0,0,0))
+        assert len(w['images']) == 1
+        assert '<Picture 4>' in w['prompt']
+        assert '<Picture 5>' not in w['prompt']
+
+
+def test_streamed_scene_budget_clips_excess_without_overwriting_identity_refs():
+    p=plan_project()
+    p['scene_plan']['reference_transport'] = 'streamed'
+    p['scene_plan']['conveyor_only'] = True
+    p['scene_plan']['settings']['scene_budget'] = 5
+    p['scene_plan']['conveyor_slots'] = {}
+    # 7 identity images can only leave one scene reference despite scene_budget 5.
+    w=compile_window(p,0,picture_offset=7,reference_slot_sizes=(1,1,1,1,1,1,1,0))
+    assert len(w['images']) == 1
+    assert len(w['images'])+7 == 8
+    assert any('omitted' in msg for msg in w['warnings'])
+    from ComfyUI_H3_Continuum_Join.timeline.runtime import TimelineInputs
+    provider=TimelineInputs(p,{'windows':[w],'range':[0,168]},None)
+    assert provider.reference_size == 'Max Identity'
+    assert provider.storage_contract['scene_reference_transport'] == 'streamed'

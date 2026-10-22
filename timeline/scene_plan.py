@@ -41,6 +41,8 @@ def validate_plan(plan, asset_ids, duration):
     if not isinstance(plan, dict) or plan.get("schema") != SCHEMA:
         raise ValueError("Unsupported scene plan schema")
     settings(plan.get("settings"))
+    if plan.get("reference_transport", "scoped") not in {"scoped", "streamed"}:
+        raise ValueError("Unsupported scene reference transport")
     if type(plan.get("conveyor_only", False)) is not bool:
         raise ValueError("Invalid Conveyor-only reference routing mode")
     slots = plan.get("conveyor_slots", {})
@@ -105,6 +107,7 @@ def mapped_plan(project, analysis):
             "settings": analysis["settings"],
             "conveyor_slots": copy.deepcopy(prior.get("conveyor_slots", {})),
             "conveyor_only": bool(prior.get("conveyor_only", False)),
+            "reference_transport": prior.get("reference_transport", "scoped"),
             "references": {**copy.deepcopy(prior.get("references", {})), **copy.deepcopy(analysis["references"])},
             "shots": [], "timing": {"detected": "source PTS", "requested": "project frame intervals",
                                      "enforced": False, "generated_measurements": None}}
@@ -246,7 +249,8 @@ def allocate(project, start, end, persistent_count, manual_images):
         for rid in shot.get("reference_ids", []):
             ranked[rid] = ranked.get(rid, 0)+coverage
     images, chosen, selected_assets = [], [], set(existing)
-    conveyor_slots = plan.get("conveyor_slots", {})
+    streamed = plan.get("reference_transport") == "streamed"
+    conveyor_slots = {} if streamed else plan.get("conveyor_slots", {})
     for rid in sorted(ranked, key=lambda r: (-ranked[r], r)):
         ref = plan["references"][rid]
         extraction = ref.get("extraction")
@@ -259,9 +263,9 @@ def allocate(project, start, end, persistent_count, manual_images):
             # Media Resolution pipeline. Do not duplicate it as a scoped image.
             chosen.append(rid)
             continue
-        if plan.get("conveyor_only"):
-            # Explicit Conveyor export opts out of the native resized/scoped
-            # path: staged-only screenshots cannot be re-injected secretly.
+        if plan.get("conveyor_only") and not streamed:
+            # Legacy fixed Conveyor routing does not silently fall back to
+            # native scoped references when its shelf output is unconnected.
             continue
         if ref["asset_id"] in selected_assets:
             chosen.append(rid)
@@ -273,7 +277,9 @@ def allocate(project, start, end, persistent_count, manual_images):
         images.append({"role": "image_reference", "asset_id": ref["asset_id"], "alias": "scene-"+rid[:16],
                        "range": [start, end], "scene_reference_id": rid, "audio_role": "neither"})
     omitted = sorted(set(ranked)-set(chosen))
-    warnings = [f"Scene-reference budget omitted {len(omitted)} candidate(s); existing identity/manual references retain their slots."] if omitted else []
+    warnings = [f"Scene-reference budget omitted {len(omitted)} candidate(s) in this chunk (H3 supports at most eight total including persistent identity references)."] if omitted else []
+    if streamed and images:
+        warnings.append(f"Streamed {len(images)} distinct scene reference(s) into this chunk only; later chunks select their own reference set.")
     if invalid:
         warnings.append(f"Skipped {invalid} scene shot(s) because their source clip mapping is no longer valid.")
     return images, shots, warnings

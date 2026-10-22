@@ -58,7 +58,13 @@ class TimelineInputs:
         self.reference_cache = OrderedDict()
         self.reference_cache_bytes = 0
         self.offset = job["range"][0]
-        self.reference_size = "Match Output"
+        # Streamed screenshots are loaded per logical chunk after the
+        # persistent identity tensors are selected. Max Identity avoids the
+        # generation-output-MP downscale, though H3 latent encoding still
+        # requires a 32-pixel canvas and <=2048-pixel shorter edge.
+        self.reference_size = ("Max Identity"
+                               if project.get("scene_plan", {}).get("reference_transport") == "streamed"
+                               else "Match Output")
         from ..reference_video import REFERENCE_VIDEO_SIZE_EFFICIENT
 
         self.video_reference_size = REFERENCE_VIDEO_SIZE_EFFICIENT
@@ -141,6 +147,7 @@ class TimelineInputs:
             "contract": 2,
             "reference_size": self.reference_size,
             "video_reference_size": self.video_reference_size,
+            "scene_reference_transport": self.project.get("scene_plan", {}).get("reference_transport", "scoped"),
         }
         if self.audio_generation_mode != "guided":
             from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT
@@ -405,10 +412,11 @@ class TimelineInputs:
                 import numpy as np
 
                 with Image.open(self.store.assets.verify(item["asset_id"])) as im:
-                    # Source JPEG stays unscaled in persistent storage. For
-                    # legacy internally scoped references, the native H3
-                    # reference preparation contract still owns resizing.
-                    # Conveyor-backed screenshots never enter this branch.
+                    # Original JPEG remains unmodified. Streamed references
+                    # are selected at the H3 sampler invocation, NOT passed
+                    # through a statically executed Media Resolution node.
+                    # The normal H3 reference latent preparation contract
+                    # still performs necessary 32-pixel canvas alignment.
                     image = (
                         torch.from_numpy(np.asarray(im.convert("RGB")).copy()).float()[
                             None

@@ -406,3 +406,54 @@ selector, contextual notes, option toggles and four analysis actions occupy
 bounded cells or dedicated rows. The shot review inputs and long VLM
 textareas likewise remain within the dialog instead of overlapping
 neighbours. No crop/resample or PNG change was introduced.
+
+
+## Dynamic per-chunk scene-reference streaming (October 23)
+
+**Image Conveyor's eight persistent shelf outputs are static for a single queued
+ComfyUI graph.** Changing a shelf entry in JavaScript while a long
+`run_sequence()` is underway does not change a previously computed upstream
+IMAGE tensor and cannot safely implement per-chunk swapping. A movie with
+hundreds of screenshots also cannot be represented by eight shelf positions.
+
+The new explicit **Activate CHUNK-SCOPED H3 references** action selects
+`scene_plan.reference_transport = "streamed"`, saves `conveyor_only = true`,
+clears obsolete fixed photo-to-Conveyor mappings, and preserves the actually
+connected *persistent identity* socket selection for every logical chunk.
+Scene JPEGs are retained in Timeline's immutable, persistent content-addressed
+assets. `TimelineInputs.materialize()` loads only the screenshots referenced
+by shots overlapping **that chunk**, deduplicates recurring setups, prepares
+the H3 image latents on demand, and merges those scoped references **after**
+the three persistent identity images. `<Picture 4>`, `<Picture 5>`,
+etc. therefore resolve on the correct chunk and may be reused for *different
+screenshots* in later chunks, without altering Maekar/Mary/Clark references.
+Examples: 3 identity + 3 scene JPEGs = 6 in chunk 1; 3 identity + 1
+scene JPEG = 4 in chunk 2. Across 100 chunks, an arbitrary number of unique
+stored JPEG assets can be selected in the same bounded scene-reference slots.
+
+**H3's limit remains eight images per invocation**, not eight unique files
+per movie. Selection is clamped to `min(scene_budget, 8 - actual persistent
+image count - manual scoped references)` for each window; surplus candidates
+generate warnings. Existing `conveyor_reference_slots` masks and exact
+physical counts are respected at runtime. Browser estimates for bundled
+IMAGE outputs can be wrong; actual sampler slot sizes and logs remain the
+authority, and the compiler enforces the eight-image limit.
+
+This is explicitly **NOT** a dynamic output of the static Media Resolution
+node. The stored reference JPEG is never downscaled/re-encoded by extraction
+and is not modified by streaming. Native H3's `Max Identity` preparation
+still applies any required 32-pixel image-latent grid alignment and the
+2048-pixel short-edge ceiling. The current graph's Media Resolution settings
+are not automatically imported into this stream. That would require a
+separate chunk-aware processing interface or node. The UI describes the
+difference clearly; it does not claim that the original Media Resolution node
+processed streamed tensors.
+
+The optional **Stage JPEGs in Conveyor shelf** command remains available to
+inspect files in the visual shelf when slots are free. During streamed mode,
+that action does not modify sampler socket masks, scene-to-Picture mappings or
+add a second copy of an already streamed reference. No existing character
+shelf slot is overwritten. A long sequence never needs to stage all its
+screenshots in the eight-slot Conveyor. The original external State Manager
+prompt is still read-only, and the per-chunk picture cues are generated from
+the actual selected shots on the correct logical/physical clocks.

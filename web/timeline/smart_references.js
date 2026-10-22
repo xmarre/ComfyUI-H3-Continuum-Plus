@@ -1,7 +1,7 @@
 // Smart References is a detached analysis workspace. Apply uses the editor's
 // existing History transaction and rejects results after concurrent edits.
 import { clone } from "./core.js";
-import { referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v33";
+import { referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v34";
 const BASE="/h3_continuum/timeline";
 const el=(tag,attrs={},...children)=>{
   const node=document.createElement(tag);
@@ -41,6 +41,50 @@ export function screenshotIdsForSelection(plan, selection, sourceAssetId=null) {
     enabledIds:[...new Set(shots.filter(s=>s.user?.enabled!==false)
       .flatMap(s=>s.reference_ids))],
   };
+}
+
+/**
+ * Per-chunk native H3 transport: persistent identity sockets remain fixed,
+ * only overlapping screenshot assets are materialized for the current chunk.
+ * The compositor's Image Conveyor shelf is an optional UI library; static
+ * graph IMAGE outputs cannot change midway through a queued H3 sequence.
+ */
+export function planChunkReferenceStream(project, sources) {
+  const start=project.chunk_origin_frame||0;
+  const end=project.duration_frames;
+  const size=project.chunk_frames;
+  if(!Number.isInteger(size)||size<=0||!Number.isInteger(end)||end<=start)
+    throw Error("Invalid Timeline chunk grid for streamed scene references.");
+  const shots=project.scene_plan?.shots||[];
+  const bank=[...new Set(shots.filter(s=>s.user?.enabled!==false)
+    .flatMap(s=>s.reference_ids||[]))];
+  const identitySources=sources.filter(s=>
+    s.connected && !s.unavailable && Number.isInteger(s.slot) &&
+    s.slot>=1 && s.slot<=8 && !s.dynamic &&
+    !String(s.label||"").includes("h3_timeline_screencaps/") &&
+    !String(s.thumbnail||"").includes("h3_timeline_screencaps"));
+  const sockets=[...new Set(identitySources.map(s=>s.slot))].sort((a,b)=>a-b);
+  // Bundled IMAGE outputs can carry more than one H3 reference; the native
+  // sampler owns the actual dynamic count. Browser count is only an estimate.
+  const estimates=identitySources.map(s=>Math.max(1,Number(s.estimatedImageCount)||1));
+  const identityEstimate=estimates.reduce((a,b)=>a+b,0);
+  const sceneBudget=Math.min(5,Math.max(0,
+    Number(project.scene_plan?.settings?.scene_budget??3)));
+  if(identityEstimate>=8)
+    throw Error("All eight H3 Picture positions are already occupied by persistent references.");
+  const perChunk={};
+  const stats=[];
+  for(let index=0,a=start;a<end;index++,a+=size){
+    const b=Math.min(a+size,end);
+    const relevant=shots.filter(s=>s.user?.enabled!==false&&s.range[0]<b&&a<s.range[1]);
+    const ids=[...new Set(relevant.flatMap(s=>s.reference_ids||[]))];
+    perChunk[String(index)]=sockets.slice();
+    stats.push({index,from:a,to:b,sourceImageCount:ids.length,
+      budget:Math.min(sceneBudget,8-identityEstimate),identityEstimate,
+      accepted:Math.min(ids.length,Math.min(sceneBudget,8-identityEstimate)),
+      omitted:Math.max(0,ids.length-Math.min(sceneBudget,8-identityEstimate)),ids});
+  }
+  return {perChunk,stats,bank,sockets,identityEstimate};
 }
 
 export function planConveyorPublication(ids, state, sources, nodeId, toggles=null) {
@@ -129,9 +173,11 @@ export function renderShotCueReceipt(result, project) {
       } else {
         const refs=shot.reference_ids?.length||0;
         const reason=refs
-          ? project.scene_plan?.conveyor_only
-            ? "No active H3 <Picture N> alias. JPEG may be staged in Conveyor; connect its output through Media Resolution, then reimport."
-            : "No active H3 <Picture N> alias. Check the reference budget and sampler input routing."
+          ? project.scene_plan?.reference_transport==="streamed"
+            ? "No active H3 <Picture N> alias: this chunk's scene budget is exhausted or the shot was not allocated."
+            : project.scene_plan?.conveyor_only
+              ? "No active H3 <Picture N> alias. JPEG may be staged in Conveyor; connect its output through Media Resolution, then reimport."
+              : "No active H3 <Picture N> alias. Check the reference budget and sampler input routing."
           : "No screenshot selected for this shot.";
         lines.push(range+reason);
       }
@@ -142,7 +188,9 @@ export function renderShotCueReceipt(result, project) {
     : result?.prompt_source==="connected-unavailable"
       ? "UNVERIFIED — connected State Manager text was not resolved"
       : "Studio prompt fields";
-  const header="SHOT REFERENCE CUES · Base: "+base+
+  const transport=project.scene_plan?.reference_transport==="streamed"
+    ? " · CHUNK-STREAMED source JPEGs" : " · fixed Conveyor / scoped references";
+  const header="SHOT REFERENCE CUES · Base: "+base+transport+
     "\n"+occurrences+" shot window(s) · "+active+" active Picture cue(s) · "+
     disabled+" disabled shot window(s)";
   return header+"\n"+(lines.length?lines.join("\n"):
@@ -183,7 +231,9 @@ export class SmartReferences {
       el("p",{text:"Detected cuts use exact source PTS. H3 cut timing is advisory. Images are active for their whole chunk. Source faces remain visual composition evidence; dedicated character references control replacement identity."}),
       this.cueReceipt,this.list,el("details",{},el("summary",{text:"Compiled prompts and physical image allocation"}),this.compiled),
       el("footer",{},button("Preview compiled inputs",()=>this.guard(()=>this.refreshCuePreview({immediate:true,showDetails:true}))),
-        button("Send selected JPGs to Image Conveyor",()=>this.guard(()=>this.sendToConveyor())),
+        button("Activate CHUNK-SCOPED H3 references",()=>this.guard(()=>this.activateChunkReferences())),
+        button("Stage JPEGs in Conveyor shelf (optional)",()=>this.guard(()=>this.sendToConveyor())),
+        el("p",{class:"h3ts-smart-resolution-note",text:"Chunk-streamed H3 references rotate per 7-second chunk. Original identity inputs stay active; only the current shots' JPEGs are loaded. Static Image Conveyor outputs cannot swap tensors inside one queued generation, so the shelf remains an optional library. H3 latent encoding still requires 32px alignment; static Media Resolution nodes do not process streamed images."}),
         button("Apply shot plan",()=>this.guard(()=>this.apply())),
         button("Undo applied plan",()=>this.guard(()=>{if(this.appliedVersion!==editor.editVersion)throw Error("Only the most recently applied shot-plan edit can be undone here. Use Timeline Undo for later edits.");editor.undo();this.appliedVersion=null;this.version=editor.editVersion;this.candidate=clone(editor.p);this.renderShots();})),
         button("Revert pending edits",()=>{this.candidate=clone(editor.p);this.renderShots();this.scheduleCuePreview();})));
@@ -442,6 +492,58 @@ export class SmartReferences {
       "Chunk "+(w.index+1)+" ["+w.range.join(",")+")\n"+JSON.stringify({reference_budget:w.reference_budget,aliases:w.aliases,images:w.images,warnings:w.warnings},null,2)+"\n"+w.prompt).join("\n\n");
     if(showDetails)this.compiled.parentElement.open=true;
   }
+  async activateChunkReferences(){
+    if(!this.candidate.scene_plan)throw Error("Analyze shots before activating per-chunk references.");
+    if(this.editor.editVersion!==this.version)
+      throw Error("Timeline changed; reopen Smart References before activating images.");
+    this.updatePlanSettings();
+    const sources=referenceSocketSources(this.editor);
+    const plan=planChunkReferenceStream(this.candidate,sources);
+    // Use the whole authored scene, not a possibly one-chunk UI selection:
+    // all scene refs are stored persistently and selected lazily at generation.
+    const seen=plan.stats.slice(0,10).map(s=>
+      "Chunk "+(s.index+1)+": "+s.identityEstimate+" identity + "+
+      s.accepted+" screenshot(s) = "+(s.identityEstimate+s.accepted)+
+      (s.omitted?" ("+s.omitted+" over budget)":"")).join("\n");
+    const omitted=plan.stats.filter(s=>s.omitted).length;
+    if(!window.confirm(
+      "Activate dynamic per-chunk H3 screenshot references for "+plan.stats.length+
+      " chunk(s)?\n"+plan.bank.length+" distinct selected source screenshots in the library.\n\n"+
+      seen+(plan.stats.length>10?"\n…":"")+
+      (omitted?"\nWARNING: "+omitted+" chunks exceed the current scene-reference budget.":"")+
+      "\n\nExisting identity image sockets stay connected and selected. "+
+      "Source JPEG files remain unmodified. H3 performs its own 32px latent-alignment preprocessing "+
+      "(this is not the static Media Resolution node). No Image Conveyor shelf overwrite or new graph wiring."
+    ))return;
+    const updatedPlan=clone(this.candidate.scene_plan);
+    updatedPlan.reference_transport="streamed";
+    updatedPlan.conveyor_only=true;
+    updatedPlan.conveyor_slots={};
+    // The old fixed-shelf mapping is invalid for a dynamic source bank.
+    // Each chunk keeps ONLY existing connected identity inputs; its unique
+    // scene refs are loaded by TimelineInputs.materialize on that chunk.
+    this.editor.edit(p=>{
+      const registered=new Set(p.assets.map(a=>a.id));
+      for(const asset of this.candidate.assets||[]){
+        if(!registered.has(asset.id)){p.assets.push(clone(asset));registered.add(asset.id);}
+      }
+      p.scene_plan=updatedPlan;
+      p.conveyor_reference_slots=clone(plan.perChunk);
+    });
+    this.version=this.editor.editVersion;
+    this.appliedVersion=this.version;
+    this.candidate=clone(this.editor.p);
+    this.renderShots();
+    this.editor.scheduleChunkCompile?.();
+    this.editor.refreshSamplerInputs?.();
+    this.status.textContent="CHUNK-STREAMING ACTIVE: "+plan.stats.length+
+      " chunks, "+plan.bank.length+" unique screenshot assets, "+
+      plan.identityEstimate+" persistent identity images. "+
+      "Each chunk receives only its own selected stills. "+
+      (omitted?omitted+" chunk(s) exceed budget; inspect the cue receipt. ":"")+
+      "Unmodified JPEGs persist in Timeline's asset store; the Conveyor shelf is optional.";
+    await this.refreshCuePreview({immediate:true});
+  }
   async sendToConveyor(){
     if(!this.candidate.scene_plan)throw Error("Analyze and review a shot plan before importing screenshots.");
     if(this.editor.editVersion!==this.version)
@@ -529,6 +631,17 @@ export class SmartReferences {
     }
     node.setDirtyCanvas?.(true,true);
     node.graph?.change?.();
+    if(plan.reference_transport==="streamed"){
+      // Static Conveyor stage/preview state is independent of the virtual
+      // per-chunk scene stream. NEVER add the same JPEG to the H3 reference
+      // socket masks as well: that would silently double-condition it and
+      // change Picture numbering mid-sequence.
+      this.status.textContent="Staged "+ids.length+" screenshot JPEG(s) in Image Conveyor #"+node.id+
+        " for visual inspection. Dynamic H3 chunk streaming remains active; "+
+        "no static shelf slots were added to the sampler, and identities/masks are unchanged.";
+      await this.refreshCuePreview({immediate:true});
+      return;
+    }
     // Source-shelf indices and physical sampler socket indices are different
     // for rerouted paths. Never infer that shelf 5 means reference_image_5.
     const mapped=Object.fromEntries(installation.routed.map(entry=>

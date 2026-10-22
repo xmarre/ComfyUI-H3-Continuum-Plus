@@ -1,8 +1,8 @@
-import { SmartReferences } from "./smart_references.js?v=h3-timeline-smart-references-v33";
+import { SmartReferences } from "./smart_references.js?v=h3-timeline-smart-references-v34";
 import { migrateChunkPrompts } from "./import_regions.js";
 // Checked by Continuum Timeline Desktop against the *served* extension code.
 // Do not invoke filesystem discovery or reintroduce browser video uploads.
-export const NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v33";
+export const NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v34";
 import {
   History,
   clone,
@@ -28,8 +28,8 @@ import {
   makeTrack,
   placeAsset,
 } from "./core.js?v=h3-timeline-explicit-video-v22";
-import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls, referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v33";
-import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-smart-references-v33";
+import { renderChunkWorkspace, updateChunkCompiledLines, samplerInputDescription, refreshConveyorControls, referenceSocketSources, connectedPromptForPreview } from "./chunk_ui.js?v=h3-timeline-smart-references-v34";
+import { layoutView, workspaceGeometry, setLayoutDimension, DEFAULTS, LIMITS } from "./layout.js?v=h3-timeline-smart-references-v34";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "./navigation.js?v=h3-timeline-explicit-video-v22";
 import { selectedChunkPage } from "./chunk_workspace.js?v=h3-timeline-explicit-video-v22";
 import { ImportDialog } from "./import_dialog.js?v=h3-timeline-explicit-video-v22";

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {History} from '../web/timeline/core.js';
-import {applySceneCandidate,SmartReferences,planConveyorPublication,screenshotIdsForSelection,renderShotCueReceipt} from '../web/timeline/smart_references.js';
+import {applySceneCandidate,SmartReferences,planConveyorPublication,planChunkReferenceStream,screenshotIdsForSelection,renderShotCueReceipt} from '../web/timeline/smart_references.js';
 import {referenceSocketSources} from '../web/timeline/chunk_ui.js';
 
 test('scene Apply uses one History edit and rejects a concurrent timeline edit',()=>{
@@ -209,4 +209,47 @@ test('smart-reference form source select and help text cannot overlap controls',
   assert.match(css,/\.h3ts-smart-controls select,\.h3ts-smart-controls input \{ box-sizing:border-box;min-width:0;max-width:100%/);
   assert.match(css,/\.h3ts-smart-controls > \.h3ts-smart-resolution-note \{ grid-column:1\/-1;/);
   assert.match(css,/\.h3ts-smart-controls \.h3ts-smart-actions \{ grid-column:1\/-1;/);
+});
+
+test('dynamic stream uses 3 existing identity references plus only each chunk scene shots',()=>{
+ const picture=n=>n.toString(16).padStart(64,'0');
+ const p={duration_frames:336,chunk_origin_frame:0,chunk_frames:168,
+   scene_plan:{shots:[
+     {range:[0,67],reference_ids:[picture(1)]},
+     {range:[67,153],reference_ids:[picture(2)]},
+     {range:[153,168],reference_ids:[picture(3)]},
+     {range:[168,336],reference_ids:[picture(4)]},
+   ]}};
+ const sources=[1,2,3].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ const result=planChunkReferenceStream(p,sources);
+ assert.deepEqual(result.sockets,[1,2,3]);
+ assert.equal(result.bank.length,4);
+ assert.deepEqual(result.stats.map(x=>x.sourceImageCount),[3,1]);
+ assert.deepEqual(result.stats.map(x=>x.identityEstimate+x.accepted),[6,4]);
+ assert.deepEqual(result.perChunk,{'0':[1,2,3],'1':[1,2,3]});
+ assert.deepEqual(result.stats.map(x=>x.omitted),[0,0]);
+});
+
+test('long scene stream reuses fixed 5 scene capacity over 100 chunks',()=>{
+ const p={duration_frames:168*100,chunk_frames:168,chunk_origin_frame:0,
+   scene_plan:{shots:Array.from({length:100},(_,i)=>({
+     range:[168*i,168*(i+1)],reference_ids:[i.toString(16).padStart(64,'0')]
+   }))}};
+ const sources=[1,2,3].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ const x=planChunkReferenceStream(p,sources);
+ assert.equal(x.bank.length,100);
+ assert.equal(x.stats.length,100);
+ assert(x.stats.every(s=>s.accepted===1&&s.omitted===0));
+ assert(Object.values(x.perChunk).every(mask=>mask.join(',')==='1,2,3'));
+});
+
+test('streamed per-chunk planner enforces all eight H3 picture positions',()=>{
+ const p={duration_frames:168,chunk_frames:168,
+   scene_plan:{settings:{scene_budget:5},shots:[{range:[0,168],reference_ids:Array.from({length:8},(_,i)=>String(i).padStart(64,'0'))}]}};
+ const sources=[1,2,3,4].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ const plan=planChunkReferenceStream(p,sources);
+ assert.equal(plan.stats[0].accepted,4);
+ assert.equal(plan.stats[0].omitted,4);
+ const all=Array.from({length:8},(_,i)=>({slot:i+1,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ assert.throws(()=>planChunkReferenceStream(p,all),/All eight H3 Picture positions/);
 });

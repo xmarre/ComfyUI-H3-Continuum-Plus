@@ -434,7 +434,8 @@ def compile_window(p, index, guide_scope=None, picture_offset=0, reference_slot_
     # A scene screenshot installed in Image Conveyor is visible via a
     # persistent IMAGE socket instead of a second scoped reference. Rebuild
     # its Picture number from the *actual selected socket sizes*.
-    conveyor_map = p.get("scene_plan", {}).get("conveyor_slots", {})
+    scene_transport = p.get("scene_plan", {}).get("reference_transport", "scoped")
+    conveyor_map = {} if scene_transport == "streamed" else p.get("scene_plan", {}).get("conveyor_slots", {})
     if conveyor_map and reference_slot_sizes is not None:
         sizes = reference_slot_sizes
         active = reference_slots_for_chunk(p, index)
@@ -700,7 +701,9 @@ def compile_window(p, index, guide_scope=None, picture_offset=0, reference_slot_
         "voice": [audio_identity(i) for i in inputs if i["audio_role"] == "reference"],
     }
     if any(i.get("scene_native") for i in images):
-        semantic["scene_reference_preparation"] = "native_floor_v1"
+        semantic["scene_reference_preparation"] = (
+            "chunk_stream_v1" if scene_transport == "streamed" else "native_floor_v1"
+        )
     audio_mode = p.get("audio_generation_mode", "guided")
     if audio_mode != "guided":
         from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT
