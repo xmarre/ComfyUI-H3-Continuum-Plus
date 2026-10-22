@@ -172,6 +172,152 @@ def register_routes():
             manifest, headers={"Cache-Control": "no-store"},
         )
 
+    @endpoint("post", "/scenes/compile")
+    async def compile_scene_preview(request):
+        from .model import compile_window, reference_slots_for_chunk
+        data = await request.json()
+        p = validate(data["project"])
+        sizes = data.get("slot_sizes", [0]*8)
+        if not isinstance(sizes, list) or len(sizes) != 8 or any(type(n) is not int or not 0 <= n <= 8 for n in sizes):
+            raise ValueError("Invalid reference socket group sizes")
+        first = (p["selection"][0]-p.get("chunk_origin_frame", 0))//p["chunk_frames"]
+        stop = min(first+16, (p["selection"][1]-p.get("chunk_origin_frame", 0)+p["chunk_frames"]-1)//p["chunk_frames"])
+        windows = []
+        for index in range(first, stop):
+            selected = reference_slots_for_chunk(p, index)
+            count = sum(sizes[i-1] for i in (selected if selected is not None else range(1, 9)))
+            window = compile_window(p, index, picture_offset=count)
+            window["reference_budget"] = {"persistent_images": count, "scoped_images": len(window["images"]),
+                                          "total_images": count+len(window["images"]), "capacity": 8,
+                                          "runtime_verified": False}
+            windows.append(window)
+        return web.json_response({"windows": windows, "socket_sizes": sizes, "timing_enforced": False})
+
+    @endpoint("post", "/scenes/edit")
+    async def edit_scene_plan(request):
+        from .scene_plan import edit_plan
+        data = await request.json()
+        return web.json_response({"project": edit_plan(data["project"], data["operation"], data["shot_id"],
+            frame=data.get("frame"), other_id=data.get("other_id"), reference_ids=data.get("reference_ids"), setup_id=data.get("setup_id"))})
+
+    @endpoint("get", "/scenes/reference/{reference_id}/master")
+    async def scene_master(request):
+        rid = request.match_info["reference_id"]
+        if not re.fullmatch(r"[a-f0-9]{64}", rid):
+            raise ValueError("Invalid scene reference")
+        file = project_store().root/"scene_references"/rid/"master.mkv"
+        if not file.is_file():
+            raise ValueError("Reference master is unavailable")
+        return web.FileResponse(file, headers={"Content-Disposition": 'attachment; filename="scene-'+rid[:16]+'.mkv"'})
+
+    @endpoint("get", "/scenes/reference/{reference_id}/jpg")
+    async def scene_jpg(request):
+        """Serve the exact unscaled stored JPEG, not a preview thumbnail."""
+        rid = request.match_info["reference_id"]
+        if not re.fullmatch(r"[a-f0-9]{64}", rid):
+            raise ValueError("Invalid scene reference identity")
+        root = project_store().root/"scene_references"/rid/"reference.json"
+        if not root.is_file():
+            raise ValueError("Scene reference manifest unavailable")
+        import json
+        manifest = json.loads(root.read_text(encoding="utf-8"))
+        image = next((a for a in manifest["assets"] if a["representation"] == "h3"), None)
+        if not image or not image["name"].lower().endswith(".jpg"):
+            raise ValueError("Reference JPEG unavailable; reanalyse this scene")
+        path = await asyncio.to_thread(project_store().assets.verify, image["id"])
+        return web.FileResponse(path, headers={
+            "Content-Type": "image/jpeg",
+            "Content-Disposition": 'attachment; filename="shot-'+rid[:16]+'.jpg"',
+            "Cache-Control": "private, no-store",
+        })
+
+    @endpoint("post", "/scenes/conveyor/publish")
+    async def publish_conveyor_jpgs(request):
+        """Explicitly place selected full-resolution JPEGs in ComfyUI input.
+
+        No compositor graph or Conveyor state is mutated by this endpoint.
+        Existing image content is immutable and all identities are validated.
+        """
+        import json
+        import hashlib
+        import shutil
+        import folder_paths
+        data = await request.json()
+        identities = data.get("reference_ids")
+        if not isinstance(identities, list) or not 1 <= len(identities) <= 8 or len(set(identities)) != len(identities):
+            raise ValueError("Choose one to eight unique references for Conveyor")
+        if any(not isinstance(rid, str) or not re.fullmatch(r"[a-f0-9]{64}", rid) for rid in identities):
+            raise ValueError("Invalid scene reference identity")
+        store = project_store()
+        target_root = Path(folder_paths.get_input_directory()).resolve()/"h3_timeline_screencaps"
+        target_root.mkdir(parents=True, exist_ok=True)
+        results = []
+        for rid in identities:
+            manifest = store.root/"scene_references"/rid/"reference.json"
+            if not manifest.is_file():
+                raise ValueError("Scene reference manifest unavailable")
+            record = json.loads(manifest.read_text(encoding="utf-8"))
+            image = next((a for a in record["assets"] if a["representation"] == "h3"), None)
+            if not image or not image["name"].endswith(".jpg"):
+                raise ValueError("Reanalyse to produce source-resolution JPEG screenshots")
+            source = await asyncio.to_thread(store.assets.verify, image["id"])
+            destination = target_root/(rid+".jpg")
+            if destination.exists():
+                digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+                if digest != image["id"]:
+                    raise ValueError("A published Conveyor screenshot was modified; cannot overwrite it")
+            else:
+                temporary = target_root/(rid+"-"+uuid.uuid4().hex+".tmp")
+                try:
+                    shutil.copyfile(source, temporary)
+                    if hashlib.sha256(temporary.read_bytes()).hexdigest() != image["id"]:
+                        raise ValueError("Scene export integrity failed")
+                    os.replace(temporary, destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            results.append({"id": rid, "annotated": "h3_timeline_screencaps/"+rid+".jpg [input]",
+                            "filename": rid+".jpg", "subfolder": "h3_timeline_screencaps",
+                            "type": "input", "width": image["width"], "height": image["height"]})
+        return web.json_response({"references": results})
+
+    @endpoint("post", "/scenes/analyze")
+    async def analyze_scenes(request):
+        from .scene_analysis import SceneAnalysis
+        data = await request.json()
+        return web.json_response(await asyncio.to_thread(SceneAnalysis(project_store()).start,
+            data["project"], data["asset_id"], scope=data.get("scope", "selection"), config=data.get("settings")))
+
+    @endpoint("get", "/scenes/{token}")
+    async def scene_status(request):
+        from .scene_analysis import SceneAnalysis
+        return web.json_response(await asyncio.to_thread(SceneAnalysis(project_store()).status, request.match_info["token"]))
+
+    @endpoint("post", "/scenes/{token}/cancel")
+    async def cancel_scenes(request):
+        from .scene_analysis import SceneAnalysis
+        return web.json_response(SceneAnalysis(project_store()).cancel(request.match_info["token"]))
+
+    @endpoint("post", "/scenes/{token}/preview")
+    async def preview_scenes(request):
+        from .scene_analysis import SceneAnalysis
+        data = await request.json()
+        candidate = await asyncio.to_thread(SceneAnalysis(project_store()).preview, data["project"], request.match_info["token"], data.get("model_id"))
+        return web.json_response({"project": candidate, "analysis": SceneAnalysis(project_store()).result(request.match_info["token"])})
+
+    @endpoint("post", "/scenes/{token}/evidence")
+    async def scene_evidence(request):
+        from .scene_analysis import SceneAnalysis
+        data = await request.json()
+        return web.json_response(await asyncio.to_thread(SceneAnalysis(project_store()).evidence,
+            request.match_info["token"], data["shot_id"], data["model_id"], data.get("context_budget", 8192)))
+
+    @endpoint("post", "/scenes/{token}/observation")
+    async def scene_observation(request):
+        from .scene_analysis import SceneAnalysis
+        data = await request.json()
+        return web.json_response(await asyncio.to_thread(SceneAnalysis(project_store()).observation,
+            request.match_info["token"], data["shot_id"], data["model_id"], data["observation"], data.get("context_budget", 8192)))
+
     @endpoint("post", "/compile")
     async def compile_route(request):
         data = await request.json()

@@ -1175,3 +1175,30 @@
 .h3ts[data-timeline=false] > .h3ts-scroll,
 .h3ts[data-timeline=false] > .h3ts-tools,
 .h3ts[data-timeline=false] > .h3ts-splitter-horizontal { display:none; }
+
+/* Separate scene-analysis action; does not resize the generation workspace. */
+.h3ts-smart { color: #e6eaf1; background: #171b23; border: 1px solid #566278; border-radius: 10px; width: min(1180px,94vw); max-height: 90vh; overflow: auto; padding: 16px; font: 14px system-ui,sans-serif; }
+.h3ts-smart::backdrop { background: #0009; }
+.h3ts-smart header,.h3ts-smart footer,.h3ts-smart nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:10px 0; }
+.h3ts-smart header strong { flex:1; }
+.h3ts-smart-controls { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;padding:12px 0; }
+.h3ts-smart label { display:flex; gap:8px; align-items:center; }
+.h3ts-smart input[type=number] { width:75px; }
+.h3ts-smart button,.h3ts-smart select,.h3ts-smart textarea,.h3ts-smart input { color:inherit;background:#272f3e;border:1px solid #586781;border-radius:4px;padding:6px; }
+.h3ts-smart button { cursor:pointer; }
+.h3ts-smart textarea { width:100%;box-sizing:border-box; }
+.h3ts-smart article { border-top:1px solid #4c586b;margin:14px 0;padding:10px 0; }
+.h3ts-smart-images { display:flex;flex-wrap:wrap;gap:12px; }
+.h3ts-smart figure { margin:0;max-width:360px; }
+.h3ts-smart figure img { max-width:100%;max-height:240px;object-fit:contain; }
+.h3ts-smart figcaption,.h3ts-smart small { display:block;line-height:1.5;color:#bdc7d9; }
+.h3ts-smart a { color:#a9c8ff; }
+.h3ts-smart-compiled { white-space:pre-wrap;overflow-wrap:anywhere;max-height:500px;overflow:auto; }
+.h3ts-shot-boundary { position:absolute;top:28px;z-index:4;color:#f4bb76;background:#1a1f29;border:0;border-left:2px solid #edaa5b;cursor:pointer;font-size:10px; }
+
+.h3ts-effective-prompt-field {display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:10px 0;min-width:0}
+.h3ts-effective-prompt {width:100%;min-height:115px;resize:vertical;box-sizing:border-box;font:12px/1.45 ui-monospace,monospace;color:#e4eeff;background:#151c27;border:1px solid #586781;border-radius:5px;padding:10px}
+.h3ts-effective-prompt-field small {color:#a7bbd2;line-height:1.5}
+
+.h3ts-smart .h3ts-remote-consent {border:1px solid #7185a4;border-radius:6px;padding:7px 10px;background:#202c3b;max-width:100%;font-size:12px}
+.h3ts-smart .h3ts-remote-consent[hidden] {display:none !important}

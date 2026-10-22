@@ -1,5 +1,17 @@
 # ComfyUI-H3-Continuum-Plus
 
+## Smart References (feature preview)
+
+Timeline Studio's **Smart references** workspace analyzes registered footage,
+plans reusable scene screenshots, budgets them after identity references and
+previews editable timed shot requests. Deterministic analysis is independent of
+optional Prompt Writer / LM Studio interpretation. Apply is undoable and does
+not queue generation or change source-audio lock. Shot timing remains advisory;
+HDR/Dolby Vision renderer parity and trained-model quality require acceptance.
+See [Smart References](docs/timeline/SMART_REFERENCES.md) for workflow, supported
+color paths, native conditioning, deployment and qualification limits.
+
+
 ## Timeline Studio (draft integration)
 
 The chunk editor traces connected IMAGE paths back through unambiguous single-input
@@ -17,7 +29,7 @@ viewer still images first expose a cached low-detail source preview while the
 high-detail image is decoded; failures are reported on-screen rather than
 leaving an unexplained black viewport. Neither preview derivative participates
 in H3 sampling or video export. The current native/editor compatibility
-contract is `h3-timeline-conveyor-preview-v8`.
+contract is `h3-timeline-smart-references-v27`.
 
 ## Timeline Studio (draft integration)
 
@@ -507,7 +519,7 @@ not included in this release set.
 
 See [LICENSE](LICENSE).
 
-Timeline Studio’s **Import…** supports selective ZIP/JSON/text/media and read-only State Manager prompt imports, with global identity, editable chunk sections and original soundtrack routing. See [the import guide](docs/timeline/USER_GUIDE.md#import-prompts-pre-cut-pictures-and-the-original-soundtrack). Frontend, backend and desktop must use the matching v21 contract.
+Timeline Studio’s **Import…** supports selective ZIP/JSON/text/media and read-only State Manager prompt imports, with global identity, editable chunk sections and original soundtrack routing. See [the import guide](docs/timeline/USER_GUIDE.md#import-prompts-pre-cut-pictures-and-the-original-soundtrack). Frontend, backend and desktop must use the matching v27 contract.
 
 ### Experimental source-audio target lock
 
