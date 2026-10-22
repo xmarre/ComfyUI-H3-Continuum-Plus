@@ -333,3 +333,15 @@ test('boundary-spanning shot uses carried context without spending another Pictu
  assert.match(receipt,/Chunk 2 \[4\.125-7s\] Match <Picture 4>/);
  assert.doesNotMatch(receipt,/<Picture 5>/);
 });
+
+test('shot receipt displays actual per-chunk allocation estimates (six then four)',()=>{
+ const p={conveyor_reference_slots:{'0':[1,2,3],'1':[1,2,3]},scene_plan:{reference_transport:'streamed',shots:[]}};
+ const preview={prompt_source:'connected',socket_sizes:[1,1,1,0,0,0,0,0],
+   windows:[
+     {index:0,range:[0,168],images:[{asset_id:'a'},{asset_id:'b'},{asset_id:'c'}],scene_shots:[]},
+     {index:1,range:[168,336],images:[{asset_id:'d'}],scene_shots:[]},
+   ]};
+ const receipt=renderShotCueReceipt(preview,p);
+ assert.match(receipt,/Chunk 1: ~3 persistent \+ 3 chunk-scoped = ~6\/8 H3 Picture inputs/);
+ assert.match(receipt,/Chunk 2: ~3 persistent \+ 1 chunk-scoped = ~4\/8 H3 Picture inputs/);
+});

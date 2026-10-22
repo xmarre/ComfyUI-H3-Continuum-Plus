@@ -194,9 +194,23 @@ export function renderShotCueReceipt(result, project) {
       : "Studio prompt fields";
   const transport=project.scene_plan?.reference_transport==="streamed"
     ? " · CHUNK-STREAMED source JPEGs" : " · fixed Conveyor / scoped references";
+  // Preview image counts are *estimated* when a persistent IMAGE socket
+  // carries a dynamic bundle. The actual sampler's ReferenceAssets is
+  // authoritative and enforces the eight-image cap at generation time.
+  const sizes=Array.isArray(result?.socket_sizes)?result.socket_sizes:null;
+  const windowCounts=sizes ? windows.map(w=>{
+    const mask=project?.conveyor_reference_slots?.[String(w.index)] ??
+      Array.from({length:8},(_,i)=>i+1);
+    const pinned=mask.reduce((sum,socket)=>sum+
+      Math.max(0,Number(sizes[socket-1])||0),0);
+    const scoped=(w.images||[]).length;
+    return "Chunk "+(w.index+1)+": ~"+pinned+" persistent + "+
+      scoped+" chunk-scoped = ~"+(pinned+scoped)+"/8 H3 Picture inputs";
+  }) : [];
   const header="SHOT REFERENCE CUES · Base: "+base+transport+
     "\n"+occurrences+" shot window(s) · "+active+" active Picture cue(s) · "+
-    disabled+" disabled shot window(s) · "+continued+" carried-context shot window(s)";
+    disabled+" disabled shot window(s) · "+continued+" carried-context shot window(s)"+
+    (windowCounts.length?"\n"+windowCounts.join("\n"):"");
   return header+"\n"+(lines.length?lines.join("\n"):
     "No analysed shot intervals in the selected chunk preview.")+
     "\nCue times are logical chunk-local; native physical continuation rebases for carried frames."+
