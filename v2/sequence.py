@@ -902,7 +902,7 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
     prefetched = {}
     prefetched_descriptor = None
     for sequence_index in normal_indices:
-        prompt=prompts[sequence_index]; prompt_hash_value=prompt_hashes[sequence_index]; effective_reroll_nonce=int(reroll_nonce) if int(reroll_from_chunk)>0 and sequence_index+1>=int(reroll_from_chunk) else 0; seed=derive_chunk_seed(base_seed,sequence_index,effective_reroll_nonce); video_context=None; audio_context=None; context_before=None
+        prompt=timeline_inputs.invocation_text(prompts[sequence_index],sequence_index) if timeline_inputs is not None else prompts[sequence_index]; prompt_hash_value=prompt_hashes[sequence_index]; effective_reroll_nonce=int(reroll_nonce) if int(reroll_from_chunk)>0 and sequence_index+1>=int(reroll_from_chunk) else 0; seed=derive_chunk_seed(base_seed,sequence_index,effective_reroll_nonce); video_context=None; audio_context=None; context_before=None
         invocation_driving_active = driving_audio_source is not None and (timeline_inputs is None or timeline_inputs.guide_active(sequence_index))
         geometry=resolve_normal_geometry(
             previous_state=previous_state,sequence_index=sequence_index,chunks=chunks,chunk_seconds=chunk_seconds,
@@ -1035,7 +1035,8 @@ def run_sequence(*,model:Any,clip:Any,video_vae:Any,audio_vae:Any,sampler:Any,si
                         next_descriptor = timeline_inputs.annotate(next_descriptor, sequence_index + 1, record=False)
                     ahead, _, _, ahead_key = encode_physical_prompt_conditioning(
                         clip=clip, plan=timeline_inputs.invocation_plan(plan,sequence_index + 1) if timeline_inputs is not None else plan, descriptor=next_descriptor,
-                        legacy_text=prompts[sequence_index + 1], assets=assets,
+                        legacy_text=(timeline_inputs.invocation_text(prompts[sequence_index + 1],sequence_index + 1)
+                                     if timeline_inputs is not None else prompts[sequence_index + 1]), assets=assets,
                         include_first=False, include_last=next_last,
                         reference_assets=next_references,
                         reference_audio_assets=reference_audio_assets,

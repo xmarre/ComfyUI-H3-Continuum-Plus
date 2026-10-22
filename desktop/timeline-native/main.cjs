@@ -83,6 +83,17 @@ else {
           if (result.id !== "h3-smoke-asset" || result.storage !== "linked") {
             throw new Error("Packaged native path IPC returned unexpected asset");
           }
+          const scenes = await window.webContents.executeJavaScript(
+            '(async()=>{' +
+            ' for(let i=0;i<300&&!window.sceneReady;i++)await new Promise(r=>setTimeout(r,100));' +
+            ' if(typeof window.h3RunSceneSmoke!=="function")throw Error("Production scene workspace did not load");' +
+            ' return await window.h3RunSceneSmoke();' +
+            '})()');
+          if (JSON.stringify(scenes.shots) !== "[[0,67],[67,153],[153,168]]" || scenes.queueCount !== 0)
+            throw new Error("Packaged scene analysis returned invalid production results");
+          await window.webContents.executeJavaScript(
+            'fetch("/h3-scene-smoke-complete",{method:"POST",headers:{"Content-Type":"application/json"},body:'+JSON.stringify(JSON.stringify(scenes))+'}).then(r=>{if(!r.ok)throw Error("Scene smoke receipt was rejected")})');
+          console.log("H3_SCENE_WORKSPACE_SMOKE_PASSED");
           console.log("H3_NATIVE_DESKTOP_SMOKE_PASSED");
           // CI must exercise the real packaged BrowserWindow.close() path,
           // not only call app.exit(0) directly and skip the reported defect.
