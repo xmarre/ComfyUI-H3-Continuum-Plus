@@ -122,7 +122,7 @@ def extract_reference(store, source, frame, settings, *, cancel):
     # The reference screenshot retains source raster dimensions. Its only
     # unavoidable conversion is display-referred RGB -> high-quality JPEG;
     # downstream Image Conveyor/Media Resolution owns any geometry change.
-    hw, hh = display_width, height
+    hw, hh = width, height
     vw, vh = limited_dimensions(display_width, height, settings["vlm_mp"])
     when = Fraction(frame["pts"])*rational(frame["time_base"])
     identity = digest([COLOR_VERSION, source["id"], frame["pts"], frame["time_base"], settings, _version(), metadata])
