@@ -1175,3 +1175,62 @@
 .h3ts[data-timeline=false] > .h3ts-scroll,
 .h3ts[data-timeline=false] > .h3ts-tools,
 .h3ts[data-timeline=false] > .h3ts-splitter-horizontal { display:none; }
+
+/* Separate scene-analysis action; does not resize the generation workspace. */
+.h3ts-smart { color: #e6eaf1; background: #171b23; border: 1px solid #566278; border-radius: 10px; width: min(1180px,94vw); max-height: 90vh; overflow: auto; padding: 16px; font: 14px system-ui,sans-serif; }
+.h3ts-smart::backdrop { background: #0009; }
+.h3ts-smart header,.h3ts-smart footer,.h3ts-smart nav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:10px 0; }
+.h3ts-smart header strong { flex:1; }
+.h3ts-smart-controls { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 20px;padding:12px 0;align-items:start;min-width:0; }
+.h3ts-smart label { display:flex; gap:8px; align-items:center; }
+.h3ts-smart input[type=number] { width:75px; }
+.h3ts-smart button,.h3ts-smart select,.h3ts-smart textarea,.h3ts-smart input { color:inherit;background:#272f3e;border:1px solid #586781;border-radius:4px;padding:6px; }
+.h3ts-smart button { cursor:pointer; }
+.h3ts-smart textarea { width:100%;box-sizing:border-box; }
+.h3ts-smart article { border-top:1px solid #4c586b;margin:14px 0;padding:10px 0; }
+.h3ts-smart-images { display:flex;flex-wrap:wrap;gap:12px; }
+.h3ts-smart figure { margin:0;max-width:360px; }
+.h3ts-smart figure img { max-width:100%;max-height:240px;object-fit:contain; }
+.h3ts-smart figcaption,.h3ts-smart small { display:block;line-height:1.5;color:#bdc7d9; }
+.h3ts-smart a { color:#a9c8ff; }
+.h3ts-smart-compiled { white-space:pre-wrap;overflow-wrap:anywhere;max-height:500px;overflow:auto; }
+.h3ts-shot-boundary { position:absolute;top:28px;z-index:4;color:#f4bb76;background:#1a1f29;border:0;border-left:2px solid #edaa5b;cursor:pointer;font-size:10px; }
+
+.h3ts-effective-prompt-field {display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:10px 0;min-width:0}
+.h3ts-effective-prompt {width:100%;min-height:115px;resize:vertical;box-sizing:border-box;font:12px/1.45 ui-monospace,monospace;color:#e4eeff;background:#151c27;border:1px solid #586781;border-radius:5px;padding:10px}
+.h3ts-effective-prompt-field small {color:#a7bbd2;line-height:1.5}
+
+.h3ts-smart .h3ts-remote-consent {border:1px solid #7185a4;border-radius:6px;padding:7px 10px;background:#202c3b;max-width:100%;font-size:12px}
+.h3ts-smart .h3ts-remote-consent[hidden] {display:none !important}
+
+.h3ts-smart-cue-receipt {white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,monospace;color:#d7e7ff;background:#111c2c;border:1px solid #586c89;padding:12px;border-radius:7px;max-height:240px;overflow:auto;margin:10px 0}
+
+/* Smart References: long filenames and descriptions must never enlarge their
+   grid cells or overlap adjacent form controls. Informational notes and
+   actions occupy their own rows; short labels never squeeze a select. */
+.h3ts-smart-controls > .h3ts-smart-control { display:flex;flex-direction:column;align-items:stretch;justify-content:start;gap:6px;min-width:0;max-width:100%;line-height:1.35;overflow-wrap:anywhere; }
+.h3ts-smart-controls > .h3ts-smart-source { grid-column:span 2; }
+.h3ts-smart-controls > .h3ts-smart-toggle { flex-direction:row;align-items:center;justify-content:space-between;gap:12px;min-height:42px; }
+.h3ts-smart-controls > .h3ts-smart-toggle input[type=checkbox] { flex:none; }
+.h3ts-smart-controls > .h3ts-smart-resolution-note { grid-column:1/-1;margin:0;padding:8px 12px;border:1px solid #40536b;border-radius:5px;background:#1c2531;color:#b8cce4;line-height:1.5;min-width:0;overflow-wrap:anywhere; }
+.h3ts-smart-controls select,.h3ts-smart-controls input { box-sizing:border-box;min-width:0;max-width:100%; }
+.h3ts-smart-controls > .h3ts-smart-control select { display:block;width:100%;text-overflow:ellipsis; }
+.h3ts-smart .h3ts-smart-controls input[type=number] { width:100%;max-width:150px; }
+.h3ts-smart-controls .h3ts-smart-actions { grid-column:1/-1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;min-width:0; }
+.h3ts-smart .h3ts-smart-actions button { white-space:normal;min-width:0;min-height:38px; }
+.h3ts-smart nav { min-width:0; }
+.h3ts-smart nav select { flex:1 1 300px;min-width:0;max-width:100%;text-overflow:ellipsis; }
+.h3ts-smart article > label { display:grid;grid-template-columns:minmax(130px,200px) minmax(0,1fr);align-items:start;gap:10px;margin:9px 0;min-width:0;max-width:100%; }
+.h3ts-smart article > label input:not([type=checkbox]):not([type=number]),.h3ts-smart article > label textarea { width:100%;min-width:0;max-width:100%;box-sizing:border-box; }
+.h3ts-smart article > label input[type=checkbox] { width:16px;height:16px; }
+.h3ts-smart .h3ts-smart-images { min-width:0; }
+@media (max-width:960px) {
+  .h3ts-smart-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .h3ts-smart-controls > .h3ts-smart-source { grid-column:span 1; }
+  .h3ts-smart-controls .h3ts-smart-actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width:600px) {
+  .h3ts-smart-controls { grid-template-columns:minmax(0,1fr); }
+  .h3ts-smart-controls .h3ts-smart-actions { grid-template-columns:minmax(0,1fr); }
+  .h3ts-smart article > label { grid-template-columns:minmax(0,1fr); }
+}

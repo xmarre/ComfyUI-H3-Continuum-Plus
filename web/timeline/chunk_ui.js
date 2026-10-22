@@ -87,18 +87,37 @@ function conveyorSourcePreviews(editor,graph,sampler,slot) {
     truncated:ancestry.truncated,
   };
 }
+export function connectedPromptForPreview(editor) {
+  if(editor.p?.prompt_source?.mode==="studio") return null;
+  const sampler=linkedSampler(editor);
+  if(!sampler) return null;
+  try { return connectedTextSource(editor.app.graph,sampler).text; }
+  catch { return null; }
+}
 export function referenceSocketSources(editor) {
   const sampler=linkedSampler(editor);
   if (!sampler) return [];
   const graph=sampler.graph || editor.app?.graph;
   return Array.from({length:8},(_,i)=>{
     const slot=i+1;
-    const source=traceReferenceSocket(graph,sampler,slot);
-    // A processor with multiple IMAGE inputs is not a one-to-one mapping.
-    // Still show definite upstream Conveyor images instead of an empty card.
-    const ancestry=source.connected && !source.conveyor
+    const traced=traceReferenceSocket(graph,sampler,slot);
+    // The exact lineage tracer can stop at Media Resolution, a reroute,
+    // or a custom wildcard IMAGE processor. The broader provenance tracer
+    // already finds connected Conveyor shelves through these nodes. Accept
+    // it as a writable one-to-one route ONLY when its single Conveyor origin
+    // is unambiguous. Multi-IMAGE mergers remain read-only previews.
+    const ancestry=traced.connected && !traced.conveyor
       ? conveyorSourcePreviews(editor,graph,sampler,slot)
       : {candidates:[],truncated:false};
+    const candidate=ancestry.candidates.length===1 && !ancestry.truncated &&
+      !String(traced.unresolved||"").startsWith("Ambiguous IMAGE inputs")
+      ? ancestry.candidates[0] : null;
+    const parent=candidate && (graph.getNodeById?.(candidate.nodeId) ||
+      graph._nodes?.find(node=>node.id===candidate.nodeId));
+    const source=parent && candidate.shelfNumber
+      ? {connected:true,conveyor:true,node:parent,
+          shelfNumber:candidate.shelfNumber,via:candidate.via||[],
+          provenanceFallback:true} : traced;
     const node=source.node;
     const state=source.conveyor ? conveyorState(node) : {};
     const shelfNumber=source.shelfNumber;
@@ -151,6 +170,10 @@ export function referenceSocketSources(editor) {
       sourceVersion:ref?.source_version || ref?.mtime_ns || null,
       candidatePreviews:ancestry.candidates,
       ancestryTruncated:ancestry.truncated,
+      provenanceFallback:!!source.provenanceFallback,
+      ambiguousPath:!!(source.connected&&!source.conveyor&&
+        (ancestry.candidates.length>1||ancestry.truncated||
+          String(source.unresolved||"").startsWith("Ambiguous IMAGE inputs"))),
     };
   });
 }
@@ -712,6 +735,14 @@ export function renderChunkWorkspace(editor) {
       imported.filter(r=>!r.muted).map(r=>r.text).join("\n"), chunk.index);
     card.append(el("details",{class:"h3ts-compiled-details"},
       el("summary",{text:"Compiled prompt and input receipt"}),preview));
+    const effective=el("textarea",{
+      class:"h3ts-effective-prompt",rows:"6",readOnly:"","aria-label":"Effective H3 prompt for chunk "+(chunk.index+1)
+    });
+    effective.value=editor.compiledWindows?.get(chunk.index)?.prompt ||
+      "Compiled H3 prompt appears after input inspection. It includes the visual shot schedule when applied.";
+    card.append(el("label",{class:"h3ts-effective-prompt-field"},
+      el("strong",{text:"Effective H3 shot-timed prompt · chunk "+(chunk.index+1)+" · read-only"}),
+      effective,el("small",{text:"Shot plan times here are local to the logical chunk. Native physical conditioning rebases them for carried context. Authored text and connected State Manager controls are not rewritten."})));
     card.append(conveyorReferenceControls(editor,chunk.index,referenceSources));
     const video=sectionForRole(editor,chunk.index,"video_guide");
     const audioRoute=el("select",{"aria-label":"Chunk audio routing"},
@@ -880,6 +911,13 @@ export function renderChunkWorkspace(editor) {
 // the user is typing a new chunk prompt.
 export function updateChunkCompiledLines(editor) {
   const inputs=samplerInputDescription(editor);
+  for(const card of editor.chunkBoard?.querySelectorAll("[data-chunk-index]")||[]){
+    const field=card.querySelector(".h3ts-effective-prompt");
+    if(field){
+      const effective=editor.compiledWindows?.get(Number(card.dataset.chunkIndex));
+      field.value=effective?.prompt || "Effective H3 prompt unavailable until inputs compile.";
+    }
+  }
   for (const element of editor.chunkBoard?.querySelectorAll("[data-compiled-chunk]") || [])
     compiledLine(
       element,

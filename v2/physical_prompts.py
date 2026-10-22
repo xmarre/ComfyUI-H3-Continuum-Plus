@@ -709,6 +709,54 @@ def _render_segments(
     return "\n\n".join(blocks)
 
 
+def _render_physical_scene_schedule(
+    source: dict[str, Any], descriptor: PhysicalSampleDescriptor
+) -> str:
+    """Render job-relative project-frame shot ranges on the H3 sample clock.
+
+    A continuation's first fresh frame starts after `context_frames` of
+    reused input, so chunk-local timestamps are incorrect for this transport.
+    Respect logical chunk scope: borrowed context must not pull shots/dialogue
+    from the previous chunk's authored schedule.
+    """
+    shots = source.get("scene_shots") or []
+    if not shots:
+        return ""
+    if not isinstance(shots, list):
+        raise PhysicalPromptError("structured scene schedule must be a list")
+    logical_indices = set(descriptor.logical_indices)
+    fresh_start = max(descriptor.global_start_frame, descriptor.retained_before)
+    rendered = []
+    for shot in shots:
+        if not isinstance(shot, dict):
+            raise PhysicalPromptError("structured scene shot must be an object")
+        frame_range = shot.get("range")
+        if (not isinstance(frame_range, list) or len(frame_range) != 2
+            or any(type(n) is not int for n in frame_range)
+            or frame_range[0] >= frame_range[1]
+            or type(shot.get("logical_index")) is not int
+            or not isinstance(shot.get("text"), str)):
+            raise PhysicalPromptError("invalid structured scene shot range or body")
+        if shot["logical_index"] not in logical_indices:
+            continue
+        a = max(frame_range[0], fresh_start)
+        b = min(frame_range[1], descriptor.global_end_frame)
+        if a >= b or not shot["text"].strip():
+            continue
+        local_a = Fraction(a - descriptor.global_start_frame, 1) / descriptor.fps
+        local_b = Fraction(b - descriptor.global_start_frame, 1) / descriptor.fps
+        rendered.append((a, b, f"[{_format_seconds(local_a)}-{_format_seconds(local_b)}s] {shot['text']}"))
+    if not rendered:
+        return ""
+    rendered.sort(key=lambda item: (item[0], item[1], item[2]))
+    notice = source.get("scene_identity_notice", "")
+    if notice and not isinstance(notice, str):
+        raise PhysicalPromptError("invalid scene identity notice")
+    return "Shot plan:\n" + (notice.strip() + "\n" if notice else "") + "\n".join(
+        item[2] for item in rendered
+    )
+
+
 def compile_physical_prompt(
     plan: dict[str, Any],
     descriptor: PhysicalSampleDescriptor,
@@ -988,6 +1036,16 @@ def compile_physical_prompt(
     segments = _join_segments(segments)
     preamble = str(source.get("preamble", "")).strip()
     explicit_aliases = _explicit_subject_aliases(preamble)
+    scene_schedule = _render_physical_scene_schedule(source, descriptor)
+    if scene_schedule:
+        preamble = f"{preamble}\n\n{scene_schedule}" if preamble else scene_schedule
+        diagnostics.append({
+            "level": "info",
+            "code": "H3C-PT240",
+            "message": "rebased structured visual shot schedule to the physical sample clock including continuation context",
+            "context_frames": descriptor.context_frames,
+            "logical_indices": list(descriptor.logical_indices),
+        })
     canonicalized_mentions = 0
     if explicit_aliases:
         for segment in segments:

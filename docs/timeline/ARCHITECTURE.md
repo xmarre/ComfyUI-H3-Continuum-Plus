@@ -295,3 +295,25 @@ Final soundtrack selection uses the actual natural output range of each job. Nat
 `ImportSources` stages untrusted input separately from project state, detects documents/media, validates strict import syntax and resolves only selected media into the immutable cache. `apply_components` produces a copied candidate and explicit prompt mapping. Confirmation applies that candidate as one frontend History transaction and rejects stale timeline revisions. State Manager sources are read via graph text or a GET of its existing saved library; no preset writes occur.
 
 `prompts.regions` is the canonical typed/imported chunk action store. Legacy `chunk_prompt` clips migrate there; partial overwrites split and retain uncovered sections. Generic advanced prompt lanes remain supported. Import ownership masks external sequence text until an explicit relink; the standalone sampler remains permissive. Time origins are explicit scene-relative/movie-absolute values with conservative automatic detection. Stage expiration and cancellation do not mutate the live project.
+
+## Scene analysis and native conditioning
+
+The optional `scene_plan` is validated by `scene_plan.py`; analysis, measured
+source PTS and editable project-frame occurrences are separate. `scene_detection`
+streams CPU measurements into resumable SQLite. `scene_analysis` owns analysis
+candidates and global extraction budgeting, `scene_color` owns independently
+cached master/H3/VLM derivatives, and `scene_semantics` validates the public
+Prompt Writer observation schema. The existing AssetStore owns every usable
+image. Browser Apply uses the ordinary History transaction and edit-version lease.
+
+`compile_window` allocates scene evidence only after the actual persistent and
+manual scoped images. `TimelineInputs.set_offset` recompiles with physical socket
+group sizes, and both normal and lookahead paths materialize those native images.
+Scene PNGs use downward 32px lattice preparation before the native ReferenceAssets
+path. Physical manifests record actual image hashes, tensor geometry and ordinals.
+No sampler, attention, latent-mask, source-audio or assembly topology is changed.
+The detector's source cut and the H3 prompt's requested cut are distinct clocks;
+structural cut enforcement and generated-cut measurements remain explicitly absent.
+
+See [the complete scene contract](SMART_REFERENCES.md) for schema, cache keys,
+limitations and provider/desktop negotiation.
