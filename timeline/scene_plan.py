@@ -79,6 +79,9 @@ def validate_plan(plan, asset_ids, duration):
         user = shot.get("user", {})
         if not isinstance(user, dict) or not isinstance(user.get("description", ""), str) or len(user.get("description", "")) > 8000:
             raise ValueError("Invalid shot correction")
+        cue = user.get("prompt_cue", "")
+        if not isinstance(cue, str) or len(cue) > 180 or any(mark in cue for mark in ("<", ">", "\\n", "\\r")):
+            raise ValueError("H3 shot cue must be a single, plain-text line of at most 180 characters")
         for key in ("scene_id", "setup_id"):
             if shot.get(key) is not None and (not isinstance(shot[key], str) or len(shot[key]) > 256):
                 raise ValueError("Invalid scene/camera setup identity")
@@ -257,10 +260,8 @@ def allocate(project, start, end, persistent_count, manual_images):
             chosen.append(rid)
             continue
         if plan.get("conveyor_only"):
-            # A user explicitly chose Conveyor / Media Resolution for this
-            # scene. Staged-only screenshots MUST NOT silently pass through
-            # the native scoped-reference fallback, which resizes images
-            # differently and changes Picture numbers.
+            # Explicit Conveyor export opts out of the native resized/scoped
+            # path: staged-only screenshots cannot be re-injected secretly.
             continue
         if ref["asset_id"] in selected_assets:
             chosen.append(rid)
@@ -279,22 +280,27 @@ def allocate(project, start, end, persistent_count, manual_images):
 
 
 def shot_instructions(shot, plan, picture_by_asset):
-    user = shot.get("user", {})
-    description = user.get("description")
-    if description is None and plan["settings"].get("generate_descriptions"):
-        description = shot.get("vlm", {}).get("description", "")
-    description = description or ""
+    """Emit compact visual cut cues, never an entire VLM observation dump.
+
+    Rich VLM analysis stays in the review panel. Only a separately approved
+    short prompt_cue (max 180 characters) enters H3. Picture references are
+    emitted only when the referenced asset is *actually* allocated in the
+    current logical H3 sample (persistent socket or scoped native input).
+    """
     tags = []
     for rid in shot.get("reference_ids", []):
         asset_id = plan["references"][rid]["asset_id"]
-        if asset_id in picture_by_asset:
-            tags.append(picture_by_asset[asset_id])
-    text = []
-    if tags:
-        text.append("Scene composition evidence: "+", ".join(dict.fromkeys(tags))+". Use for framing, staging, wardrobe and environment.")
-    if description:
-        text.append(description)
-    return "\n".join(text)
+        name = picture_by_asset.get(asset_id)
+        if name and name not in tags:
+            tags.append(name)
+    if not tags:
+        return ""
+    references = ", ".join(tags)
+    text = f"Match {references} for camera framing and staging."
+    cue = str(shot.get("user", {}).get("prompt_cue", "")).strip()
+    if cue:
+        text += " " + cue
+    return text
 
 
 def augment_prompt(project, shots, start, end, base, segments, text, picture_by_asset):
@@ -317,7 +323,7 @@ def augment_prompt(project, shots, start, end, base, segments, text, picture_by_
         if detail and a < b:
             scene_shots.append({"range": [a, b], "text": detail})
             schedule.append(f"[{seconds_text(a-start)}-{seconds_text(b-start)}s] {detail}")
-            identity_notice |= "Scene composition evidence:" in detail
+            identity_notice |= "Match <Picture " in detail
     if not schedule:
         return segments, text, False, []
     advisory = "Shot plan:\n" + (
