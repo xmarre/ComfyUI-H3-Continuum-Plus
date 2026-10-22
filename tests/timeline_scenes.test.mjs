@@ -253,3 +253,64 @@ test('streamed per-chunk planner enforces all eight H3 picture positions',()=>{
  const all=Array.from({length:8},(_,i)=>({slot:i+1,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
  assert.throws(()=>planChunkReferenceStream(p,all),/All eight H3 Picture positions/);
 });
+
+test('activating dynamic per-chunk references updates the live project and leaves identity graph unchanged',async()=>{
+ const scenePlan={
+   settings:{scene_budget:3},
+   shots:[
+     {id:'s1',range:[0,67],reference_ids:['r1'],user:{}},
+     {id:'s2',range:[67,153],reference_ids:['r2'],user:{}},
+     {id:'s3',range:[153,267],reference_ids:['r3'],user:{}},
+     {id:'s4',range:[267,336],reference_ids:['r4'],user:{}},
+   ],
+   references:{r1:{},r2:{},r3:{},r4:{}},conveyor_slots:{r1:4},
+   conveyor_only:false
+ };
+ const project={duration_frames:336,chunk_origin_frame:0,chunk_frames:168,
+   assets:[],scene_plan:scenePlan,conveyor_reference_slots:{}};
+ const nodes=Array.from({length:3},(_,i)=>({
+   id:11+i,comfyClass:'StaticIdentityImage',
+   outputs:[{name:'IMAGE',type:'IMAGE'}]
+ }));
+ const sampler={id:9,comfyClass:'H3ContinuumTimelineSampler',
+   inputs:[{name:'timeline',link:1},
+     ...[1,2,3].map(n=>({name:'reference_image_'+n,link:n+1}))]};
+ const graph={_nodes:[...nodes,sampler],links:{
+   1:{origin_id:3,origin_slot:0},
+   2:{origin_id:11,origin_slot:0,type:'IMAGE'},
+   3:{origin_id:12,origin_slot:0,type:'IMAGE'},
+   4:{origin_id:13,origin_slot:0,type:'IMAGE'},
+ },getNodeById(id){return this._nodes.find(n=>n.id===id)}};
+ sampler.graph=graph;for(const n of nodes)n.graph=graph;
+ const editor={
+   node:{id:3},app:{graph},p:structuredClone(project),editVersion:4,
+   edit(fn){fn(this.p);this.editVersion++;},
+   scheduleChunkCompile(){this.compiles=(this.compiles||0)+1},
+   refreshSamplerInputs(){this.refreshes=(this.refreshes||0)+1},
+ };
+ const ui={
+   editor,version:4,candidate:structuredClone(project),
+   status:{textContent:''},updatePlanSettings(){},renderShots(){},
+   async refreshCuePreview(){this.previewed=true},
+ };
+ const originalWindow=globalThis.window;
+ let confirmation='';
+ globalThis.window={confirm(message){confirmation=message;return true}};
+ try{
+   await SmartReferences.prototype.activateChunkReferences.call(ui);
+ }finally{
+   if(originalWindow===undefined)delete globalThis.window;
+   else globalThis.window=originalWindow;
+ }
+ assert.match(confirmation,/Chunk 1: 3 identity \+ 3 screenshot\(s\) = 6/);
+ assert.match(confirmation,/Chunk 2: 3 identity \+ 1 screenshot\(s\) = 4/);
+ assert.equal(editor.p.scene_plan.reference_transport,'streamed');
+ assert.equal(editor.p.scene_plan.conveyor_only,true);
+ assert.deepEqual(editor.p.scene_plan.conveyor_slots,{});
+ assert.deepEqual(editor.p.conveyor_reference_slots,{'0':[1,2,3],'1':[1,2,3]});
+ assert.equal(ui.version,editor.editVersion);
+ assert.equal(editor.compiles,1);
+ assert.equal(editor.refreshes,1);
+ assert.equal(ui.previewed,true);
+ assert.deepEqual(graph._nodes.slice(0,3).map(n=>n.id),[11,12,13]);
+});
