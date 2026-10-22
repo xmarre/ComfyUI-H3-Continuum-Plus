@@ -136,7 +136,7 @@ function startupHTML({ heading, detail, url, attempts = [] }) {
 
 // Both the active Python runtime and the actually served editor must agree.
 // This prevents an installed old Patcher overlay from reaching its drive scan.
-const NATIVE_PATH_CONTRACT = "h3-timeline-workspace-v26";
+const NATIVE_PATH_CONTRACT = "h3-timeline-smart-references-v34";
 
 function safeExtensionURL(base, value, suffix) {
   if (typeof value !== "string" ||
@@ -167,7 +167,7 @@ async function verifyTimelineRuntime(base, { fetchImpl = fetch, timeoutMs = 6000
       throw new Error(
         "Timeline Studio backend is outdated or missing (HTTP " +
         response.status + " at " + url.pathname + "). Apply the current " +
-        "PR #51 in ComfyUI Patcher and restart the ComfyUI Python process."
+        "Timeline Studio through ComfyUI Patcher and restart the ComfyUI Python process."
       );
     }
     const length = Number(response.headers?.get?.("content-length") || 0);
@@ -191,7 +191,7 @@ async function verifyTimelineRuntime(base, { fetchImpl = fetch, timeoutMs = 6000
       data.browser_movie_upload !== false) {
     throw new Error(
       "Timeline Studio backend is stale or incompatible. It may still run " +
-      "recursive media discovery. Apply PR #51 and restart ComfyUI; " +
+      "an older frontend contract. Update Timeline Studio through Patcher and restart ComfyUI; " +
       "the desktop will refuse the unsafe version."
     );
   }
@@ -206,7 +206,7 @@ async function verifyTimelineRuntime(base, { fetchImpl = fetch, timeoutMs = 6000
       editorJS.includes("/resolve-dropped")) {
     throw new Error(
       "Timeline Studio frontend is stale or mismatched with the backend. " +
-      "Restart ComfyUI after updating PR #51; reload the desktop app " +
+      "Restart ComfyUI after updating Timeline Studio through Patcher; reload the desktop app " +
       "to discard older extension modules."
     );
   }

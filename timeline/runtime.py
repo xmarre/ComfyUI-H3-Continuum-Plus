@@ -52,12 +52,19 @@ class TimelineInputs:
         self.store = store
         self.windows = self.job["windows"]
         self.manifests = []
+        self.scene_materialized = {}
         self.conditioning_cache = {}
         self.timeline_plan = None
         self.reference_cache = OrderedDict()
         self.reference_cache_bytes = 0
         self.offset = job["range"][0]
-        self.reference_size = "Match Output"
+        # Streamed screenshots are loaded per logical chunk after the
+        # persistent identity tensors are selected. Max Identity avoids the
+        # generation-output-MP downscale, though H3 latent encoding still
+        # requires a 32-pixel canvas and <=2048-pixel shorter edge.
+        self.reference_size = ("Max Identity"
+                               if project.get("scene_plan", {}).get("reference_transport") == "streamed"
+                               else "Match Output")
         from ..reference_video import REFERENCE_VIDEO_SIZE_EFFICIENT
 
         self.video_reference_size = REFERENCE_VIDEO_SIZE_EFFICIENT
@@ -122,11 +129,13 @@ class TimelineInputs:
         self.windows = [
             compile_window(
                 self.project, i, guide_scope=scope,
-                picture_offset=self.picture_offset_for(i)
+                picture_offset=self.picture_offset_for(i),
+                reference_slot_sizes=self.reference_slot_sizes,
             )
             for i in indices
         ]
         self.job["windows"] = self.windows
+        self.timeline_plan = None  # Window-scoped structured scene ranges changed.
 
     @property
     def hashes(self):
@@ -138,6 +147,7 @@ class TimelineInputs:
             "contract": 2,
             "reference_size": self.reference_size,
             "video_reference_size": self.video_reference_size,
+            "scene_reference_transport": self.project.get("scene_plan", {}).get("reference_transport", "scoped"),
         }
         if self.audio_generation_mode != "guided":
             from ..source_audio_lock import SOURCE_AUDIO_LOCK_CONTRACT
@@ -303,15 +313,28 @@ class TimelineInputs:
             audio["waveform"] = F.pad(audio["waveform"], (0, padding))
         return audio
 
+    def invocation_text(self, original, index):
+        """Use authored window text plus scene evidence in legacy nominal mode.
+
+        When no scene schedule is active the pre-existing native Fixed/List
+        prompt remains identical, preserving unrelated sampler behavior.
+        """
+        window = self.windows[index]
+        return window["prompt"] if window.get("scene_schedule") else original
+
     def invocation_plan(self, original, index):
         """Native Timeline source for a window with timed prompt regions.
 
         Each window is an outer section on its exact job-clock chunk boundary;
-        timed regions are a strict inner partition of it. The physical
+        timed regions are a strict inner partition of it. A fixed prompt with
+        Smart References visual instructions must also use this plan; otherwise
+        the native sampler would consume the unaugmented original instead.
+        The physical
         compiler then re-bases them onto each invocation's own clock, including
         native context, without importing adjacent windows.
         """
-        if not self.windows[index].get("timed_prompt"):
+        if not (self.windows[index].get("timed_prompt") or
+                self.windows[index].get("scene_schedule")):
             return original
         if self.timeline_plan is None:
             from ..v2.prompts import make_prompt_plan
@@ -322,21 +345,42 @@ class TimelineInputs:
             for w in self.windows:
                 a, b = (x - origin for x in w["range"])
                 rows.append(f"[{seconds_text(a)}-{seconds_text(b)}s]")
-                if w.get("segments"):
-                    for segment in w["segments"]:
+                if w.get("authored_segments") is not None:
+                    for segment in w["authored_segments"]:
                         x, y = (v - origin for v in segment["range"])
                         rows.append(f"{seconds_text(x)}-{seconds_text(y)}s:")
                         rows.append(segment["text"])
                 else:
                     # Untimed windows use the nominal List plan; this body only
                     # keeps the routing partition well formed.
-                    rows.append(w["prompt"] or "(no prompt)")
+                    rows.append(w.get("authored_prompt", w["prompt"]) or "(no prompt)")
             self.timeline_plan = make_prompt_plan(
                 mode="Timeline",
                 script="\n".join(rows),
                 chunks=len(self.windows),
                 chunk_seconds=self.project["chunk_frames"] / 24,
             )
+            # Exact job-relative frame ranges are compiled on the real physical
+            # clock, including reused continuation context. This metadata is
+            # deliberately separate from authored speech and nominal previews.
+            frame_origin = self.job["range"][0]
+            scene_shots = [
+                {
+                    "range": [a - frame_origin, b - frame_origin],
+                    "text": shot["text"],
+                    "logical_index": local_index,
+                }
+                for local_index, w in enumerate(self.windows)
+                for shot in w.get("scene_shots", ())
+                for a, b in [shot["range"]]
+            ]
+            if scene_shots:
+                from .scene_plan import SCENE_IDENTITY_NOTICE
+                source = dict(self.timeline_plan["source"])
+                source["scene_shots"] = scene_shots
+                if any("Match <Picture " in shot["text"] for shot in scene_shots):
+                    source["scene_identity_notice"] = SCENE_IDENTITY_NOTICE
+                self.timeline_plan = {**self.timeline_plan, "source": source}
         return self.timeline_plan
 
     def materialize(self, index, *, video_vae, audio_vae, width, height):
@@ -361,13 +405,18 @@ class TimelineInputs:
 
         prepared = []
         for item in w["images"]:
-            key = (item["asset_id"], width, height, self.reference_size)
+            key = (item["asset_id"], width, height, self.reference_size, item.get("scene_native", False))
             cached = self.reference_cache.pop(key, None)
             if cached is None:
                 from PIL import Image
                 import numpy as np
 
                 with Image.open(self.store.assets.verify(item["asset_id"])) as im:
+                    # Original JPEG remains unmodified. Streamed references
+                    # are selected at the H3 sampler invocation, NOT passed
+                    # through a statically executed Media Resolution node.
+                    # The normal H3 reference latent preparation contract
+                    # still performs necessary 32-pixel canvas alignment.
                     image = (
                         torch.from_numpy(np.asarray(im.convert("RGB")).copy()).float()[
                             None
@@ -417,6 +466,16 @@ class TimelineInputs:
                 ),
                 self.reference_size,
             )
+        if any(item.get("scene_native") for item in w["images"]):
+            offset = self.picture_offset_for(w["index"])
+            self.scene_materialized[index] = [
+                {"asset_id": item["asset_id"], "picture": f"<Picture {offset+n+1}>",
+                 "shape": list(prepared[n].images[0].shape),
+                 "image_sha256": prepared[n].image_hashes[0],
+                 "megapixels": prepared[n].images[0].shape[1]*prepared[n].images[0].shape[2]/1e6,
+                 "scene_native": bool(item.get("scene_native"))}
+                for n, item in enumerate(w["images"])
+            ]
         video_source = video_assets = None
         if w["video"]:
             # Timeline video lanes compose by explicit top-track precedence.
@@ -505,6 +564,9 @@ class TimelineInputs:
                 + self.offset,
             ],
         }
+        if index in self.scene_materialized:
+            presentation["timeline_studio"]["reference_inputs"] = self.scene_materialized[index]
+            presentation["timeline_studio"]["shot_timing_enforced"] = False
         if hasattr(self, "guide_rate"):
             from .model import sample_boundary, active_clips, clip_input
 
