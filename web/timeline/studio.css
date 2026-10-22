@@ -1199,3 +1199,6 @@
 .h3ts-effective-prompt-field {display:flex;flex-direction:column;align-items:stretch;gap:6px;margin:10px 0;min-width:0}
 .h3ts-effective-prompt {width:100%;min-height:115px;resize:vertical;box-sizing:border-box;font:12px/1.45 ui-monospace,monospace;color:#e4eeff;background:#151c27;border:1px solid #586781;border-radius:5px;padding:10px}
 .h3ts-effective-prompt-field small {color:#a7bbd2;line-height:1.5}
+
+.h3ts-smart .h3ts-remote-consent {border:1px solid #7185a4;border-radius:6px;padding:7px 10px;background:#202c3b;max-width:100%;font-size:12px}
+.h3ts-smart .h3ts-remote-consent[hidden] {display:none !important}

@@ -45,9 +45,14 @@ export class SmartReferences {
     this.list=el("section",{class:"h3ts-smart-shots"});
     this.compiled=el("pre",{class:"h3ts-smart-compiled"});
     this.models=el("select",{"aria-label":"Prompt Writer vision model"});
+    this.remoteConsent=el("input",{type:"checkbox","aria-label":"Allow sending extracted stills to remote VLM"});
+    this.remoteConsentLabel=el("label",{class:"h3ts-remote-consent"},
+      "Allow sharing extracted stills with the selected REMOTE vision API (subject to provider retention policies)",this.remoteConsent);
+    this.remoteConsentLabel.hidden=true;
+    this.models.onchange=()=>this.updateRemoteConsent();
     this.provider=el("output",{text:"Checking Prompt Writer…"});
     this.root.append(el("header",{},el("strong",{text:"Scene Analysis / Smart References"}),button("Close",()=>this.close())),
-      this.status,this.controls,el("nav",{},this.provider,this.models,
+      this.status,this.controls,el("nav",{},this.provider,this.models,this.remoteConsentLabel,
         button("Refresh Prompt Writer",()=>this.guard(()=>this.loadModels())),
         button("Interpret selected evidence",()=>this.guard(()=>this.interpret())),
         button("Cancel VLM",()=>this.guard(()=>this.cancelVlm()))),
@@ -131,14 +136,24 @@ export class SmartReferences {
       this.modelChoices=result.models||[];
       this.models.replaceChildren(...this.modelChoices.map(m=>el("option",{value:m.id,text:m.name+" · "+m.api_preset+(m.remote?" · remote API":" · local")})));
       this.provider.textContent=this.modelChoices.length?"Prompt Writer connected vision models":"Connect a vision model in Prompt Writer → Settings → API providers";
+      this.updateRemoteConsent();
     }catch(error){this.provider.textContent="VLM unavailable · "+error.message+". Deterministic analysis remains available.";}
+  }
+  updateRemoteConsent(){
+    const model=this.modelChoices?.find(m=>m.id===this.models.value);
+    this.remoteConsent.checked=false;
+    this.remoteConsentLabel.hidden=!model?.remote;
   }
   async interpret(){
     if(this.vlmActive)throw Error("VLM interpretation is already running");
     if(!this.analysis)throw Error("Analyze footage before VLM interpretation");
     const model=this.modelChoices?.find(m=>m.id===this.models.value);
     if(!model)throw Error("Connect and select a vision model in Prompt Writer");
-    if(model.remote && !window.confirm("Send extracted evidence frames to REMOTE "+model.api_preset+" API? Provider retention policies apply.")){this.status.textContent="Remote interpretation cancelled.";return;}
+    if(model.remote&&!this.remoteConsent.checked){
+      this.status.textContent="Remote VLM consent required: check the visible 'Allow sharing extracted stills' box before interpreting.";
+      this.remoteConsentLabel.hidden=false;this.remoteConsent.focus();
+      return;
+    }
     this.vlmStop=false;
     this.status.textContent="Preparing source evidence for "+model.name+"…";
     const work=async()=>{
