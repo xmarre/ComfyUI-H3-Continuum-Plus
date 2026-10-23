@@ -206,8 +206,22 @@ export function resolvePersistentReferenceOccupancy(sources) {
         (s.verifiedActive===undefined && !!s.thumbnail && !s.dynamic)
         ? 1:0;
     }
-    if(c.length&&!s.ambiguousPath&&!s.ancestryTruncated){
-      if(c.length===1)return c[0].active?1:0;
+    if(c.length&&!s.ancestryTruncated){
+      // An eight-lane Media Resolution node exposes *all* upstream shelf
+      // candidates on every output. The outputs are lane-ordered; attribute
+      // ONLY its corresponding Conveyor shelf rather than all eight. This
+      // matches the preview's already-established lane selection, while
+      // refusing the shortcut for arbitrary multi-IMAGE merger nodes.
+      const lanes=c.map(x=>x.shelfNumber);
+      const sameSource=new Set(c.map(x=>x.nodeId)).size===1;
+      const fullShelf=c.length===8&&sameSource &&
+        lanes.slice().sort((a,b)=>a-b).join(",")==="1,2,3,4,5,6,7,8";
+      if(/^MediaResolution$/i.test(String(s.originKind||"")) &&
+         fullShelf){
+        const corresponding=c.find(x=>x.shelfNumber===s.slot);
+        return corresponding?.active?1:0;
+      }
+      if(c.length===1&&!s.ambiguousPath)return c[0].active?1:0;
     }
     // IMAGE outputs of ordinary loaded still nodes are real reference
     // sources, even when no Image Conveyor exists in their ancestry.

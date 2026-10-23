@@ -517,3 +517,17 @@ with the actual selected reference map. Applying detection alone does
 not silently activate the images or overwrite the connected State Manager
 script. Legacy explicitly configured scoped inputs can still be loaded
 by the native sampler under their existing separate contract.
+
+### Eight-lane Media Resolution fanout
+
+For an eight-lane Media Resolution processor the graph inspector can see
+all eight upstream Conveyor source candidates for **every** connected
+downstream output. This does not mean each output carries all eight images.
+The stable one-to-one lane mapping (matching output socket 1 to shelf 1,
+etc.) is used only for a recognized MediaResolution processor with all
+eight shelf ordinals from one Conveyor; the corresponding shelf must also
+have a live, enabled image. Arbitrary multi-input IMAGE mergers are not
+assumed to be lane-preserving and remain unverified. This avoids both
+the original false "8/8" count and the over-conservative "0/8" count
+on the eight-lane compositor topology. Such mappings remain a frontend
+inference until the sampler sees the real tensors.

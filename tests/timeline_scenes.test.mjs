@@ -220,7 +220,8 @@ test('dynamic stream uses 3 existing identity references plus only each chunk sc
      {range:[153,267],reference_ids:[picture(3)]},
      {range:[267,336],reference_ids:[picture(4)]},
    ]}};
- const sources=[1,2,3].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ const sources=[1,2,3].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,
+  originKind:'StaticIdentityImage',label:'Identity'}));
  const result=planChunkReferenceStream(p,sources);
  assert.deepEqual(result.sockets,[1,2,3]);
  assert.equal(result.bank.length,4);
@@ -235,7 +236,8 @@ test('long scene stream reuses fixed 5 scene capacity over 100 chunks',()=>{
    scene_plan:{shots:Array.from({length:100},(_,i)=>({
      range:[168*i,168*(i+1)],reference_ids:[i.toString(16).padStart(64,'0')]
    }))}};
- const sources=[1,2,3].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ const sources=[1,2,3].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,
+  originKind:'StaticIdentityImage',label:'Identity'}));
  const x=planChunkReferenceStream(p,sources);
  assert.equal(x.bank.length,100);
  assert.equal(x.stats.length,100);
@@ -246,11 +248,12 @@ test('long scene stream reuses fixed 5 scene capacity over 100 chunks',()=>{
 test('streamed per-chunk planner enforces all eight H3 picture positions',()=>{
  const p={duration_frames:168,chunk_frames:168,
    scene_plan:{settings:{scene_budget:5},shots:[{range:[0,168],reference_ids:Array.from({length:8},(_,i)=>String(i).padStart(64,'0'))}]}};
- const sources=[1,2,3,4].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ const sources=[1,2,3,4].map(slot=>({slot,connected:true,unavailable:false,dynamic:false,
+  originKind:'StaticIdentityImage',label:'Identity'}));
  const plan=planChunkReferenceStream(p,sources);
  assert.equal(plan.stats[0].accepted,4);
  assert.equal(plan.stats[0].omitted,4);
- const all=Array.from({length:8},(_,i)=>({slot:i+1,connected:true,unavailable:false,dynamic:false,label:'Identity'}));
+ const all=Array.from({length:8},(_,i)=>({slot:i+1,connected:true,unavailable:false,dynamic:false,originKind:'StaticIdentityImage',label:'Identity'}));
  assert.throws(()=>planChunkReferenceStream(p,all),/All eight H3 Picture positions/);
 });
 
@@ -452,6 +455,6 @@ test('VLM interpretation and detected cuts do not compile H3 Picture tags before
   SmartReferences.prototype.scheduleCuePreview.call(ui);
   assert.equal(compileCalls,0);
   assert.match(ui.cueReceipt.textContent,/Picture alias not assigned/);
-  assert.match(ui.compiled.textContent,/only after activating/);
+  assert.match(ui.compiled.textContent,/before generating Picture cues/);
   assert.doesNotMatch(ui.cueReceipt.textContent,/Match <Picture 4>/);
 });
