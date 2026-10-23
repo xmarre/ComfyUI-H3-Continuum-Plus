@@ -16,9 +16,16 @@ export async function runSceneSmoke(editor) {
   check(JSON.stringify(shots.map(s=>s.range))==='[[0,67],[67,153],[153,168]]','Incorrect production source cut mapping');
   check(shots[0].reference_ids[0]===shots[2].reference_ids[0],'Return setup was not reused');
   check(workspace.root.querySelectorAll('article').length===3,'Shot cards not rendered');
+  // Detection is review-only until the user assigns actual H3 reference
+  // tensors. This browser fixture intentionally has no linked sampler and
+  // must NOT fabricate a <Picture N> alias for its extracted screenshots.
   await workspace.compile();
-  check(workspace.compiled.textContent.includes('<Picture 1>'),'Physical scene aliases missing');
-  check(workspace.compiled.textContent.includes('S2 <d>[English] We both do.</d>'),'Dialogue changed during compilation');
+  check(workspace.candidate.scene_plan.reference_transport==='pending',
+    'Fresh shot analysis activated H3 scene references without allocation');
+  check(workspace.cueReceipt.textContent.includes('Picture alias not assigned'),
+    'Detected shot timestamps were not visible before allocation');
+  check(!workspace.compiled.textContent.includes('Match <Picture'),
+    'H3 Picture alias emitted without any physically allocated image');
   check(!editor.p.scene_plan,'Analysis mutated active project');
   workspace.candidate.scene_plan.shots[0].user.description='Keep the measured camera setup.';
   workspace.apply();
