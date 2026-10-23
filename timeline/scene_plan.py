@@ -41,7 +41,7 @@ def validate_plan(plan, asset_ids, duration):
     if not isinstance(plan, dict) or plan.get("schema") != SCHEMA:
         raise ValueError("Unsupported scene plan schema")
     settings(plan.get("settings"))
-    if plan.get("reference_transport", "scoped") not in {"scoped", "streamed"}:
+    if plan.get("reference_transport", "scoped") not in {"pending", "scoped", "streamed"}:
         raise ValueError("Unsupported scene reference transport")
     if type(plan.get("conveyor_only", False)) is not bool:
         raise ValueError("Invalid Conveyor-only reference routing mode")
@@ -107,7 +107,7 @@ def mapped_plan(project, analysis):
             "settings": analysis["settings"],
             "conveyor_slots": copy.deepcopy(prior.get("conveyor_slots", {})),
             "conveyor_only": bool(prior.get("conveyor_only", False)),
-            "reference_transport": prior.get("reference_transport", "scoped"),
+            "reference_transport": prior.get("reference_transport", "pending"),
             "references": {**copy.deepcopy(prior.get("references", {})), **copy.deepcopy(analysis["references"])},
             "shots": [], "timing": {"detected": "source PTS", "requested": "project frame intervals",
                                      "enforced": False, "generated_measurements": None}}
@@ -229,7 +229,10 @@ def mapping_valid(project, shot):
 
 def allocate(project, start, end, persistent_count, manual_images):
     plan = project.get("scene_plan")
-    if not plan:
+    if not plan or plan.get("reference_transport") == "pending":
+        # Detection and review are complete; the user has not yet committed
+        # per-chunk image allocation. Never synthesize premature Picture tags
+        # from proposed screenshots or consume sampler IMAGE positions.
         return [], [], []
     cfg = settings(plan["settings"])
     # A shot crossing a chunk join has already supplied its picture in

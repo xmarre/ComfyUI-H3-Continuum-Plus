@@ -153,6 +153,8 @@ export function referenceSocketSources(editor) {
     return {
       slot,connected:source.connected,conveyor:source.conveyor,
       shelfNumber,nodeId:node?.id ?? null,dynamic:!!dynamic,
+      originKind:String(node?.comfyClass||node?.type||""),
+      verifiedActive:source.conveyor&&active&&!!path,
       label:direct+
         (shelfNumber ? (persistent ? " · Shelf "+shelfNumber :
           " · queue-group image "+(shelfNumber+1)) : "")+
@@ -176,6 +178,46 @@ export function referenceSocketSources(editor) {
           String(source.unresolved||"").startsWith("Ambiguous IMAGE inputs"))),
     };
   });
+}
+
+/**
+ * Count only verified, *populated* upstream IMAGE references.
+ * A LiteGraph wire / ComfyUI dynamic optional input does NOT prove that an
+ * IMAGE tensor will be produced. In particular Media Resolution may have
+ * all eight output paths wired to a Conveyor with only three real shelf
+ * pictures; blindly counting connected=true made all eight look occupied.
+ *
+ * A uniquely traced Image Conveyor shelf is trustworthy only when its file
+ * and active output mode are confirmed. Unknown/merged IMAGE processors are
+ * not guessed; Timeline omits those sockets from its explicit per-chunk
+ * mask and reports them for inspection rather than stealing Picture slots.
+ * Direct known image-loader outputs are supported independently of Conveyor.
+ */
+export function resolvePersistentReferenceOccupancy(sources) {
+  const slots=[],unverified=[];
+  const normalized=Array.from({length:8},(_,i)=>sources.find(s=>s.slot===i+1));
+  const slotSizes=normalized.map(s=>{
+    if(!s?.connected||s.unavailable)return 0;
+    const c=s.candidatePreviews||[];
+    if(s.conveyor){
+      return s.verifiedActive===true ||
+        // Gracefully support older serialized source snapshots, but never
+        // treat an empty/disabled shelf as a reference.
+        (s.verifiedActive===undefined && !!s.thumbnail && !s.dynamic)
+        ? 1:0;
+    }
+    if(c.length&&!s.ambiguousPath&&!s.ancestryTruncated){
+      if(c.length===1)return c[0].active?1:0;
+    }
+    // IMAGE outputs of ordinary loaded still nodes are real reference
+    // sources, even when no Image Conveyor exists in their ancestry.
+    if(/^(?:LoadImage|LoadImageFromPath|LoadImageOutput|StaticIdentityImage)$/.test(
+      String(s.originKind||"")))return 1;
+    unverified.push({slot:s.slot,source:s.label||"unresolved IMAGE input"});
+    return 0;
+  });
+  for(let i=0;i<slotSizes.length;i++)if(slotSizes[i])slots.push(i+1);
+  return {slots,slotSizes,estimatedImages:slotSizes.reduce((a,b)=>a+b,0),unverified};
 }
 
 // One selectable tile per *currently active* persistent reference output,
@@ -229,8 +271,8 @@ export function samplerInputDescription(editor) {
   const linked = (name) => nodeInput(sampler, name).linked;
   const connectedReferenceSlots = Array.from({length:8},(_,i)=>i+1)
     .filter((slot)=>linked("reference_image_"+slot));
-  const availableReferenceSlots=activeReferenceSources(
-    referenceSocketSources(editor)).map(source=>source.slot);
+  const availableReferenceSlots=resolvePersistentReferenceOccupancy(
+    referenceSocketSources(editor)).slots;
   const pinned = connectedReferenceSlots.map((slot)=>"reference_image_"+slot);
   const persistent = [
     ...pinned,
@@ -259,7 +301,7 @@ export function samplerInputDescription(editor) {
   if (linked("height")) overrides.push("height comes from a connected node");
   return {
     sampler,
-    persistent, supplied, overrides, persistentPictureSockets: pinned.length,
+    persistent, supplied, overrides, persistentPictureSockets: availableReferenceSlots.length,
     connectedReferenceSlots, availableReferenceSlots, project: editor.p,
     promptOverridden: externalPrompt, promptDiagnostic,
     audioOverridden: linked("driving_audio"),

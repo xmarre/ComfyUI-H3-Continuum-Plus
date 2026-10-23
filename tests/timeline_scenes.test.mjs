@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {History} from '../web/timeline/core.js';
-import {applySceneCandidate,SmartReferences,planConveyorPublication,planChunkReferenceStream,screenshotIdsForSelection,renderShotCueReceipt} from '../web/timeline/smart_references.js';
-import {referenceSocketSources} from '../web/timeline/chunk_ui.js';
+import {applySceneCandidate,SmartReferences,planConveyorPublication,planChunkReferenceStream,screenshotIdsForSelection,renderShotCueReceipt,renderPendingShotEvidence} from '../web/timeline/smart_references.js';
+import {referenceSocketSources,resolvePersistentReferenceOccupancy} from '../web/timeline/chunk_ui.js';
 
 test('scene Apply uses one History edit and rejects a concurrent timeline edit',()=>{
  const p={assets:[],prompts:{global:'Authored dialogue'},audio_generation_mode:'source_locked'};
@@ -344,4 +344,114 @@ test('shot receipt displays actual per-chunk allocation estimates (six then four
  const receipt=renderShotCueReceipt(preview,p);
  assert.match(receipt,/Chunk 1: ~3 persistent \+ 3 chunk-scoped = ~6\/8 H3 Picture inputs/);
  assert.match(receipt,/Chunk 2: ~3 persistent \+ 1 chunk-scoped = ~4\/8 H3 Picture inputs/);
+});
+
+
+function wiredConveyor({populated=3,intermediary='MediaResolution'}={}){
+  const slots=Array.from({length:8},(_,i)=>i<populated?
+    {annotated:'identities/portrait'+(i+1)+'.png [input]',
+     filename:'portrait'+(i+1)+'.png',type:'input',subfolder:'identities'}:null);
+  const state={version:2,output_mode:'persistent_refs',reference_slots:slots};
+  const conveyor={id:10,comfyClass:'ImageConveyor',
+    outputs:Array.from({length:14},(_,i)=>({name:i>=6?'ref_image_'+(i-5):'other',
+      type:i>=6?'IMAGE':'*'})),
+    widgets:[{name:'state_json',value:JSON.stringify(state)}]};
+  const nodes=[conveyor],links={90:{origin_id:99,origin_slot:0,type:'TIMELINE'}};
+  const sampler={id:9,comfyClass:'H3ContinuumTimelineSampler',
+    inputs:[{name:'timeline',link:90}]};
+  for(let i=0;i<8;i++){
+    const processor={id:20+i,comfyClass:intermediary,
+      inputs:[{name:'image',type:'IMAGE',link:100+i}],
+      outputs:[{name:'IMAGE',type:'IMAGE'}]};
+    nodes.push(processor);
+    links[100+i]={origin_id:10,origin_slot:6+i,type:'IMAGE'};
+    links[200+i]={origin_id:processor.id,origin_slot:0,type:'IMAGE'};
+    sampler.inputs.push({name:'reference_image_'+(i+1),type:'IMAGE',link:200+i});
+  }
+  nodes.push(sampler);
+  const graph={_nodes:nodes,links,getNodeById(id){return nodes.find(n=>n.id===id)}};
+  for(const node of nodes)node.graph=graph;
+  const editor={node:{id:99},app:{graph},layout:{thumb:100},
+    api:{apiURL:path=>path}};
+  return {editor,conveyor,sampler,state};
+}
+
+test('eight connected IMAGE wires from Conveyor do not mean eight active pictures',()=>{
+  const {editor}=wiredConveyor({populated:3});
+  const sources=referenceSocketSources(editor);
+  assert.equal(sources.filter(x=>x.connected).length,8);
+  assert.deepEqual(sources.filter(x=>x.unavailable).map(x=>x.slot),[4,5,6,7,8]);
+  const occupancy=resolvePersistentReferenceOccupancy(sources);
+  assert.deepEqual(occupancy.slots,[1,2,3]);
+  assert.deepEqual(occupancy.slotSizes,[1,1,1,0,0,0,0,0]);
+  assert.equal(occupancy.estimatedImages,3);
+  assert.deepEqual(occupancy.unverified,[]);
+  const pic=n=>String(n).padStart(64,'0');
+  const project={chunk_origin_frame:0,duration_frames:336,chunk_frames:168,
+    scene_plan:{settings:{scene_budget:3},shots:[
+      {range:[0,67],reference_ids:[pic(1)]},
+      {range:[67,153],reference_ids:[pic(2)]},
+      {range:[153,267],reference_ids:[pic(3)]},
+      {range:[267,336],reference_ids:[pic(4)]},
+    ]}};
+  const plan=planChunkReferenceStream(project,sources);
+  assert.deepEqual(plan.sockets,[1,2,3]);
+  assert.deepEqual(plan.stats.map(v=>v.accepted),[3,1]);
+  assert.deepEqual(plan.stats.map(v=>v.identityEstimate+v.accepted),[6,4]);
+});
+
+test('inactive or removed Conveyor shelf changes active count, not graph link count',()=>{
+  const {editor,conveyor,state}=wiredConveyor({populated:3});
+  const initial=resolvePersistentReferenceOccupancy(referenceSocketSources(editor));
+  assert.equal(initial.estimatedImages,3);
+  state.reference_slots[2]=null;
+  conveyor.widgets[0].value=JSON.stringify(state);
+  const after=resolvePersistentReferenceOccupancy(referenceSocketSources(editor));
+  assert.equal(after.estimatedImages,2);
+  assert.deepEqual(after.slots,[1,2]);
+  assert.equal(referenceSocketSources(editor).filter(v=>v.connected).length,8);
+});
+
+test('ambiguous linked processor does not falsely occupy a Picture position',()=>{
+  const src=[
+    {slot:1,connected:true,conveyor:true,verifiedActive:true,thumbnail:'/one.jpg'},
+    {slot:2,connected:true,conveyor:true,verifiedActive:true,thumbnail:'/two.jpg'},
+    {slot:3,connected:true,conveyor:true,verifiedActive:true,thumbnail:'/three.jpg'},
+    ...Array.from({length:5},(_,i)=>({slot:i+4,connected:true,conveyor:false,
+      label:'Unresolved IMAGE pipeline '+(i+4),ambiguousPath:true,candidatePreviews:[]}))
+  ];
+  const resolved=resolvePersistentReferenceOccupancy(src);
+  assert.equal(resolved.estimatedImages,3);
+  assert.deepEqual(resolved.unverified.map(x=>x.slot),[4,5,6,7,8]);
+});
+
+test('detected shots are timestamps only before their image allocation is activated',()=>{
+  const p={chunk_origin_frame:0,chunk_frames:168,duration_frames:336,
+    scene_plan:{reference_transport:'pending',shots:[
+      {id:'shot1',range:[0,67],reference_ids:['r1'],user:{}},
+      {id:'shot2',range:[67,153],reference_ids:['r2'],user:{}},
+      {id:'shot3',range:[153,267],reference_ids:['r3'],user:{}},
+      {id:'shot4',range:[267,336],reference_ids:['r4'],user:{}},
+    ]}};
+  const text=renderPendingShotEvidence(p);
+  assert.match(text,/Reference allocation has not been activated/);
+  assert.match(text,/Chunk 1 \[0-2\.791667s\] 1 proposed screenshot/);
+  assert.match(text,/Chunk 2 \[4\.125-7s\] 1 proposed screenshot/);
+  assert.doesNotMatch(text,/Match <Picture \d/);
+});
+
+test('VLM interpretation and detected cuts do not compile H3 Picture tags before activation',()=>{
+  const candidate={chunk_origin_frame:0,chunk_frames:168,duration_frames:168,
+    scene_plan:{reference_transport:'pending',shots:[
+      {id:'s1',range:[0,67],reference_ids:['ref'],user:{}}
+    ]}};
+  let compileCalls=0;
+  const ui={closed:false,candidate,cueTimer:null,cueRevision:0,
+    cueReceipt:{textContent:''},compiled:{textContent:''},
+    compile(){compileCalls++}};
+  SmartReferences.prototype.scheduleCuePreview.call(ui);
+  assert.equal(compileCalls,0);
+  assert.match(ui.cueReceipt.textContent,/Picture alias not assigned/);
+  assert.match(ui.compiled.textContent,/only after activating/);
+  assert.doesNotMatch(ui.cueReceipt.textContent,/Match <Picture 4>/);
 });

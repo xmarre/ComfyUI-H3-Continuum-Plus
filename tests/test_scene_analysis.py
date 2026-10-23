@@ -194,6 +194,11 @@ def test_job_cache_mapping_user_corrections(tmp_path,clip):
     result=service.result(job['id']);assert [s['source_frame_range'] for s in result['shots']]==[[0,67],[67,153],[153,168]]
     assert result['shots'][0]['reference_ids']==result['shots'][2]['reference_ids']
     candidate=service.preview(p,job['id']);assert [s['range'] for s in candidate['scene_plan']['shots']]==[[0,67],[67,153],[153,168]]
+    assert candidate['scene_plan']['reference_transport']=='pending'
+    before_allocation=compile_window(candidate,0,picture_offset=3,
+                                     reference_slot_sizes=(1,1,1,0,0,0,0,0))
+    assert before_allocation['images']==[] and not before_allocation['scene_schedule']
+    assert '<Picture 4>' not in before_allocation['prompt']
     candidate['scene_plan']['shots'][0]['user']['description']='Authored correction'
     assert service.preview(candidate,job['id'])['scene_plan']['shots'][0]['user']['description']=='Authored correction'
     assert 'scene_plan' not in p and service.start(p,asset['id'],config={'max_per_shot':1})['cache_hit']
@@ -754,3 +759,45 @@ def test_streamed_scene_budget_clips_excess_without_overwriting_identity_refs():
     provider=TimelineInputs(p,{'windows':[w],'range':[0,168]},None)
     assert provider.reference_size == 'Max Identity'
     assert provider.storage_contract['scene_reference_transport'] == 'streamed'
+
+
+def test_new_scene_analysis_does_not_emit_picture_cues_before_image_allocation():
+    from ComfyUI_H3_Continuum_Join.timeline.scene_plan import mapped_plan
+    p=plan_project()
+    # A newly mapped analysis must stay review-only: it has genuine
+    # source timestamps but not an H3 reference socket assignment.
+    legacy=copy.deepcopy(p['scene_plan'])
+    p.pop('scene_plan')
+    analysis={'id':'analysis','source_asset_id':'a'*64,
+       'scope':'selection','settings':settings(),
+       'project_range':[0,168], 'references':legacy['references'],
+       'shots':[], 'warnings':[]}
+    for shot in legacy['shots']:
+        analysis['shots'].append({
+            'id':shot['id'],'source_frame_range':shot['range'],
+            'source_start':shot['source_start'],
+            'source_end':shot['source_end'],
+            'reference_ids':shot['reference_ids'],
+        })
+    # Explicit pending contract (independent of the concrete mapping clips).
+    pending=copy.deepcopy(legacy)
+    pending['reference_transport']='pending'
+    p['scene_plan']=pending
+    w=compile_window(p,0,picture_offset=3,reference_slot_sizes=(1,1,1,0,0,0,0,0))
+    assert w['images']==[]
+    assert w['scene_schedule'] is False
+    assert '<Picture 4>' not in w['prompt']
+    assert w['scene_shots']==[]
+    assert validate(p)['scene_plan']['reference_transport']=='pending'
+
+
+def test_pending_shots_do_not_consume_images_even_with_legacy_static_slot_map():
+    p=plan_project()
+    p['scene_plan']['reference_transport']='pending'
+    p['scene_plan']['conveyor_only']=True
+    p['scene_plan']['conveyor_slots']={'r1':4}
+    p['conveyor_reference_slots']={'0':[1,2,3,4]}
+    w=compile_window(p,0,picture_offset=4,reference_slot_sizes=(1,1,1,1,0,0,0,0))
+    assert len(w['images'])==0
+    assert not w['scene_shots']
+    assert not w['scene_schedule']

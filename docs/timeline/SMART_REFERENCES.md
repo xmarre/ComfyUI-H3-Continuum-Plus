@@ -475,3 +475,45 @@ video frames` precedes `[4.958333-7s] Match <Picture 4> for camera framing`
 when a new camera shot begins. The cue receipt counts carry-over intervals
 separately from actually active Picture instructions. Native physical H3
 compilation rebases the timestamps to the context-prefixed clip clock.
+
+
+## October 23 — count actual shelf references, not linked IMAGE wires
+
+**Eight connected LiteGraph IMAGE inputs do not imply eight populated H3 pictures.**
+The source classifier reports a counted Picture only when an Image Conveyor
+reference shelf is in persistent mode, has a real reference entry and a
+verified active output, or when a unique upstream Conveyor provenance or
+known direct image-loader provides concrete evidence. Empty shelf outputs
+remain **zero** even if connected through Media Resolution to a sampler
+socket. Unresolvable/ambiguous processors are reported separately as
+**unverified** and excluded from the explicit per-chunk mask, rather than
+silently charging the identity budget. The user can inspect those sockets;
+the backend still enforces its actual image cardinality when preparing
+the tensor bundle. The exact slot selection is transmitted in
+`conveyor_reference_slots` for both native sampling and encoder lookahead.
+
+The previous planner used `connected && !unavailable` as the definition
+of an active identity, and the preview used the same assumption, so a
+graph with all eight IMAGE connections wired but only three populated
+Conveyor shelves incorrectly claimed an eight-picture budget. The
+`resolvePersistentReferenceOccupancy` classifier now supplies one
+consistent, evidence-based slot list and preview sizing to both the
+activation planner and effective prompt compiler. Regression tests
+exercise all eight wired Media Resolution paths, three populated
+Conveyor shelves, removal of a shelf entry without rewiring, and unknown
+intermediaries.
+
+### Review then allocate, *then* generate H3 Picture cues
+
+A newly analysed scene plan defaults to `reference_transport="pending"`.
+It carries real source-frame shot boundaries and extracted still identities
+but **does not encode scene references or emit `<Picture N>` prompts**.
+The review modal shows a plain timestamp/evidence list that explicitly
+says each Picture alias is unassigned. Only the separate
+**Activate CHUNK-SCOPED H3 references** action binds verified persistent
+identity inputs and lazily loaded scene JPEGs to *each individual
+chunk*. The read-only effective H3 prompt preview is then recompiled
+with the actual selected reference map. Applying detection alone does
+not silently activate the images or overwrite the connected State Manager
+script. Legacy explicitly configured scoped inputs can still be loaded
+by the native sampler under their existing separate contract.
