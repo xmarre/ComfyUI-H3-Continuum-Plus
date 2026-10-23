@@ -61,8 +61,15 @@ export function planChunkReferenceStream(project, sources) {
   const occupancy=resolvePersistentReferenceOccupancy(sources);
   const sockets=occupancy.slots;
   const identityEstimate=occupancy.estimatedImages;
-  const sceneBudget=Math.min(5,Math.max(0,
+  // The five-scene-image cap used here was left over from the old
+  // 3-identity example. Budget is dynamic: 8 minus the verified persistent
+  // images (or a higher user-reserved identity floor). The backend will
+  // additionally subtract any manual chunk-scoped image references using
+  // their actual distinct asset count at native compilation.
+  const sceneBudget=Math.min(8,Math.max(0,
     Number(project.scene_plan?.settings?.scene_budget??3)));
+  const reservedIdentity=Math.min(8,Math.max(0,
+    Number(project.scene_plan?.settings?.reserved_identity_slots??1)));
   if(identityEstimate>=8)
     throw Error("All eight H3 Picture positions are already occupied by persistent references.");
   const perChunk={};
@@ -73,10 +80,17 @@ export function planChunkReferenceStream(project, sources) {
       (a<=s.range[0] || (index===0&&s.range[0]<a)));
     const ids=[...new Set(relevant.flatMap(s=>s.reference_ids||[]))];
     perChunk[String(index)]=sockets.slice();
+    const activeManual=new Set((project.tracks||[])
+      .filter(track=>track.role==="image_reference"&&!track.muted)
+      .flatMap(track=>(track.clips||[])
+        .filter(clip=>!clip.muted&&clip.start<b&&a<clip.end)
+        .map(clip=>clip.asset_id)).filter(Boolean));
+    const available=Math.max(0,8-Math.max(identityEstimate,reservedIdentity)-activeManual.size);
+    const budget=Math.min(sceneBudget,available);
     stats.push({index,from:a,to:b,sourceImageCount:ids.length,
-      budget:Math.min(sceneBudget,8-identityEstimate),identityEstimate,
-      accepted:Math.min(ids.length,Math.min(sceneBudget,8-identityEstimate)),
-      omitted:Math.max(0,ids.length-Math.min(sceneBudget,8-identityEstimate)),ids});
+      budget,identityEstimate,manualCount:activeManual.size,reservedIdentity,
+      accepted:Math.min(ids.length,budget),
+      omitted:Math.max(0,ids.length-budget),ids});
   }
   return {perChunk,stats,bank,sockets,identityEstimate,unverified:occupancy.unverified};
 }
@@ -553,8 +567,9 @@ export class SmartReferences {
     // Use the whole authored scene, not a possibly one-chunk UI selection:
     // all scene refs are stored persistently and selected lazily at generation.
     const seen=plan.stats.slice(0,10).map(s=>
-      "Chunk "+(s.index+1)+": "+s.identityEstimate+" identity + "+
-      s.accepted+" screenshot(s) = "+(s.identityEstimate+s.accepted)+
+      "Chunk "+(s.index+1)+": "+s.identityEstimate+" persistent + "+
+      s.manualCount+" manual + "+s.accepted+" screenshot(s) = "+
+      (s.identityEstimate+s.manualCount+s.accepted)+
       (s.omitted?" ("+s.omitted+" over budget)":"")).join("\n");
     const omitted=plan.stats.filter(s=>s.omitted).length;
     const uncertain=plan.unverified.length

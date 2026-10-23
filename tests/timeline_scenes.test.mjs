@@ -305,8 +305,8 @@ test('activating dynamic per-chunk references updates the live project and leave
    if(originalWindow===undefined)delete globalThis.window;
    else globalThis.window=originalWindow;
  }
- assert.match(confirmation,/Chunk 1: 3 identity \+ 3 screenshot\(s\) = 6/);
- assert.match(confirmation,/Chunk 2: 3 identity \+ 1 screenshot\(s\) = 4/);
+ assert.match(confirmation,/Chunk 1: 3 persistent \+ 0 manual \+ 3 screenshot\(s\) = 6/);
+ assert.match(confirmation,/Chunk 2: 3 persistent \+ 0 manual \+ 1 screenshot\(s\) = 4/);
  assert.equal(editor.p.scene_plan.reference_transport,'streamed');
  assert.equal(editor.p.scene_plan.conveyor_only,true);
  assert.deepEqual(editor.p.scene_plan.conveyor_slots,{});
@@ -457,4 +457,58 @@ test('VLM interpretation and detected cuts do not compile H3 Picture tags before
   assert.match(ui.cueReceipt.textContent,/Picture alias not assigned/);
   assert.match(ui.compiled.textContent,/before generating Picture cues/);
   assert.doesNotMatch(ui.cueReceipt.textContent,/Match <Picture 4>/);
+});
+
+test('per-chunk active Picture capacity adapts to every base count, not a fixed three',()=>{
+ const ids=Array.from({length:8},(_,i)=>String(i).padStart(64,'0'));
+ const p={chunk_origin_frame:0,chunk_frames:168,duration_frames:168,
+   scene_plan:{settings:{scene_budget:8,reserved_identity_slots:0},shots:[
+     {range:[0,168],reference_ids:ids,user:{enabled:true}}
+   ]}};
+ for(let base=1;base<=7;base++){
+   const sources=Array.from({length:8},(_,i)=>({
+     slot:i+1,connected:true,conveyor:true,dynamic:false,
+     verifiedActive:i<base,label:'Conveyor portrait '+i
+   }));
+   const plan=planChunkReferenceStream(p,sources);
+   assert.equal(plan.identityEstimate,base);
+   assert.equal(plan.stats[0].accepted,8-base);
+   assert.equal(plan.stats[0].omitted,base);
+   assert.equal(plan.stats[0].budget,8-base);
+   assert.deepEqual(plan.sockets,Array.from({length:base},(_,i)=>i+1));
+ }
+});
+
+test('per-chunk scene cap respects configured budget, manually scoped images, and identity reserve',()=>{
+ const ids=Array.from({length:8},(_,i)=>String(i).padStart(64,'0'));
+ const p={chunk_origin_frame:0,chunk_frames:168,duration_frames:168,
+  scene_plan:{settings:{scene_budget:8,reserved_identity_slots:1},shots:[
+    {range:[0,168],reference_ids:ids,user:{enabled:true}}
+  ]},
+  tracks:[{role:'image_reference',muted:false,clips:[
+    {start:0,end:168,asset_id:'manualA',muted:false},
+    {start:0,end:168,asset_id:'manualA',muted:false},
+    {start:0,end:168,asset_id:'manualB',muted:false},
+    {start:168,end:336,asset_id:'future',muted:false},
+  ]}]};
+ const sources=Array.from({length:8},(_,i)=>({
+  slot:i+1,connected:true,conveyor:true,dynamic:false,
+  verifiedActive:i<4,label:'Persistent '+i
+ }));
+ const plan=planChunkReferenceStream(p,sources);
+ assert.equal(plan.stats[0].identityEstimate,4);
+ assert.equal(plan.stats[0].manualCount,2);
+ assert.equal(plan.stats[0].accepted,2);
+ assert.equal(plan.stats[0].budget,2);
+ assert.equal(plan.stats[0].omitted,6);
+ p.scene_plan.settings.scene_budget=1;
+ assert.equal(planChunkReferenceStream(p,sources).stats[0].accepted,1);
+ p.scene_plan.settings.scene_budget=8;
+ p.scene_plan.settings.reserved_identity_slots=7;
+ assert.equal(planChunkReferenceStream(p,sources).stats[0].accepted,0);
+ // No base pictures but one reserved slot still leaves seven scene images.
+ p.tracks=[];
+ assert.equal(planChunkReferenceStream(p,[]).stats[0].accepted,1);
+ p.scene_plan.settings.reserved_identity_slots=1;
+ assert.equal(planChunkReferenceStream(p,[]).stats[0].accepted,7);
 });

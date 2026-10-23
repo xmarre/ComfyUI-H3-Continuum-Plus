@@ -531,3 +531,34 @@ assumed to be lane-preserving and remain unverified. This avoids both
 the original false "8/8" count and the over-conservative "0/8" count
 on the eight-lane compositor topology. Such mappings remain a frontend
 inference until the sampler sees the real tensors.
+
+
+### Dynamic capacity with any number of active identity references (October 23 follow-up)
+
+The three-reference example is illustrative, **not a fixed reservation**.
+Only proven active/populated sampler IMAGE inputs count as persistent
+references. Empty or disabled Conveyor shelves do not consume a Picture,
+even if their paths remain physically wired through Media Resolution.
+The eight-picture total applies per invocation. The per-chunk scene
+budget is now calculated from the configured scene-image limit (0–8),
+the active persistent-picture estimate, the explicitly reserved minimum
+identity count and the distinct manually scoped image references for
+that chunk:
+
+`scene_capacity = max(0, min(configured_scene_budget, 8 -
+max(active_persistent_pictures, reserved_identity_slots) -
+distinct_active_manual_chunk_images))`
+
+The previous frontend-only `min(5, configured_scene_budget)` cap
+was an erroneous leftover from the three-identity example and has been
+removed. With scene budget 8, reserved minimum 0 and no manual images,
+1, 2, 3, 4, 5, 6 or 7 active base pictures leave 7, 6, 5, 4, 3, 2
+or 1 scene-photo positions, respectively. All 8 persistent pictures
+leave zero scene-photo positions, which is reported rather than allowing
+an over-cap generation. With default reserved identity minimum 1, an
+otherwise empty persistent bank still reserves at least one Picture.
+The native compiler applies the same bounds with **actual** selected
+tensor cardinality and avoids duplicate photo assets, so runtime
+remains authoritative when an IMAGE socket delivers a multi-image
+bundle. Source JPEG originals and the connected State Manager prompt
+are not mutated.
