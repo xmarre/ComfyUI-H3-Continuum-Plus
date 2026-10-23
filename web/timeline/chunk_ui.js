@@ -87,18 +87,37 @@ function conveyorSourcePreviews(editor,graph,sampler,slot) {
     truncated:ancestry.truncated,
   };
 }
+export function connectedPromptForPreview(editor) {
+  if(editor.p?.prompt_source?.mode==="studio") return null;
+  const sampler=linkedSampler(editor);
+  if(!sampler) return null;
+  try { return connectedTextSource(editor.app.graph,sampler).text; }
+  catch { return null; }
+}
 export function referenceSocketSources(editor) {
   const sampler=linkedSampler(editor);
   if (!sampler) return [];
   const graph=sampler.graph || editor.app?.graph;
   return Array.from({length:8},(_,i)=>{
     const slot=i+1;
-    const source=traceReferenceSocket(graph,sampler,slot);
-    // A processor with multiple IMAGE inputs is not a one-to-one mapping.
-    // Still show definite upstream Conveyor images instead of an empty card.
-    const ancestry=source.connected && !source.conveyor
+    const traced=traceReferenceSocket(graph,sampler,slot);
+    // The exact lineage tracer can stop at Media Resolution, a reroute,
+    // or a custom wildcard IMAGE processor. The broader provenance tracer
+    // already finds connected Conveyor shelves through these nodes. Accept
+    // it as a writable one-to-one route ONLY when its single Conveyor origin
+    // is unambiguous. Multi-IMAGE mergers remain read-only previews.
+    const ancestry=traced.connected && !traced.conveyor
       ? conveyorSourcePreviews(editor,graph,sampler,slot)
       : {candidates:[],truncated:false};
+    const candidate=ancestry.candidates.length===1 && !ancestry.truncated &&
+      !String(traced.unresolved||"").startsWith("Ambiguous IMAGE inputs")
+      ? ancestry.candidates[0] : null;
+    const parent=candidate && (graph.getNodeById?.(candidate.nodeId) ||
+      graph._nodes?.find(node=>node.id===candidate.nodeId));
+    const source=parent && candidate.shelfNumber
+      ? {connected:true,conveyor:true,node:parent,
+          shelfNumber:candidate.shelfNumber,via:candidate.via||[],
+          provenanceFallback:true} : traced;
     const node=source.node;
     const state=source.conveyor ? conveyorState(node) : {};
     const shelfNumber=source.shelfNumber;
@@ -134,6 +153,8 @@ export function referenceSocketSources(editor) {
     return {
       slot,connected:source.connected,conveyor:source.conveyor,
       shelfNumber,nodeId:node?.id ?? null,dynamic:!!dynamic,
+      originKind:String(node?.comfyClass||node?.type||""),
+      verifiedActive:source.conveyor&&active&&!!path,
       label:direct+
         (shelfNumber ? (persistent ? " · Shelf "+shelfNumber :
           " · queue-group image "+(shelfNumber+1)) : "")+
@@ -151,8 +172,66 @@ export function referenceSocketSources(editor) {
       sourceVersion:ref?.source_version || ref?.mtime_ns || null,
       candidatePreviews:ancestry.candidates,
       ancestryTruncated:ancestry.truncated,
+      provenanceFallback:!!source.provenanceFallback,
+      ambiguousPath:!!(source.connected&&!source.conveyor&&
+        (ancestry.candidates.length>1||ancestry.truncated||
+          String(source.unresolved||"").startsWith("Ambiguous IMAGE inputs"))),
     };
   });
+}
+
+/**
+ * Count only verified, *populated* upstream IMAGE references.
+ * A LiteGraph wire / ComfyUI dynamic optional input does NOT prove that an
+ * IMAGE tensor will be produced. In particular Media Resolution may have
+ * all eight output paths wired to a Conveyor with only three real shelf
+ * pictures; blindly counting connected=true made all eight look occupied.
+ *
+ * A uniquely traced Image Conveyor shelf is trustworthy only when its file
+ * and active output mode are confirmed. Unknown/merged IMAGE processors are
+ * not guessed; Timeline omits those sockets from its explicit per-chunk
+ * mask and reports them for inspection rather than stealing Picture slots.
+ * Direct known image-loader outputs are supported independently of Conveyor.
+ */
+export function resolvePersistentReferenceOccupancy(sources) {
+  const slots=[],unverified=[];
+  const normalized=Array.from({length:8},(_,i)=>sources.find(s=>s.slot===i+1));
+  const slotSizes=normalized.map(s=>{
+    if(!s?.connected||s.unavailable)return 0;
+    const c=s.candidatePreviews||[];
+    if(s.conveyor){
+      return s.verifiedActive===true ||
+        // Gracefully support older serialized source snapshots, but never
+        // treat an empty/disabled shelf as a reference.
+        (s.verifiedActive===undefined && !!s.thumbnail && !s.dynamic)
+        ? 1:0;
+    }
+    if(c.length&&!s.ancestryTruncated){
+      // An eight-lane Media Resolution node exposes *all* upstream shelf
+      // candidates on every output. The outputs are lane-ordered; attribute
+      // ONLY its corresponding Conveyor shelf rather than all eight. This
+      // matches the preview's already-established lane selection, while
+      // refusing the shortcut for arbitrary multi-IMAGE merger nodes.
+      const lanes=c.map(x=>x.shelfNumber);
+      const sameSource=new Set(c.map(x=>x.nodeId)).size===1;
+      const fullShelf=c.length===8&&sameSource &&
+        lanes.slice().sort((a,b)=>a-b).join(",")==="1,2,3,4,5,6,7,8";
+      if(/^MediaResolution$/i.test(String(s.originKind||"")) &&
+         fullShelf){
+        const corresponding=c.find(x=>x.shelfNumber===s.slot);
+        return corresponding?.active?1:0;
+      }
+      if(c.length===1&&!s.ambiguousPath)return c[0].active?1:0;
+    }
+    // IMAGE outputs of ordinary loaded still nodes are real reference
+    // sources, even when no Image Conveyor exists in their ancestry.
+    if(/^(?:LoadImage|LoadImageFromPath|LoadImageOutput|StaticIdentityImage)$/.test(
+      String(s.originKind||"")))return 1;
+    unverified.push({slot:s.slot,source:s.label||"unresolved IMAGE input"});
+    return 0;
+  });
+  for(let i=0;i<slotSizes.length;i++)if(slotSizes[i])slots.push(i+1);
+  return {slots,slotSizes,estimatedImages:slotSizes.reduce((a,b)=>a+b,0),unverified};
 }
 
 // One selectable tile per *currently active* persistent reference output,
@@ -206,8 +285,8 @@ export function samplerInputDescription(editor) {
   const linked = (name) => nodeInput(sampler, name).linked;
   const connectedReferenceSlots = Array.from({length:8},(_,i)=>i+1)
     .filter((slot)=>linked("reference_image_"+slot));
-  const availableReferenceSlots=activeReferenceSources(
-    referenceSocketSources(editor)).map(source=>source.slot);
+  const availableReferenceSlots=resolvePersistentReferenceOccupancy(
+    referenceSocketSources(editor)).slots;
   const pinned = connectedReferenceSlots.map((slot)=>"reference_image_"+slot);
   const persistent = [
     ...pinned,
@@ -236,7 +315,7 @@ export function samplerInputDescription(editor) {
   if (linked("height")) overrides.push("height comes from a connected node");
   return {
     sampler,
-    persistent, supplied, overrides, persistentPictureSockets: pinned.length,
+    persistent, supplied, overrides, persistentPictureSockets: availableReferenceSlots.length,
     connectedReferenceSlots, availableReferenceSlots, project: editor.p,
     promptOverridden: externalPrompt, promptDiagnostic,
     audioOverridden: linked("driving_audio"),
@@ -712,6 +791,14 @@ export function renderChunkWorkspace(editor) {
       imported.filter(r=>!r.muted).map(r=>r.text).join("\n"), chunk.index);
     card.append(el("details",{class:"h3ts-compiled-details"},
       el("summary",{text:"Compiled prompt and input receipt"}),preview));
+    const effective=el("textarea",{
+      class:"h3ts-effective-prompt",rows:"6",readOnly:"","aria-label":"Effective H3 prompt for chunk "+(chunk.index+1)
+    });
+    effective.value=editor.compiledWindows?.get(chunk.index)?.prompt ||
+      "Compiled H3 prompt appears after input inspection. It includes the visual shot schedule when applied.";
+    card.append(el("label",{class:"h3ts-effective-prompt-field"},
+      el("strong",{text:"Effective H3 shot-timed prompt · chunk "+(chunk.index+1)+" · read-only"}),
+      effective,el("small",{text:"Shot plan times here are local to the logical chunk. Native physical conditioning rebases them for carried context. Authored text and connected State Manager controls are not rewritten."})));
     card.append(conveyorReferenceControls(editor,chunk.index,referenceSources));
     const video=sectionForRole(editor,chunk.index,"video_guide");
     const audioRoute=el("select",{"aria-label":"Chunk audio routing"},
@@ -880,6 +967,13 @@ export function renderChunkWorkspace(editor) {
 // the user is typing a new chunk prompt.
 export function updateChunkCompiledLines(editor) {
   const inputs=samplerInputDescription(editor);
+  for(const card of editor.chunkBoard?.querySelectorAll("[data-chunk-index]")||[]){
+    const field=card.querySelector(".h3ts-effective-prompt");
+    if(field){
+      const effective=editor.compiledWindows?.get(Number(card.dataset.chunkIndex));
+      field.value=effective?.prompt || "Effective H3 prompt unavailable until inputs compile.";
+    }
+  }
   for (const element of editor.chunkBoard?.querySelectorAll("[data-compiled-chunk]") || [])
     compiledLine(
       element,

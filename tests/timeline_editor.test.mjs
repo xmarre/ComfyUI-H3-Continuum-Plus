@@ -8,7 +8,7 @@ import {
   selectedConveyorSlots, setConveyorSlotEnabled, inheritConveyorSlots,
   setChunkClipEnabled, setChunkConveyorSlots, disableSelectedVideoGuides,
 } from "../web/timeline/chunk_workspace.js";
-import { samplerInputDescription, referenceSocketSources, activeReferenceSources } from "../web/timeline/chunk_ui.js";
+import { samplerInputDescription, referenceSocketSources, activeReferenceSources, resolvePersistentReferenceOccupancy } from "../web/timeline/chunk_ui.js";
 import { traceReferenceSocket, collectReferenceProvenance, shelfImagePath, conveyorState, conveyorShelfAvailable } from "../web/timeline/conveyor_source.js";
 import { layoutView, workspaceGeometry, normalizeVertical, normalizeHorizontal, setLayoutDimension, LIMITS } from "../web/timeline/layout.js";
 import { movieTimelineWidth, scrollToFrame, fitMovieZoom, fitRangeZoom, timelineWheelPan, timelineWheelZoom } from "../web/timeline/navigation.js";
@@ -1146,7 +1146,10 @@ test("connected native sampler precedence is visible independently of authored i
   assert.equal(result.promptOverridden,true);
   assert.equal(result.audioOverridden,true);
   assert.ok(result.persistent.some((x)=>x.includes("reference_image_1")));
-  assert.equal(result.persistentPictureSockets,1);
+  // The graph links reference_image_1, but node #4 does not exist in this
+  // fixture, so there is no evidence that a live IMAGE tensor is present.
+  assert.deepEqual(result.connectedReferenceSlots,[1]);
+  assert.equal(result.persistentPictureSockets,0);
   assert.match(result.overrides.join(" "),/width comes from a connected node/);
   assert.deepEqual(result.settings.slice(0,2),
     [["Chunks","2"],["Chunk duration","7.000s (168f)"]]);
@@ -1687,6 +1690,9 @@ test("eight shared upstream shelf candidates yield four unique active per-chunk 
   const available=activeReferenceSources(raw);
   assert.deepEqual(available.map(x=>x.slot),[1,2,3,4]);
   assert.equal(new Set(available.map(x=>x.thumbnail)).size,4);
+  const occupancy=resolvePersistentReferenceOccupancy(raw);
+  assert.deepEqual(occupancy.slots,[1,2,3,4]);
+  assert.deepEqual(occupancy.slotSizes,[1,1,1,1,0,0,0,0]);
   for(let i=0;i<4;i++)assert.match(available[i].thumbnail,
     new RegExp("person-"+(i+1)+"\\.png"));
   const settings=samplerInputDescription(editor);
